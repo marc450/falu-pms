@@ -43,7 +43,35 @@ namespace MachineSimulator
         }
 
         public SimulatorSettings GetSettings() => _settings;
-        public BrokerSettings GetBrokerSettings() => _settings.Broker;
+
+        public BrokerSettings GetBrokerSettings()
+        {
+            var host = Environment.GetEnvironmentVariable("BROKER__HOST");
+            if (!string.IsNullOrEmpty(host))
+            {
+                /*
+                return new BrokerSettings
+                {
+                    Host            = host,
+                    Port            = int.TryParse(Environment.GetEnvironmentVariable("BROKER__PORT"), out var p) ? p : 1883,
+                    Username        = Environment.GetEnvironmentVariable("BROKER__USERNAME") ?? _settings.Broker.Username,
+                    Password        = Environment.GetEnvironmentVariable("BROKER__PASSWORD") ?? _settings.Broker.Password,
+                    IsLocal         = bool.TryParse(Environment.GetEnvironmentVariable("BROKER__ISLOCAL"), out var l) ? l : _settings.Broker.IsLocal,
+                    SendFrequencyMs = _settings.Broker.SendFrequencyMs
+                };*/
+                  return new BrokerSettings
+                {
+                    Host            = "e21df7393cc24e69b198158d3af2b3d6.s1.eu.hivemq.cloud:8883",
+                    Port            = 8883,
+                    Username        = "USCotton",
+                    Password        = "Admin123",
+                    IsLocal         = false,
+                    SendFrequencyMs = 20
+                };
+
+            }
+            return _settings.Broker;
+        }
 
         public void SaveBrokerSettings(BrokerSettings broker)
         {

@@ -21,6 +21,18 @@ namespace Dashboard
 
         public BrokerSettings GetBrokerSettings()
         {
+            var host = Environment.GetEnvironmentVariable("BROKER__HOST");
+            if (!string.IsNullOrEmpty(host))
+            {
+                return new BrokerSettings
+                {
+                    Host     = host,
+                    Port     = int.TryParse(Environment.GetEnvironmentVariable("BROKER__PORT"), out var p) ? p : 1883,
+                    Username = Environment.GetEnvironmentVariable("BROKER__USERNAME") ?? _settings.Broker.Username,
+                    Password = Environment.GetEnvironmentVariable("BROKER__PASSWORD") ?? _settings.Broker.Password,
+                    IsLocal  = bool.TryParse(Environment.GetEnvironmentVariable("BROKER__ISLOCAL"), out var l) ? l : _settings.Broker.IsLocal,
+                };
+            }
             return _settings.Broker;
         }
 
