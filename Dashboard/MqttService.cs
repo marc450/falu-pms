@@ -1,9 +1,9 @@
-﻿
-using Dashboard;
+﻿using Dashboard;
 using Microsoft.Extensions.Options;
 using MQTTnet;
 using System.Buffers;
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 
 
     public class MqttService
@@ -70,12 +70,23 @@ using System.Text.Json;
         {
             var brokerSettings = _settingsService.GetBrokerSettings();
 
-            _options = new MqttClientOptionsBuilder()
+            var builder = new MqttClientOptionsBuilder()
                 .WithCredentials(brokerSettings.Username, brokerSettings.Password)
                 .WithCleanSession()
-                .WithTcpServer(brokerSettings.Host, brokerSettings.Port)
-                .WithNoKeepAlive()
-                .Build();
+                .WithTcpServer(brokerSettings.Host, brokerSettings.Port);
+
+            // Enable TLS for cloud brokers (IsLocal = false → HiveMQ, Azure, etc.)
+            if (!brokerSettings.IsLocal)
+            {
+                builder.WithTlsOptions(o => o.UseTls());
+                Console.WriteLine($"[MQTT] TLS enabled → {brokerSettings.Host}:{brokerSettings.Port}");
+            }
+            else
+            {
+                Console.WriteLine($"[MQTT] Plain TCP → {brokerSettings.Host}:{brokerSettings.Port}");
+            }
+
+            _options = builder.Build();
         }
 
         private async void OnSettingsChanged()
