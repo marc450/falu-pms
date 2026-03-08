@@ -1,0 +1,325 @@
+@page "/"
+@using Dashboard
+@using System.Timers
+@inject MqttService Mqtt
+@inject NavigationManager NavManager
+@inject SettingsService SettingsService
+@implements IDisposable
+
+<AuthorizeView>
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mt-3 mb-4">
+        <h2 class="text-white">Machine Park Live Status</h2>
+        <div class="d-flex gap-2">
+            <span class="badge bg-secondary shadow-sm py-2 px-3">
+                <i class="bi bi-calendar3"></i> @currentDateTime.ToString("yyyy-MM-dd HH:mm:ss")
+            </span>
+            @if (!HasReceivedData())
+            {
+                <span class="badge bg-warning text-dark shadow-sm py-2 px-3">
+                    <div class="spinner-border spinner-border-sm me-1" role="status"></div>
+                    Waiting for MQTT data...
+                </span>
+            }
+            else
+            {
+                <span class="badge @(mqttConnected ? "bg-success" : "bg-danger") shadow-sm py-2 px-3">
+                    <i class="bi bi-@(mqttConnected ? "wifi" : "wifi-off")"></i> 
+                    @GetOnlineMachineCount() Machines online
+                    @if (!mqttConnected)
+                    {
+                        <span class="ms-1">(Reconnecting...)</span>
+                    }
+                </span>
+            }
+        </div>
+    </div>
+
+    <div class="table-responsive">
+        <table class="table table-hover table-dark shadow-sm" style="table-layout: fixed; width: 100%;">
+            <thead>
+                <tr>
+                    <th @onclick='() => SortBy("Machine")' class="@GetHeaderClass("Machine")" style="cursor: pointer; width: 16%;">
+                        Machine @GetSortIcon("Machine")
+                    </th>
+                    <th @onclick='() => SortBy("Status")' class="@GetHeaderClass("Status")" style="cursor: pointer; width: 10%;">
+                        Status @GetSortIcon("Status")
+                    </th>
+                    <th @onclick='() => SortBy("Speed")' class="@GetHeaderClass("Speed")" style="cursor: pointer; width: 11%;">
+                        Speed @GetSortIcon("Speed")
+                    </th>
+                    <th @onclick='() => SortBy("Swaps")' class="@GetHeaderClass("Swaps")" style="cursor: pointer; width: 10%;">
+                        Swaps @GetSortIcon("Swaps")
+                    </th>
+                    <th @onclick='() => SortBy("Boxes")' class="@GetHeaderClass("Boxes")" style="cursor: pointer; width: 10%;">
+                        Boxes @GetSortIcon("Boxes")
+                    </th>
+                    <th @onclick='() => SortBy("Efficiency")' class="@GetHeaderClass("Efficiency")" style="cursor: pointer; width: 12%;">
+                        Efficiency @GetSortIcon("Efficiency")
+                    </th>
+                    <th @onclick='() => SortBy("Reject")' class="@GetHeaderClass("Reject")" style="cursor: pointer; width: 12%;">
+                        Reject Ratio @GetSortIcon("Reject")
+                    </th>
+                    <th @onclick='() => SortBy("LastSync")' class="@GetHeaderClass("LastSync")" style="cursor: pointer; width: 13%;">
+                        Last Sync @GetSortIcon("LastSync")
+                    </th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var entry in GetSortedMachines())
+                {
+                    <tr @onclick='() => NavManager.NavigateTo($"/production/{entry.Machine}")' style="cursor: pointer;" class="align-middle">
+                        <td class="fw-bold text-info" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0;">@entry.Machine</td>
+                        <td>
+                            <span class="badge @GetStatusBadgeClass(entry.MachineStatus?.Status)">
+                                @(entry.MachineStatus?.Status ?? "offline")
+                            </span>
+                        </td>
+                        <td>
+                            @if (entry.MachineStatus?.Speed != null && entry.MachineStatus.Speed > 0)
+                            {
+                                @entry.MachineStatus.Speed <small class="text-muted">pcs/h</small>
+                            }
+                        </td>
+                        <td>@(entry.MachineStatus?.Swaps > 0 ? entry.MachineStatus.Swaps.ToString() : "")</td>
+                        <td>@(entry.MachineStatus?.Boxes > 0 ? entry.MachineStatus.Boxes.ToString() : "")</td>
+                        <td>
+                            @if (entry.MachineStatus?.Efficiency != null && entry.MachineStatus.Efficiency > 0)
+                            {
+                                @entry.MachineStatus.Efficiency.ToString("F1")<text>%</text>
+                            }
+                        </td>
+                        <td class="@(entry.MachineStatus?.Reject > 5 ? "text-danger" : "")">
+                            @if (entry.MachineStatus?.Reject != null && entry.MachineStatus.Reject > 0)
+                            {
+                                @entry.MachineStatus.Reject.ToString("F1")<text>%</text>
+                            }
+                        </td>
+                        <td>
+                            @if (entry.LastSyncStatus > DateTime.MinValue)
+                            {
+                                @entry.LastSyncStatus.ToString("T")
+                            }
+                            else
+                            {
+                                <span class="text-muted">---</span>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+</div>
+
+<style>
+    .table-hover tbody tr:hover {
+        background-color: rgba(255, 255, 255, 0.1) !important;
+        transition: background-color 0.2s ease;
+    }
+
+    th {
+        color: #999;
+        font-weight: 500;
+        text-transform: uppercase;
+        font-size: 0.85rem;
+        user-select: none;
+        transition: all 0.2s ease;
+    }
+
+    th:hover {
+        color: #17a2b8;
+        background-color: rgba(23, 162, 184, 0.1);
+    }
+
+    th.active-sort {
+        color: #fff;
+        background-color: #0d6efd;
+    }
+
+    th.active-sort:hover {
+        background-color: #0b5ed7;
+    }
+</style>
+
+@code {
+    private string currentSortColumn = "Machine";
+    private bool sortAscending = true;
+    private DateTime currentDateTime = DateTime.Now;
+    private System.Timers.Timer? clockTimer;
+    private bool mqttConnected = true;
+
+    protected override void OnInitialized()
+    {
+        // Update UI when MqttService receives new data
+        Mqtt.OnDataChanged += RefreshUI;
+        Mqtt.OnConnectionStatusChanged += OnMqttConnectionChanged;
+
+        // Start clock timer (update every second)
+        clockTimer = new System.Timers.Timer(1000);
+        clockTimer.Elapsed += UpdateClock;
+        clockTimer.AutoReset = true;
+        clockTimer.Start();
+
+        // Check initial connection status
+        mqttConnected = Mqtt.IsConnected;
+    }
+
+    private void UpdateClock(object? sender, ElapsedEventArgs e)
+    {
+        currentDateTime = DateTime.Now;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void OnMqttConnectionChanged(bool isConnected)
+    {
+        mqttConnected = isConnected;
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void RefreshUI()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void SortBy(string columnName)
+    {
+        if (currentSortColumn == columnName)
+        {
+            // Toggle sort direction if clicking the same column
+            sortAscending = !sortAscending;
+        }
+        else
+        {
+            // New column, default to ascending
+            currentSortColumn = columnName;
+            sortAscending = true;
+        }
+    }
+
+    private string GetHeaderClass(string columnName)
+    {
+        return currentSortColumn == columnName ? "active-sort" : "";
+    }
+
+   private string GetSortIcon(string columnName)
+    {
+        if (currentSortColumn != columnName)
+            return "";
+
+        return sortAscending ? "▲" : "▼";
+    }
+
+    private IEnumerable<MachineData> GetSortedMachines()
+    {
+        var enabledMachines = SettingsService.GetMachineSettings().EnabledMachines;
+
+        // If no machines configured, show all discovered machines
+        if (!enabledMachines.Any())
+        {
+            return SortMachines(Mqtt.AllMachines.Values);
+        }
+
+        // Create MachineData objects for all configured machines
+        var machines = new List<MachineData>();
+        foreach (var machineName in enabledMachines)
+        {
+            if (Mqtt.AllMachines.ContainsKey(machineName))
+            {
+                // Machine has data
+                machines.Add(Mqtt.AllMachines[machineName]);
+            }
+            else
+            {
+                // Machine configured but no data yet - create placeholder
+                machines.Add(new MachineData { Machine = machineName });
+            }
+        }
+
+        return SortMachines(machines);
+    }
+
+    private IEnumerable<MachineData> SortMachines(IEnumerable<MachineData> machines)
+    {
+        return currentSortColumn switch
+        {
+            "Machine" => sortAscending 
+                ? machines.OrderBy(m => m.Machine) 
+                : machines.OrderByDescending(m => m.Machine),
+
+            "Status" => sortAscending 
+                ? machines.OrderBy(m => m.MachineStatus?.Status ?? "zzz") 
+                : machines.OrderByDescending(m => m.MachineStatus?.Status ?? "zzz"),
+
+            "Speed" => sortAscending 
+                ? machines.OrderBy(m => m.MachineStatus?.Speed ?? 0) 
+                : machines.OrderByDescending(m => m.MachineStatus?.Speed ?? 0),
+
+            "Swaps" => sortAscending 
+                ? machines.OrderBy(m => m.MachineStatus?.Swaps ?? 0) 
+                : machines.OrderByDescending(m => m.MachineStatus?.Swaps ?? 0),
+
+            "Boxes" => sortAscending 
+                ? machines.OrderBy(m => m.MachineStatus?.Boxes ?? 0) 
+                : machines.OrderByDescending(m => m.MachineStatus?.Boxes ?? 0),
+
+            "Efficiency" => sortAscending 
+                ? machines.OrderBy(m => m.MachineStatus?.Efficiency ?? 0) 
+                : machines.OrderByDescending(m => m.MachineStatus?.Efficiency ?? 0),
+
+            "Reject" => sortAscending 
+                ? machines.OrderBy(m => m.MachineStatus?.Reject ?? 0) 
+                : machines.OrderByDescending(m => m.MachineStatus?.Reject ?? 0),
+
+            "LastSync" => sortAscending 
+                ? machines.OrderBy(m => m.LastSyncStatus) 
+                : machines.OrderByDescending(m => m.LastSyncStatus),
+
+            _ => machines.OrderBy(m => m.Machine)
+        };
+
+        return machines;
+    }
+
+    private string GetStatusBadgeClass(string? status)
+    {
+        return status?.ToLower() switch
+        {
+            "run" => "bg-success",      // green
+            "idle" => "bg-dark",        // black
+            "error" => "bg-danger",     // red
+            "offline" => "bg-secondary", // grey
+            _ => "bg-secondary"         // default grey for null or unknown
+        };
+    }
+
+    private bool HasReceivedData()
+    {
+        return Mqtt.AllMachines.Any();
+    }
+
+    private int GetOnlineMachineCount()
+    {
+        var enabledMachines = SettingsService.GetMachineSettings().EnabledMachines;
+
+        if (!enabledMachines.Any())
+        {
+            return Mqtt.AllMachines.Count;
+        }
+
+        return enabledMachines.Count(m => Mqtt.AllMachines.ContainsKey(m));
+    }
+
+    public void Dispose()
+    {
+        Mqtt.OnDataChanged -= RefreshUI;
+        Mqtt.OnConnectionStatusChanged -= OnMqttConnectionChanged;
+
+        if (clockTimer != null)
+        {
+            clockTimer.Stop();
+            clockTimer.Dispose();
+        }
+    }
+}
+</AuthorizeView>

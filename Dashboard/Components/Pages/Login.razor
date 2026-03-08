@@ -1,0 +1,127 @@
+@page "/login"
+@using Dashboard
+@inject AuthenticationService AuthService
+@inject NavigationManager Navigation
+
+<div class="login-container">
+    <div class="login-card">
+        <div class="text-center mb-4">
+            <h2 class="text-white">Dashboard Login</h2>
+            <p class="text-muted">Please enter your credentials</p>
+        </div>
+
+        @if (!string.IsNullOrEmpty(errorMessage))
+        {
+            <div class="alert alert-danger" role="alert">
+                <i class="bi bi-exclamation-triangle-fill"></i> @errorMessage
+            </div>
+        }
+
+        <EditForm Model="@loginModel" OnValidSubmit="@HandleLogin">
+            <DataAnnotationsValidator />
+            
+            <div class="mb-3">
+                <label for="username" class="form-label text-white">Username</label>
+                <InputText id="username" class="form-control" @bind-Value="loginModel.Username" placeholder="Enter username" />
+                <ValidationMessage For="@(() => loginModel.Username)" />
+            </div>
+
+            <div class="mb-3">
+                <label for="password" class="form-label text-white">Password</label>
+                <InputText id="password" type="password" class="form-control" @bind-Value="loginModel.Password" placeholder="Enter password" />
+                <ValidationMessage For="@(() => loginModel.Password)" />
+            </div>
+
+            <button type="submit" class="btn btn-primary w-100" disabled="@isLoggingIn">
+                @if (isLoggingIn)
+                {
+                    <span class="spinner-border spinner-border-sm me-2" role="status"></span>
+                }
+                Login
+            </button>
+        </EditForm>
+
+        <div class="mt-4 text-center">
+            <p class="text-muted small">Default Accounts:</p>
+            <div class="text-muted small">
+                <p class="mb-1"><strong>User:</strong> user / user123</p>
+                <p class="mb-1"><strong>Supervisor:</strong> supervisor / super123</p>
+                <p class="mb-1"><strong>Administrator:</strong> admin / admin123</p>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .login-container {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%);
+    }
+
+    .login-card {
+        background-color: #1a1a1a;
+        padding: 2rem;
+        border-radius: 1rem;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+        width: 100%;
+        max-width: 400px;
+        border: 1px solid #333;
+    }
+
+    .form-control {
+        background-color: #2a2a2a;
+        border: 1px solid #444;
+        color: white;
+    }
+
+    .form-control:focus {
+        background-color: #333;
+        border-color: #0d6efd;
+        color: white;
+    }
+
+    .form-control::placeholder {
+        color: #888;
+    }
+</style>
+
+@code {
+    private LoginModel loginModel = new LoginModel();
+    private string errorMessage = "";
+    private bool isLoggingIn = false;
+
+    protected override void OnInitialized()
+    {
+        // If already logged in, redirect to home
+        if (AuthService.IsAuthenticated())
+        {
+            Navigation.NavigateTo("/");
+        }
+    }
+
+    private async Task HandleLogin()
+    {
+        isLoggingIn = true;
+        errorMessage = "";
+        await Task.Delay(500); // Simulate network delay
+
+        if (AuthService.Login(loginModel.Username, loginModel.Password))
+        {
+            Navigation.NavigateTo("/", forceLoad: true);
+        }
+        else
+        {
+            errorMessage = "Invalid username or password";
+            isLoggingIn = false;
+        }
+    }
+
+    public class LoginModel
+    {
+        public string Username { get; set; } = "";
+        public string Password { get; set; } = "";
+    }
+}

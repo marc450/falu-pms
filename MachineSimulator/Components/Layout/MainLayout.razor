@@ -1,0 +1,15 @@
+@inherits LayoutComponentBase
+
+<div class="sim-layout">
+    <div class="sim-sidebar">
+        <NavMenu />
+    </div>
+    <div class="sim-main">
+        <div class="sim-topbar px-4 d-flex align-items-center justify-content-end">
+            <span class="text-muted small">Machine MQTT Simulator</span>
+        </div>
+        <div class="sim-content px-4 py-3">
+            @Body
+        </div>
+    </div>
+</div>

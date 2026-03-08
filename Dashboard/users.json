@@ -1,0 +1,17 @@
+[
+  {
+    "Username": "user",
+    "PasswordHash": "5gbjiw2MGbJM8O44CBgxYup81j/3kS27IrXoAyhrREY=",
+    "Role": 0
+  },
+  {
+    "Username": "admin",
+    "PasswordHash": "JAvlGPq9JyTdtvBO6x2llnRI1\u002BgxwIyPqCKAn3THIKk=",
+    "Role": 2
+  },
+  {
+    "Username": "supervisor",
+    "PasswordHash": "TkxW5KFfifBcL0xyYT2ioYyWZdTw1qzOFkFesG\u002Bb53Y=",
+    "Role": 1
+  }
+]

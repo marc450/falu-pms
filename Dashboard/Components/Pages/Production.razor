@@ -1,0 +1,260 @@
+@page "/production/{MachineName}"
+@using Dashboard
+@using System.Timers
+@inject MqttService Mqtt
+@inject NavigationManager Navigation
+@inject SettingsService SettingsService
+@implements IDisposable
+
+<AuthorizeView>
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mt-3">
+        <div>
+            <button class="btn btn-secondary me-3" @onclick="GoBack">
+                <i class="bi bi-arrow-left"></i> Back
+            </button>
+        </div>
+        <h2 class="text-white">Production Details - @MachineName</h2>
+        <span class="badge bg-info">Live Data</span>
+    </div>
+
+    @if (machine == null)
+    {
+        <div class="alert alert-dark mt-4 border-warning">
+            <div class="spinner-border spinner-border-sm text-warning me-2"></div>
+            Loading machine data...
+        </div>
+    }
+    else
+    {
+        <div class="card bg-dark text-white mb-5 border-secondary shadow">
+            <div class="card-header bg-primary d-flex justify-content-between align-items-center">
+                <h4 class="mb-0">Machine: @machine.Machine</h4>
+                <div>
+                    <span class="badge @GetStatusBadgeClass(machine.MachineStatus?.Status) me-2">
+                        @(machine.MachineStatus?.Status ?? "offline")
+                    </span>
+                    <span class="badge bg-secondary">
+                        Last Request: @machine.LastRequestShift.ToString("HH:mm:ss")
+                    </span>
+                </div>
+            </div>
+                <div class="card-body p-0">
+                    <table class="table table-dark table-striped table-bordered mb-0">
+                        <thead>
+                            <tr class="text-center text-muted">
+                                <th class="text-start" style="width: 20%">Metric</th>
+                                <th class="@(machine.MachineStatus?.ActShift == 1 ? "bg-info text-white" : "text-info")">Shift 1</th>
+                                <th class="@(machine.MachineStatus?.ActShift == 2 ? "bg-info text-white" : "text-info")">Shift 2</th>
+                                <th class="@(machine.MachineStatus?.ActShift == 3 ? "bg-info text-white" : "text-info")">Shift 3</th>
+                                <th class="text-info">Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <tr>
+                                <td><strong>Production Time</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1 != null ? FormatMinutesToTime(machine.Shift1.ProductionTime) : "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2 != null ? FormatMinutesToTime(machine.Shift2.ProductionTime) : "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3 != null ? FormatMinutesToTime(machine.Shift3.ProductionTime) : "---")</td>
+                                <td class="text-center">@(machine.Total != null ? FormatMinutesToTime(machine.Total.ProductionTime) : "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Idle Time</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1 != null ? FormatMinutesToTime(machine.Shift1.IdleTime) : "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2 != null ? FormatMinutesToTime(machine.Shift2.IdleTime) : "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3 != null ? FormatMinutesToTime(machine.Shift3.IdleTime) : "---")</td>
+                                <td class="text-center">@(machine.Total != null ? FormatMinutesToTime(machine.Total.IdleTime) : "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Cotton Tears</strong></td>
+                                <td class="text-center @(machine.Shift1?.CottonTears > 5 ? "text-warning" : "") @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.CottonTears.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.Shift2?.CottonTears > 5 ? "text-warning" : "") @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.CottonTears.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.Shift3?.CottonTears > 5 ? "text-warning" : "") @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.CottonTears.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.Total?.CottonTears > 5 ? "text-warning" : "")">@(machine.Total?.CottonTears.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Missing Sticks</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.MissingSticks.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.MissingSticks.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.MissingSticks.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.MissingSticks.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Faulty Pickups</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.FoultyPickups.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.FoultyPickups.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.FoultyPickups.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.FoultyPickups.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Other Errors</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.OtherErrors.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.OtherErrors.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.OtherErrors.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.OtherErrors.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Produced Swaps</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.ProducedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.ProducedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.ProducedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.ProducedSwaps.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Packaged Swaps</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.PackagedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.PackagedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.PackagedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.PackagedSwaps.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Produced Boxes</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.ProducedBoxes.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.ProducedBoxes.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.ProducedBoxes.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.ProducedBoxes.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Produced Boxes Layer+</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.ProducedBoxesLayerPlus.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.ProducedBoxesLayerPlus.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.ProducedBoxesLayerPlus.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.ProducedBoxesLayerPlus.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Discarded Swaps</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.DisgardedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.DisgardedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.DisgardedSwaps.ToString() ?? "---")</td>
+                                <td class="text-center">@(machine.Total?.DisgardedSwaps.ToString() ?? "---")</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Efficiency</strong></td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.Efficiency.ToString("F1") ?? "---")%</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.Efficiency.ToString("F1") ?? "---")%</td>
+                                <td class="text-center @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.Efficiency.ToString("F1") ?? "---")%</td>
+                                <td class="text-center">@(machine.Total?.Efficiency.ToString("F1") ?? "---")%</td>
+                            </tr>
+                            <tr>
+                                <td><strong>Reject</strong></td>
+                                <td class="text-center text-danger @(machine.MachineStatus?.ActShift == 1 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift1?.Reject.ToString("F1") ?? "---")%</td>
+                                <td class="text-center text-danger @(machine.MachineStatus?.ActShift == 2 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift2?.Reject.ToString("F1") ?? "---")%</td>
+                                <td class="text-center text-danger @(machine.MachineStatus?.ActShift == 3 ? "fw-bold bg-info bg-opacity-25" : "")">@(machine.Shift3?.Reject.ToString("F1") ?? "---")%</td>
+                                <td class="text-center text-danger">@(machine.Total?.Reject.ToString("F1") ?? "---")%</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="card-footer d-flex justify-content-between text-muted small">
+                    <span>Last Update: @machine.LastSyncShift.ToString("T")</span>
+                    @if (machine.LastSyncShift > DateTime.MinValue)
+                    {
+                        <span class="text-success"><i class="oi oi-check"></i> Data synchronized</span>
+                    }
+                </div>
+            </div>
+    }
+</div>
+
+@code {
+    [Parameter]
+    public string MachineName { get; set; } = "";
+
+    private MachineData? machine;
+    private System.Timers.Timer? requestTimer;
+
+    // Local = 1 s (fast live updates) | Cloud = 10 s (reduced bandwidth)
+    private int RequestIntervalMs =>
+        SettingsService.GetBrokerSettings().IsLocal ? 1000 : 10000;
+
+    protected override async Task OnInitializedAsync()
+    {
+        // Load existing machine data first (if available)
+        // This ensures any previously received data is displayed immediately
+        LoadMachineData();
+
+        // Subscribe to data updates
+        // RefreshUI will only be called when MQTT actually receives new data
+        Mqtt.OnDataChanged += RefreshUI;
+
+        // Send initial request with Shift = 0
+        // This does NOT clear existing data - only requests new data
+        await Mqtt.RequestShiftData(MachineName, 0);
+
+        // Setup timer for periodic requests every 10 seconds
+        requestTimer = new System.Timers.Timer(RequestIntervalMs);
+        requestTimer.Elapsed += OnTimerElapsed;
+        requestTimer.AutoReset = true;
+        requestTimer.Start();
+    }
+
+    private void LoadMachineData()
+    {
+        // Only updates the reference to the machine object
+        // Does NOT clear or reset any data
+        if (Mqtt.AllMachines.ContainsKey(MachineName))
+        {
+            machine = Mqtt.AllMachines[MachineName];
+        }
+    }
+
+    private async void OnTimerElapsed(object? sender, ElapsedEventArgs e)
+    {
+        // Get current shift number
+        int currentShift = machine?.MachineStatus?.ActShift ?? 0;
+
+        // Request shift data with current shift number
+        // Don't update UI here - only when new data is received via RefreshUI
+        // This preserves the existing displayed data until MQTT sends new data
+        await Mqtt.RequestShiftData(MachineName, currentShift);
+    }
+
+    private void RefreshUI()
+    {
+        // This is ONLY called when MQTT actually receives new shift data
+        // Reload the machine reference and update the display
+        LoadMachineData();
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void GoBack()
+    {
+        Navigation.NavigateTo("/");
+    }
+
+    private string GetStatusBadgeClass(string? status)
+    {
+        return status?.ToLower() switch
+        {
+            "run" => "bg-success",      // green
+            "idle" => "bg-dark",        // black
+            "error" => "bg-danger",     // red
+            "offline" => "bg-secondary", // grey
+            _ => "bg-secondary"         // default grey for null or unknown
+        };
+    }
+
+    private string FormatMinutesToTime(long? minutes)
+    {
+        if (!minutes.HasValue || minutes.Value == 0)
+            return "00:00";
+
+        var hours = minutes.Value / 60;
+        var mins = minutes.Value % 60;
+        return $"{hours:D2}:{mins:D2}";
+    }
+
+    public void Dispose()
+    {
+        // Stop and dispose timer
+        if (requestTimer != null)
+        {
+            requestTimer.Stop();
+            requestTimer.Dispose();
+        }
+
+        // Unsubscribe from events when leaving the page
+        Mqtt.OnDataChanged -= RefreshUI;
+    }
+}
+</AuthorizeView>

@@ -1,0 +1,83 @@
+﻿@using Dashboard
+@inject AuthenticationService AuthService
+@inject NavigationManager NavigationManager
+@implements IDisposable
+
+<div class="top-row ps-3 navbar navbar-dark">
+    <div class="container-fluid">
+        <a class="navbar-brand" href="">Dashboard</a>
+        @if (AuthService.IsAuthenticated())
+        {
+            <div class="text-white">
+                <span class="me-2">@AuthService.GetCurrentUser().Username</span>
+                <span class="badge bg-info">@AuthService.GetRoleDisplayName(AuthService.GetCurrentUser().Role)</span>
+            </div>
+        }
+    </div>
+</div>
+
+<input type="checkbox" title="Navigation menu" class="navbar-toggler" />
+
+<div class="nav-scrollable" onclick="document.querySelector('.navbar-toggler').click()">
+    <nav class="nav flex-column">
+        @if (AuthService.IsAuthenticated())
+        {
+            <div class="nav-item px-3">
+                <NavLink class="nav-link" href="" Match="NavLinkMatch.All">
+                    <span class="bi bi-house-door-fill-nav-menu" aria-hidden="true"></span> Home
+                </NavLink>
+            </div>
+
+            @if (AuthService.HasRole(UserRole.Supervisor))
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="downloads">
+                        <span class="bi bi-download" aria-hidden="true"></span> Logfiles
+                    </NavLink>
+                </div>
+
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="settings">
+                        <span class="bi bi-gear-fill" aria-hidden="true"></span> Settings
+                    </NavLink>
+                </div>
+            }
+
+            @if (AuthService.HasRole(UserRole.Administrator))
+            {
+                <div class="nav-item px-3">
+                    <NavLink class="nav-link" href="debug">
+                        <span class="bi bi-bug-fill" aria-hidden="true"></span> Debug
+                    </NavLink>
+                </div>
+            }
+
+            <div class="nav-item px-3 mt-auto">
+                <button class="nav-link btn btn-link text-start w-100" @onclick="Logout">
+                    <span class="bi bi-box-arrow-right" aria-hidden="true"></span> Logout
+                </button>
+            </div>
+        }
+    </nav>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        AuthService.OnAuthStateChanged += StateHasChanged;
+    }
+
+    private void Logout()
+    {
+        AuthService.Logout();
+        // Force reload to go to login page
+        NavigationManager.NavigateTo("/login", forceLoad: true);
+    }
+
+    public void Dispose()
+    {
+        AuthService.OnAuthStateChanged -= StateHasChanged;
+    }
+}
+
+

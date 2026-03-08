@@ -1,0 +1,285 @@
+@page "/"
+@inject SimulatorService Sim
+@inject MqttSimService Mqtt
+@inject SimSettingsService Settings
+@implements IDisposable
+
+<div class="container-fluid">
+
+    <!-- ── Header ── -->
+    <div class="d-flex justify-content-between align-items-center mt-3 mb-3">
+        <h2 class="text-white mb-0">
+            <i class="bi bi-cpu-fill me-2 text-info"></i>Machine MQTT Simulator
+        </h2>
+        <div class="d-flex gap-2 align-items-center">
+            <span class="badge @(Mqtt.IsConnected ? "bg-success" : "bg-danger") py-2 px-3">
+                <i class="bi bi-@(Mqtt.IsConnected ? "wifi" : "wifi-off") me-1"></i>
+                @(Mqtt.IsConnected ? "MQTT Connected" : "MQTT Disconnected")
+            </span>
+            <button class="btn @(Sim.SendingEnabled ? "btn-danger" : "btn-success") px-4 fw-bold"
+                    @onclick="ToggleSending">
+                <i class="bi bi-@(Sim.SendingEnabled ? "stop-circle-fill" : "play-circle-fill") me-1"></i>
+                @(Sim.SendingEnabled ? "Stop Sending" : "Start Sending")
+            </button>
+        </div>
+    </div>
+
+    @if (Sim.SendingEnabled)
+    {
+        <div class="alert alert-success py-2 mb-3">
+            <i class="bi bi-broadcast me-1"></i>
+            Sending status for all machines every <strong>@((Settings.GetBrokerSettings().SendFrequencyMs / 1000.0).ToString("F1")) s</strong>
+            &nbsp;|&nbsp; Topic prefix: <code>@Settings.GetBrokerSettings().GetPublishTopicPrefix()</code>
+        </div>
+    }
+
+    <!-- ── Add machine bar ── -->
+    <div class="card bg-dark text-white border-secondary mb-3">
+        <div class="card-body py-2">
+            <div class="d-flex gap-2 align-items-center flex-wrap">
+                <i class="bi bi-plus-circle text-success"></i>
+                <span class="text-muted">Add Machine:</span>
+                <input class="form-control form-control-sm bg-secondary text-white border-0"
+                       style="max-width:220px"
+                       placeholder="Machine name..."
+                       @bind="newMachineName"
+                       @onkeypress="OnEnterAdd" />
+                <button class="btn btn-sm btn-success" @onclick="AddMachine">
+                    <i class="bi bi-plus"></i> Add
+                </button>
+                <span class="text-muted ms-3">
+                    <i class="bi bi-list-ul me-1"></i>@Sim.Machines.Count machine(s) configured
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- ── No machines hint ── -->
+    @if (!Sim.Machines.Any())
+    {
+        <div class="alert alert-info">
+            <i class="bi bi-info-circle me-1"></i>
+            No machines configured yet. Add machine names above to start simulating.
+        </div>
+    }
+
+    <!-- ── Machine cards ── -->
+    <div class="row g-3">
+        @foreach (var machine in Sim.Machines)
+        {
+            var actShift = machine.GetShift(machine.ActShift);
+            <div class="col-xl-4 col-lg-6">
+                <div class="card bg-dark text-white border-secondary h-100">
+
+                    <!-- Card header -->
+                    <div class="card-header @GetHeaderClass(machine.Status) d-flex justify-content-between align-items-center py-2">
+                        <h5 class="mb-0">
+                            <i class="bi bi-cpu me-2"></i>@machine.Name
+                        </h5>
+                        <div class="d-flex gap-2 align-items-center">
+                            <span class="badge @GetStatusBadge(machine.Status) fs-6">@machine.Status</span>
+                            <button class="btn btn-sm btn-outline-danger py-0 px-1"
+                                    title="Remove machine"
+                                    @onclick="() => Sim.RemoveMachine(machine.Name)">
+                                <i class="bi bi-x-lg"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card-body py-2 px-3">
+
+                        <!-- Status control -->
+                        <div class="d-flex align-items-center mb-2 gap-2">
+                            <small class="text-muted" style="min-width:55px">Status:</small>
+                            <div class="btn-group flex-fill">
+                                <button class="btn btn-sm @(machine.Status=="run"?"btn-success":"btn-outline-success")"
+                                        @onclick='() => Sim.SetStatus(machine,"run")'>
+                                    <i class="bi bi-play-fill"></i> Run
+                                </button>
+                                <button class="btn btn-sm @(machine.Status=="idle"?"btn-secondary":"btn-outline-secondary")"
+                                        @onclick='() => Sim.SetStatus(machine,"idle")'>
+                                    <i class="bi bi-pause-fill"></i> Idle
+                                </button>
+                                <button class="btn btn-sm @(machine.Status=="error"?"btn-danger":"btn-outline-danger")"
+                                        @onclick='() => Sim.SetStatus(machine,"error")'>
+                                    <i class="bi bi-exclamation-triangle-fill"></i> Error
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Shift selector -->
+                        <div class="d-flex align-items-center mb-2 gap-2">
+                            <small class="text-muted" style="min-width:55px">Act.Shift:</small>
+                            <div class="btn-group flex-fill">
+                                @for (int sn = 1; sn <= 3; sn++)
+                                {
+                                    var s = sn;
+                                    <button class="btn btn-sm @(machine.ActShift==s?"btn-info":"btn-outline-info")"
+                                            @onclick="() => Sim.SetShift(machine, s)">
+                                        Shift @s
+                                    </button>
+                                }
+                            </div>
+                        </div>
+
+                        <!-- Live speed / eff / reject -->
+                        <div class="row g-1 mb-2 text-center">
+                            <div class="col-4">
+                                <div class="bg-secondary rounded py-1 px-1">
+                                    <small class="text-muted d-block" style="font-size:.7rem">Speed</small>
+                                    <strong>@machine.Speed</strong>
+                                    <small class="text-muted"> pcs/h</small>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="bg-secondary rounded py-1 px-1">
+                                    <small class="text-muted d-block" style="font-size:.7rem">Efficiency</small>
+                                    <strong>@machine.Efficiency.ToString("F1")</strong>
+                                    <small class="text-muted">%</small>
+                                </div>
+                            </div>
+                            <div class="col-4">
+                                <div class="@(machine.Reject>5?"bg-danger":"bg-secondary") rounded py-1 px-1">
+                                    <small class="text-muted d-block" style="font-size:.7rem">Reject</small>
+                                    <strong>@machine.Reject.ToString("F1")</strong>
+                                    <small class="text-muted">%</small>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Shift data table -->
+                        <div class="table-responsive mb-2">
+                            <table class="table table-dark table-sm table-bordered mb-0" style="font-size:.75rem">
+                                <thead>
+                                    <tr class="text-center text-muted">
+                                        <th class="text-start">Metric</th>
+                                        <th class="@(machine.ActShift==1?"text-info fw-bold":"")">S1</th>
+                                        <th class="@(machine.ActShift==2?"text-info fw-bold":"")">S2</th>
+                                        <th class="@(machine.ActShift==3?"text-info fw-bold":"")">S3</th>
+                                        <th>Total</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    @ShiftRow("Prod.Time", machine,
+                                        s => FormatTime(s.ProductionTime))
+                                    @ShiftRow("Idle Time", machine,
+                                        s => FormatTime(s.IdleTime))
+                                    @ShiftRow("Swaps", machine,
+                                        s => s.ProducedSwaps.ToString())
+                                    @ShiftRow("Boxes", machine,
+                                        s => s.ProducedBoxes.ToString())
+                                    @ShiftRow("Packaged", machine,
+                                        s => s.PackagedSwaps.ToString())
+                                    @ShiftRow("Discarded", machine,
+                                        s => s.DisgardedSwaps.ToString(), warn: true)
+                                    @ShiftRow("Cotton Tears", machine,
+                                        s => s.CottonTears.ToString(), warn: true)
+                                    @ShiftRow("Miss.Sticks", machine,
+                                        s => s.MissingSticks.ToString(), warn: true)
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Save buttons -->
+                        <div class="d-flex gap-1">
+                            @for (int sn = 1; sn <= 3; sn++)
+                            {
+                                var s = sn;
+                                <button class="btn btn-sm btn-warning flex-fill"
+                                        @onclick="() => Sim.TriggerSave(machine, s)"
+                                        title="Send Shift @s data immediately with Save=true">
+                                    <i class="bi bi-floppy-fill me-1"></i>Save S@s
+                                </button>
+                            }
+                        </div>
+                    </div>
+
+                    <!-- Card footer -->
+                    <div class="card-footer py-1 d-flex justify-content-between text-muted small">
+                        <span>Active shift: <strong class="text-info">@machine.ActShift</strong></span>
+                        <span>@(Sim.SendingEnabled ? "🟢 Sending" : "⚫ Paused")</span>
+                    </div>
+                </div>
+            </div>
+        }
+    </div>
+</div>
+
+@code {
+    private string newMachineName = "";
+
+    protected override void OnInitialized()
+    {
+        Sim.OnDataChanged      += RefreshUI;
+        Mqtt.OnConnectionChanged += RefreshUI;
+    }
+
+    private void RefreshUI() => InvokeAsync(StateHasChanged);
+    private void RefreshUI(bool _) => InvokeAsync(StateHasChanged);
+
+    private void AddMachine()
+    {
+        Sim.AddMachine(newMachineName);
+        newMachineName = "";
+    }
+
+    private void OnEnterAdd(KeyboardEventArgs e)
+    {
+        if (e.Key == "Enter") AddMachine();
+    }
+
+    private void ToggleSending() => Sim.EnableSending(!Sim.SendingEnabled);
+
+    // ── Helpers ──────────────────────────────────────────────────────────────────
+
+    private string GetStatusBadge(string status) => status switch
+    {
+        "run"   => "bg-success",
+        "idle"  => "bg-secondary",
+        "error" => "bg-danger",
+        _       => "bg-secondary"
+    };
+
+    private string GetHeaderClass(string status) => status switch
+    {
+        "run"   => "border-bottom border-success",
+        "idle"  => "border-bottom border-secondary",
+        "error" => "border-bottom border-danger",
+        _       => ""
+    };
+
+    private static string FormatTime(long minutes)
+    {
+        if (minutes <= 0) return "00:00";
+        return $"{minutes / 60:D2}:{minutes % 60:D2}";
+    }
+
+    // Renders one table row for the given metric across all shifts
+    private RenderFragment ShiftRow(string label, SimMachine m,
+        Func<ShiftData, string> getValue, bool warn = false)
+    {
+        return builder =>
+        {
+            builder.OpenElement(0, "tr");
+            builder.OpenElement(1, "td"); builder.AddContent(2, label); builder.CloseElement();
+
+            var shifts = new[] { (1, m.Shift1), (2, m.Shift2), (3, m.Shift3), (4, m.Total) };
+            int seq = 3;
+            foreach (var (n, d) in shifts)
+            {
+                var css = n == m.ActShift ? "text-center fw-bold text-info" : "text-center";
+                builder.OpenElement(seq++, "td");
+                builder.AddAttribute(seq++, "class", css);
+                builder.AddContent(seq++, getValue(d));
+                builder.CloseElement();
+            }
+            builder.CloseElement();
+        };
+    }
+
+    public void Dispose()
+    {
+        Sim.OnDataChanged        -= RefreshUI;
+        Mqtt.OnConnectionChanged -= RefreshUI;
+    }
+}

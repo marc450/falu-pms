@@ -1,0 +1,539 @@
+@page "/settings"
+@using Dashboard
+@inject SettingsService SettingsService
+@inject MqttService MqttService
+@inject AuthenticationService AuthService
+@implements IDisposable
+
+<AuthorizeView RequiredRole="UserRole.Supervisor">
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mt-3 mb-4">
+        <h2 class="text-white">Settings</h2>
+        <span class="badge bg-warning">Configuration</span>
+    </div>
+
+    @if (!string.IsNullOrEmpty(successMessage))
+    {
+        <div class="alert alert-success alert-dismissible fade show" role="alert">
+            <i class="bi bi-check-circle-fill me-2"></i> @successMessage
+            <button type="button" class="btn-close" @onclick="() => successMessage = string.Empty"></button>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(errorMessage))
+    {
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <i class="bi bi-exclamation-triangle-fill me-2"></i> @errorMessage
+            <button type="button" class="btn-close" @onclick="() => errorMessage = string.Empty"></button>
+        </div>
+    }
+
+    <div class="row">
+        <!-- Broker Settings (Admin Only) -->
+        @if (AuthService.HasRole(UserRole.Administrator))
+        {
+            <div class="col-md-6">
+                <div class="card bg-dark text-white mb-4 border-danger shadow" style="height: 580px;">
+                    <div class="card-header bg-danger">
+                        <h4 class="mb-0"><i class="bi bi-server"></i> MQTT Broker Settings</h4>
+                        <small>Administrator Access Required</small>
+                    </div>
+                    <div class="card-body d-flex flex-column">
+                        <EditForm Model="@brokerSettings" OnValidSubmit="@SaveBrokerSettings">
+                            <div class="mb-3">
+                                <label class="form-label">Host / IP Address</label>
+                                <InputText class="form-control" @bind-Value="brokerSettings.Host" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Port</label>
+                                <InputNumber class="form-control" @bind-Value="brokerSettings.Port" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Username</label>
+                                <InputText class="form-control" @bind-Value="brokerSettings.Username" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Password</label>
+                                <InputText type="password" class="form-control" @bind-Value="brokerSettings.Password" />
+                            </div>
+
+                            <div class="mb-3">
+                                <label class="form-label">Instance Type</label>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="instanceType" id="radioLocal" 
+                                           checked="@brokerSettings.IsLocal" @onchange="() => brokerSettings.IsLocal = true">
+                                    <label class="form-check-label" for="radioLocal">
+                                        Local
+                                    </label>
+                                </div>
+                                <div class="form-check">
+                                    <input class="form-check-input" type="radio" name="instanceType" id="radioCloud" 
+                                           checked="@(!brokerSettings.IsLocal)" @onchange="() => brokerSettings.IsLocal = false">
+                                    <label class="form-check-label" for="radioCloud">
+                                        Cloud
+                                    </label>
+                                </div>
+                            </div>
+
+                            <div class="mt-auto">
+                                <button type="submit" class="btn btn-danger w-100">
+                                    <i class="bi bi-save"></i> Save Broker Settings
+                                </button>
+                            </div>
+                        </EditForm>
+                    </div>
+                </div>
+            </div>
+        }
+
+        <!-- Machine Settings (Supervisor and Admin) -->
+        <div class="@(AuthService.HasRole(UserRole.Administrator) ? "col-md-6" : "col-12")">
+            <div class="card bg-dark text-white mb-4 border-warning shadow" style="height: 580px;">
+                <div class="card-header bg-warning text-dark">
+                    <h4 class="mb-0"><i class="bi bi-gear-fill"></i> Machine Configuration</h4>
+                    <small>Supervisor Access Required</small>
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <div class="mb-3">
+                        <label class="form-label">Add New Machine</label>
+                        <div class="input-group">
+                            <input type="text" class="form-control" @bind="newMachineName" placeholder="Machine name..." />
+                            <button class="btn btn-success" @onclick="AddMachine">
+                                <i class="bi bi-plus-circle"></i> Add
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="mb-3 flex-fill d-flex flex-column">
+                        <label class="form-label">Enabled Machines (@machineSettings.EnabledMachines.Count)</label>
+                        <div class="machine-list-container flex-fill">
+                            @if (!machineSettings.EnabledMachines.Any())
+                            {
+                                <div class="alert alert-info mb-0">
+                                    <i class="bi bi-info-circle"></i> No machines configured. All discovered machines will be shown.
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="list-group">
+                                    @foreach (var machine in machineSettings.EnabledMachines.OrderBy(m => m))
+                                    {
+                                        <div class="list-group-item list-group-item-action bg-secondary text-white d-flex justify-content-between align-items-center">
+                                            <span>
+                                                <i class="bi bi-cpu"></i> @machine
+                                            </span>
+                                            <button class="btn btn-sm btn-danger" @onclick="() => RemoveMachine(machine)">
+                                                <i class="bi bi-trash"></i> Delete
+                                            </button>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="mt-auto">
+                        <button class="btn btn-warning text-dark w-100" @onclick="SaveMachineSettings">
+                            <i class="bi bi-save"></i> Save Machine Configuration
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Current Discovered Machines -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card bg-dark text-white mb-4 border-info shadow">
+                <div class="card-header bg-info text-dark">
+                    <h4 class="mb-0"><i class="bi bi-broadcast"></i> Discovered Machines</h4>
+                    <small>Machines currently connected via MQTT</small>
+                </div>
+                <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                    @if (!MqttService.AllMachines.Any())
+                    {
+                        <div class="alert alert-warning">
+                            <i class="bi bi-exclamation-triangle"></i> No machines discovered yet. Waiting for MQTT data...
+                        </div>
+                    }
+                    else
+                    {
+                        <div class="row">
+                            @foreach (var machine in MqttService.AllMachines.Values
+                                .Where(m => !machineSettings.EnabledMachines.Contains(m.Machine))
+                                .OrderBy(m => m.Machine))
+                            {
+                                <div class="col-md-3 mb-2">
+                                    <div class="card bg-secondary">
+                                        <div class="card-body py-2">
+                                            <div class="d-flex justify-content-between align-items-center">
+                                                <span>
+                                                    <i class="bi bi-cpu"></i> @machine.Machine
+                                                </span>
+                                                <button class="btn btn-sm btn-success" @onclick="() => AddMachineFromDiscovered(machine.Machine)">
+                                                    <i class="bi bi-plus-circle"></i> Add
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- User Administration (Supervisor+) -->
+    <div class="row">
+        <div class="col-12">
+            <div class="card bg-dark text-white mb-4 border-success shadow">
+                <div class="card-header bg-success">
+                    <h4 class="mb-0"><i class="bi bi-people-fill"></i> User Administration</h4>
+                    <small>Supervisor Access Required</small>
+                </div>
+                <div class="card-body">
+                    <div class="row">
+                        <!-- Create New User -->
+                        <div class="col-md-4">
+                            <h6 class="text-success">Create New User</h6>
+                            <div class="mb-2">
+                                <label class="form-label">Username</label>
+                                <input type="text" class="form-control" @bind="newUsername" placeholder="Enter username..." />
+                            </div>
+                            <div class="mb-2">
+                                <label class="form-label">Password</label>
+                                <input type="password" class="form-control" @bind="newPassword" placeholder="Min. 6 characters..." />
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Role</label>
+                                <select class="form-select" @bind="newUserRole">
+                                    <option value="@UserRole.User">User</option>
+                                    <option value="@UserRole.Supervisor">Supervisor</option>
+                                    @if (AuthService.HasRole(UserRole.Administrator))
+                                    {
+                                        <option value="@UserRole.Administrator">Administrator</option>
+                                    }
+                                </select>
+                            </div>
+                            <button class="btn btn-success w-100" @onclick="CreateUser">
+                                <i class="bi bi-person-plus-fill"></i> Create User
+                            </button>
+                        </div>
+
+                        <!-- User List -->
+                        <div class="col-md-8">
+                            <h6 class="text-success">Existing Users (@AuthService.GetAllUsers().Count)</h6>
+                            <div class="user-list-container">
+                                <table class="table table-dark table-sm table-hover mb-0">
+                                    <thead>
+                                        <tr>
+                                            <th>Username</th>
+                                            <th>Role</th>
+                                            <th style="width: 80px;">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var user in AuthService.GetAllUsers().OrderBy(u => u.Role).ThenBy(u => u.Username))
+                                        {
+                                            var isCurrentUser = user.Username == AuthService.GetCurrentUser().Username;
+                                            <tr class="@(isCurrentUser ? "table-active" : "")">
+                                                <td>
+                                                    <i class="bi bi-person-fill me-1"></i>
+                                                    @user.Username
+                                                    @if (isCurrentUser)
+                                                    {
+                                                        <span class="badge bg-info ms-1">You</span>
+                                                    }
+                                                </td>
+                                                <td>
+                                                    <span class="badge @GetRoleBadgeClass(user.Role)">
+                                                        @AuthService.GetRoleDisplayName(user.Role)
+                                                    </span>
+                                                </td>
+                                                <td>
+                                                    @if (!isCurrentUser && CanDeleteUser(user.Role))
+                                                    {
+                                                        <button class="btn btn-sm btn-danger" @onclick="() => ConfirmDeleteUser(user.Username)">
+                                                            <i class="bi bi-trash"></i>
+                                                        </button>
+                                                    }
+                                                    else if (isCurrentUser)
+                                                    {
+                                                        <span class="text-muted small">—</span>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-muted small">—</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Delete User Confirmation Modal -->
+@if (showDeleteUserConfirm)
+{
+    <div style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.7); z-index: 1050;">
+        <div class="modal d-block" style="z-index: 1055;">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content bg-dark text-white border-danger">
+                    <div class="modal-header bg-danger">
+                        <h5 class="modal-title"><i class="bi bi-exclamation-triangle"></i> Delete User</h5>
+                    </div>
+                    <div class="modal-body">
+                        Are you sure you want to delete user <strong>@deleteUsername</strong>?
+                        <br /><small class="text-muted">This action cannot be undone.</small>
+                    </div>
+                    <div class="modal-footer">
+                        <button class="btn btn-secondary" @onclick="() => showDeleteUserConfirm = false">Cancel</button>
+                        <button class="btn btn-danger" @onclick="ExecuteDeleteUser">
+                            <i class="bi bi-trash"></i> Delete User
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+}
+
+@code {
+    private BrokerSettings brokerSettings = new();
+    private MachineSettings machineSettings = new();
+    private string newMachineName = "";
+    private string successMessage = "";
+    private string errorMessage = "";
+
+    // User administration
+    private string newUsername = "";
+    private string newPassword = "";
+    private UserRole newUserRole = UserRole.User;
+    private bool showDeleteUserConfirm = false;
+    private string deleteUsername = "";
+
+    protected override void OnInitialized()
+    {
+        LoadSettings();
+        MqttService.OnDataChanged += RefreshUI;
+        AuthService.OnUsersChanged += RefreshUI;
+    }
+
+    private void LoadSettings()
+    {
+        var settings = SettingsService.GetSettings();
+        brokerSettings = new BrokerSettings
+        {
+            Host = settings.Broker.Host,
+            Port = settings.Broker.Port,
+            Username = settings.Broker.Username,
+            Password = settings.Broker.Password,
+            IsLocal = settings.Broker.IsLocal
+        };
+
+        machineSettings = new MachineSettings
+        {
+            EnabledMachines = new List<string>(settings.Machines.EnabledMachines)
+        };
+    }
+
+    private void SaveBrokerSettings()
+    {
+        try
+        {
+            SettingsService.SaveBrokerSettings(brokerSettings);
+            successMessage = "Broker settings saved successfully! Reconnecting...";
+            errorMessage = "";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving broker settings: {ex.Message}";
+            successMessage = "";
+        }
+    }
+
+    private void AddMachine()
+    {
+        if (!string.IsNullOrWhiteSpace(newMachineName) && !machineSettings.EnabledMachines.Contains(newMachineName))
+        {
+            machineSettings.EnabledMachines.Add(newMachineName);
+            newMachineName = "";
+        }
+    }
+
+    private void AddMachineFromDiscovered(string machineName)
+    {
+        if (!machineSettings.EnabledMachines.Contains(machineName))
+        {
+            machineSettings.EnabledMachines.Add(machineName);
+        }
+    }
+
+    private void RemoveMachine(string machineName)
+    {
+        machineSettings.EnabledMachines.Remove(machineName);
+    }
+
+    private void SaveMachineSettings()
+    {
+        try
+        {
+            SettingsService.SaveMachineSettings(machineSettings);
+            successMessage = "Machine configuration saved successfully!";
+            errorMessage = "";
+        }
+        catch (Exception ex)
+        {
+            errorMessage = $"Error saving machine settings: {ex.Message}";
+            successMessage = "";
+        }
+    }
+
+    private void RefreshUI()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    private void CreateUser()
+    {
+        var (success, error) = AuthService.CreateUser(newUsername.Trim(), newPassword, newUserRole);
+        if (success)
+        {
+            successMessage = $"User '{newUsername}' created successfully.";
+            errorMessage = "";
+            newUsername = "";
+            newPassword = "";
+            newUserRole = UserRole.User;
+        }
+        else
+        {
+            errorMessage = error;
+            successMessage = "";
+        }
+    }
+
+    private void ConfirmDeleteUser(string username)
+    {
+        deleteUsername = username;
+        showDeleteUserConfirm = true;
+    }
+
+    private void ExecuteDeleteUser()
+    {
+        var (success, error) = AuthService.DeleteUser(deleteUsername, AuthService.GetCurrentUser().Username);
+        if (success)
+        {
+            successMessage = $"User '{deleteUsername}' deleted successfully.";
+            errorMessage = "";
+        }
+        else
+        {
+            errorMessage = error;
+            successMessage = "";
+        }
+        showDeleteUserConfirm = false;
+        deleteUsername = "";
+    }
+
+    private bool CanDeleteUser(UserRole targetRole)
+    {
+        // Supervisors can delete Users; Admins can delete Users and Supervisors
+        if (AuthService.HasRole(UserRole.Administrator)) return true;
+        if (AuthService.HasRole(UserRole.Supervisor) && targetRole == UserRole.User) return true;
+        return false;
+    }
+
+    private string GetRoleBadgeClass(UserRole role) => role switch
+    {
+        UserRole.Administrator => "bg-danger",
+        UserRole.Supervisor    => "bg-warning text-dark",
+        UserRole.User          => "bg-secondary",
+        _ => "bg-secondary"
+    };
+
+    public void Dispose()
+    {
+        MqttService.OnDataChanged -= RefreshUI;
+        AuthService.OnUsersChanged -= RefreshUI;
+    }
+}
+</AuthorizeView>
+
+<style>
+    .form-control {
+        background-color: #2a2a2a;
+        border: 1px solid #444;
+        color: white;
+    }
+
+    .form-control:focus {
+        background-color: #333;
+        border-color: #0d6efd;
+        color: white;
+    }
+
+    .form-select {
+        background-color: #2a2a2a;
+        border: 1px solid #444;
+        color: white;
+    }
+
+    .form-select:focus {
+        background-color: #333;
+        border-color: #0d6efd;
+        color: white;
+    }
+
+    .list-group-item {
+        border: 1px solid #444;
+    }
+
+    .machine-list-container {
+        max-height: 300px;
+        overflow-y: auto;
+        border: 1px solid #444;
+        border-radius: 0.25rem;
+        padding: 0.5rem;
+    }
+
+    .machine-list-container::-webkit-scrollbar {
+        width: 8px;
+    }
+
+    .machine-list-container::-webkit-scrollbar-track {
+        background: #1a1a1a;
+        border-radius: 4px;
+    }
+
+    .machine-list-container::-webkit-scrollbar-thumb {
+        background: #555;
+        border-radius: 4px;
+    }
+
+    .machine-list-container::-webkit-scrollbar-thumb:hover {
+        background: #777;
+    }
+
+    .user-list-container {
+        max-height: 300px;
+        overflow-y: auto;
+    }
+
+    .user-list-container::-webkit-scrollbar { width: 8px; }
+    .user-list-container::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 4px; }
+    .user-list-container::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+    .user-list-container::-webkit-scrollbar-thumb:hover { background: #777; }
+</style>
