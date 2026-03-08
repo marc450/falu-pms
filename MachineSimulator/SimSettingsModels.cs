@@ -9,7 +9,7 @@ namespace MachineSimulator
         public bool IsLocal { get; set; } = true;
         public int SendFrequencyMs { get; set; } = 2000;
 
-        public string GetSubscribeTopic() => IsLocal ? "local/#" : "cloud/*";
+        public string GetSubscribeTopic() => IsLocal ? "local/#" : "cloud/#";
         public string GetPublishTopicPrefix() => IsLocal ? "local" : "cloud";
     }
 
