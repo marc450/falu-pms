@@ -125,7 +125,7 @@ namespace MachineSimulator
             try
             {
                 var prefix = _settings.GetBrokerSettings().GetPublishTopicPrefix();
-                await Publish($"{prefix}/{msg.Machine}/Status", msg);
+                await Publish($"{prefix}/Status", msg);
             }
             catch (Exception ex) { Console.WriteLine($"[MQTT-Sim] PublishStatus error: {ex.Message}"); }
         }
@@ -136,7 +136,7 @@ namespace MachineSimulator
             try
             {
                 var prefix = _settings.GetBrokerSettings().GetPublishTopicPrefix();
-                await Publish($"{prefix}/{msg.Machine}/Shift", msg);
+                await Publish($"{prefix}/Shift", msg);
                 Console.WriteLine($"[MQTT-Sim] Shift {msg.Shift} published for {msg.Machine} (Save={msg.Save})");
             }
             catch (Exception ex) { Console.WriteLine($"[MQTT-Sim] PublishShift error: {ex.Message}"); }
