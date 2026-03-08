@@ -35,6 +35,7 @@ namespace MachineSimulator
             var builder = new MqttClientOptionsBuilder()
                 .WithCredentials(b.Username, b.Password)
                 .WithCleanSession()
+                .WithNoKeepAlive()
                 .WithTcpServer(b.Host, b.Port);
 
             if (!b.IsLocal)
