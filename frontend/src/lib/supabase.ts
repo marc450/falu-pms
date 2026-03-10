@@ -14,10 +14,8 @@ export function getSupabase(): SupabaseClient {
   return _supabase;
 }
 
-// Legacy export for backward compatibility
-export const supabase = typeof window !== "undefined"
-  ? getSupabase()
-  : (null as unknown as SupabaseClient);
+// Legacy export - use getSupabase() instead for lazy initialization
+export const supabase = null as unknown as SupabaseClient;
 
 // ============================================
 // TYPES (matching MQTT payload structure)
