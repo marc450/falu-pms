@@ -134,7 +134,7 @@ export default function Dashboard() {
                 return (
                   <tr
                     key={m.machine}
-                    onClick={() => router.push(`/production/${m.machine}`)}
+                    onClick={() => router.push(`/production?machine=${m.machine}`)}
                     className="cursor-pointer hover:bg-white/5 transition-colors"
                   >
                     <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>

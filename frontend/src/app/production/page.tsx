@@ -1,22 +1,20 @@
 "use client";
 
-import { useEffect, useState, useCallback, use } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useState, useCallback, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { fetchMachine, requestShiftData } from "@/lib/supabase";
 import type { MachineData, ShiftDataMessage } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor } from "@/lib/utils";
 
-interface Props {
-  params: Promise<{ machineName: string }>;
-}
-
-export default function ProductionPage({ params }: Props) {
-  const { machineName } = use(params);
+function ProductionContent() {
+  const searchParams = useSearchParams();
+  const machineName = searchParams.get("machine") || "";
   const [machine, setMachine] = useState<MachineData | null>(null);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
   const loadData = useCallback(async () => {
+    if (!machineName) return;
     try {
       const data = await fetchMachine(machineName);
       setMachine(data);
@@ -28,6 +26,11 @@ export default function ProductionPage({ params }: Props) {
   }, [machineName]);
 
   useEffect(() => {
+    if (!machineName) {
+      setLoading(false);
+      return;
+    }
+
     loadData();
 
     // Send initial request for all shift data
@@ -73,7 +76,6 @@ export default function ProductionPage({ params }: Props) {
     }
   };
 
-  // Define the rows for the shift table
   const metrics: {
     label: string;
     key: keyof ShiftDataMessage;
@@ -95,6 +97,14 @@ export default function ProductionPage({ params }: Props) {
     { label: "Efficiency", key: "Efficiency", format: "percent" },
     { label: "Reject", key: "Reject", format: "percent", dangerClass: "text-red-400" },
   ];
+
+  if (!machineName) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500">No machine selected. Go back to the dashboard.</div>
+      </div>
+    );
+  }
 
   if (loading) {
     return (
@@ -207,5 +217,22 @@ export default function ProductionPage({ params }: Props) {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ProductionPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex items-center justify-center h-64">
+          <div className="text-gray-500 flex items-center gap-2">
+            <span className="inline-block w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></span>
+            Loading...
+          </div>
+        </div>
+      }
+    >
+      <ProductionContent />
+    </Suspense>
   );
 }
