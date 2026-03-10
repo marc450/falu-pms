@@ -98,8 +98,8 @@ function simulateTick(machine) {
   shift.discardedSwabs += discarded;
   shift.packagedSwabs += (swabsThisTick - discarded);
 
-  // Boxes (roughly every 50 swabs)
-  const newBoxes = Math.floor(shift.packagedSwabs / 50) - shift.producedBoxes;
+  // Blisters (500 swabs per blister)
+  const newBoxes = Math.floor(shift.packagedSwabs / 500) - shift.producedBoxes;
   if (newBoxes > 0) {
     shift.producedBoxes += newBoxes;
     if (Math.random() < 0.25) {

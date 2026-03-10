@@ -11,6 +11,7 @@ type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficien
 export default function Dashboard() {
   const [machines, setMachines] = useState<Record<string, MachineData>>({});
   const [mqttConnected, setMqttConnected] = useState(false);
+  const [currentShift, setCurrentShift] = useState<number>(0);
   const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -21,6 +22,7 @@ export default function Dashboard() {
       const state = await fetchMachines();
       setMachines(state.machines);
       setMqttConnected(state.mqttConnected);
+      setCurrentShift(state.currentShiftNumber || 0);
     } catch (err) {
       console.error("Failed to fetch machines:", err);
     }
@@ -93,6 +95,12 @@ export default function Dashboard() {
             <i className="bi bi-calendar3 mr-1"></i>
             {currentTime.toLocaleString("de-DE")}
           </span>
+          {currentShift > 0 && (
+            <span className="bg-blue-900/40 text-blue-300 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
+              <i className="bi bi-clock mr-1"></i>
+              Shift {currentShift}
+            </span>
+          )}
           {!hasData ? (
             <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
               <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
@@ -146,7 +154,7 @@ export default function Dashboard() {
                     </td>
                     <td className="px-4 py-3">
                       {m.machineStatus?.Speed ? (
-                        <>{m.machineStatus.Speed} <span className="text-gray-500 text-xs">pcs/m</span></>
+                        <>{m.machineStatus.Speed} <span className="text-gray-500 text-xs">pcs/min</span></>
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
