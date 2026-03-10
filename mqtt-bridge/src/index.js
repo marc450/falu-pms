@@ -384,8 +384,17 @@ function publishRequestShift(machine, shift) {
 // REST API (for frontend)
 // ============================================
 const app = express();
-app.use(cors());
+app.use(cors({
+  origin: "*",
+  methods: ["GET", "POST"],
+  allowedHeaders: ["Content-Type", "ngrok-skip-browser-warning"],
+}));
 app.use(express.json());
+
+// Root route (used by ngrok health checks)
+app.get("/", (req, res) => {
+  res.json({ service: "FALU PMS Bridge", status: "ok" });
+});
 
 // Health check
 app.get("/api/health", (req, res) => {

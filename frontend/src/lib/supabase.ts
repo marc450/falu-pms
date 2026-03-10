@@ -88,14 +88,20 @@ export interface CsvPreview {
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
+// Include ngrok bypass header so the free-tier warning page is skipped
+const API_HEADERS: HeadersInit = {
+  "Content-Type": "application/json",
+  "ngrok-skip-browser-warning": "true",
+};
+
 export async function fetchMachines(): Promise<BridgeState> {
-  const res = await fetch(`${API_BASE}/api/machines`);
+  const res = await fetch(`${API_BASE}/api/machines`, { headers: API_HEADERS });
   if (!res.ok) throw new Error("Failed to fetch machines");
   return res.json();
 }
 
 export async function fetchMachine(code: string): Promise<MachineData> {
-  const res = await fetch(`${API_BASE}/api/machines/${code}`);
+  const res = await fetch(`${API_BASE}/api/machines/${code}`, { headers: API_HEADERS });
   if (!res.ok) throw new Error("Machine not found");
   return res.json();
 }
@@ -103,23 +109,23 @@ export async function fetchMachine(code: string): Promise<MachineData> {
 export async function requestShiftData(machineCode: string, shift: number): Promise<void> {
   await fetch(`${API_BASE}/api/machines/${machineCode}/request-shift`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: API_HEADERS,
     body: JSON.stringify({ shift }),
   });
 }
 
 export async function fetchBrokerSettings() {
-  const res = await fetch(`${API_BASE}/api/settings/broker`);
+  const res = await fetch(`${API_BASE}/api/settings/broker`, { headers: API_HEADERS });
   return res.json();
 }
 
 export async function fetchLogFiles(): Promise<LogFile[]> {
-  const res = await fetch(`${API_BASE}/api/logs`);
+  const res = await fetch(`${API_BASE}/api/logs`, { headers: API_HEADERS });
   return res.json();
 }
 
 export async function fetchLogPreview(filename: string): Promise<CsvPreview> {
-  const res = await fetch(`${API_BASE}/api/logs/preview/${filename}`);
+  const res = await fetch(`${API_BASE}/api/logs/preview/${filename}`, { headers: API_HEADERS });
   return res.json();
 }
 
