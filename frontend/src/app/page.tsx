@@ -1,243 +1,181 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import {
-  supabase,
-  getMachines,
-  getLatestReadings,
-  getActiveAlerts,
-  acknowledgeAlert,
-} from "@/lib/supabase";
-import type { Machine, ProductionReading, Alert } from "@/lib/supabase";
-import KpiCard from "@/components/KpiCard";
-import MachineSelector from "@/components/MachineSelector";
-import ProductionChart from "@/components/ProductionChart";
-import AlertsPanel from "@/components/AlertsPanel";
+import { useRouter } from "next/navigation";
+import { fetchMachines } from "@/lib/supabase";
+import type { MachineData } from "@/lib/supabase";
+import { getStatusColor } from "@/lib/utils";
+
+type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
 
 export default function Dashboard() {
-  const [machines, setMachines] = useState<Machine[]>([]);
-  const [readings, setReadings] = useState<ProductionReading[]>([]);
-  const [alerts, setAlerts] = useState<Alert[]>([]);
-  const [selectedMachine, setSelectedMachine] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [machines, setMachines] = useState<Record<string, MachineData>>({});
+  const [mqttConnected, setMqttConnected] = useState(false);
+  const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
+  const [sortAsc, setSortAsc] = useState(true);
+  const [currentTime, setCurrentTime] = useState(new Date());
+  const router = useRouter();
 
-  const fetchData = useCallback(async () => {
+  const loadData = useCallback(async () => {
     try {
-      const [machineData, readingData, alertData] = await Promise.all([
-        getMachines(),
-        getLatestReadings(selectedMachine || undefined, 100),
-        getActiveAlerts(),
-      ]);
-      setMachines(machineData);
-      setReadings(readingData);
-      setAlerts(alertData);
+      const state = await fetchMachines();
+      setMachines(state.machines);
+      setMqttConnected(state.mqttConnected);
     } catch (err) {
-      console.error("Failed to fetch data:", err);
-    } finally {
-      setLoading(false);
+      console.error("Failed to fetch machines:", err);
     }
-  }, [selectedMachine]);
+  }, []);
 
   useEffect(() => {
-    fetchData();
-
-    // Subscribe to real-time updates on production_readings
-    const channel = supabase
-      .channel("production-updates")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "production_readings" },
-        () => {
-          fetchData();
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "alerts" },
-        () => {
-          fetchData();
-        }
-      )
-      .subscribe();
-
+    loadData();
+    const dataInterval = setInterval(loadData, 2000);
+    const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => {
-      supabase.removeChannel(channel);
+      clearInterval(dataInterval);
+      clearInterval(clockInterval);
     };
-  }, [fetchData]);
+  }, [loadData]);
 
-  const handleAcknowledge = async (alertId: string) => {
-    await acknowledgeAlert(alertId, "operator");
-    setAlerts((prev) => prev.filter((a) => a.id !== alertId));
+  const handleSort = (col: SortColumn) => {
+    if (sortColumn === col) {
+      setSortAsc(!sortAsc);
+    } else {
+      setSortColumn(col);
+      setSortAsc(true);
+    }
   };
 
-  // Calculate KPIs from latest readings
-  const latestReading = readings[0];
-  const totalProduced = readings.reduce(
-    (sum, r) => sum + (r.produced_swabs || 0),
-    0
-  );
-  const totalRejected = readings.reduce(
-    (sum, r) => sum + (r.rejected_swabs || 0),
-    0
-  );
-  const avgEfficiency =
-    readings.length > 0
-      ? readings.reduce((sum, r) => sum + (r.efficiency || 0), 0) /
-        readings.filter((r) => r.efficiency != null).length
-      : 0;
-  const avgScrapRate =
-    readings.length > 0
-      ? readings.reduce((sum, r) => sum + (r.scrap_rate || 0), 0) /
-        readings.filter((r) => r.scrap_rate != null).length
-      : 0;
-  const onlineMachines = machines.filter((m) => m.status === "online").length;
+  const sortedMachines = Object.values(machines).sort((a, b) => {
+    let aVal: string | number = 0;
+    let bVal: string | number = 0;
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-64">
-        <div className="text-slate-400">Loading dashboard...</div>
-      </div>
-    );
-  }
+    switch (sortColumn) {
+      case "Machine": aVal = a.machine; bVal = b.machine; break;
+      case "Status": aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
+      case "Speed": aVal = a.machineStatus?.Speed || 0; bVal = b.machineStatus?.Speed || 0; break;
+      case "Swaps": aVal = a.machineStatus?.Swaps || 0; bVal = b.machineStatus?.Swaps || 0; break;
+      case "Boxes": aVal = a.machineStatus?.Boxes || 0; bVal = b.machineStatus?.Boxes || 0; break;
+      case "Efficiency": aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
+      case "Reject": aVal = a.machineStatus?.Reject || 0; bVal = b.machineStatus?.Reject || 0; break;
+      case "LastSync":
+        aVal = a.lastSyncStatus ? new Date(a.lastSyncStatus).getTime() : 0;
+        bVal = b.lastSyncStatus ? new Date(b.lastSyncStatus).getTime() : 0;
+        break;
+    }
+
+    if (typeof aVal === "string") {
+      return sortAsc ? aVal.localeCompare(bVal as string) : (bVal as string).localeCompare(aVal);
+    }
+    return sortAsc ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+  });
+
+  const machineCount = Object.keys(machines).length;
+  const hasData = machineCount > 0;
+
+  const SortHeader = ({ col, label, className }: { col: SortColumn; label: string; className?: string }) => (
+    <th
+      onClick={() => handleSort(col)}
+      className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider cursor-pointer select-none transition-colors hover:text-cyan-400 hover:bg-cyan-900/10 ${
+        sortColumn === col ? "sort-active text-white" : "text-gray-400"
+      } ${className || ""}`}
+    >
+      {label} {sortColumn === col ? (sortAsc ? "▲" : "▼") : ""}
+    </th>
+  );
 
   return (
-    <div className="space-y-6">
-      {/* Page header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-xl font-bold text-slate-900">
-            Production Dashboard
-          </h2>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Real-time monitoring of cotton swab production
-          </p>
+    <div>
+      {/* Header */}
+      <div className="flex justify-between items-center mb-6">
+        <h2 className="text-xl font-bold text-white">Machine Park Live Status</h2>
+        <div className="flex gap-2">
+          <span className="bg-gray-700 text-gray-300 text-xs px-3 py-1.5 rounded-full">
+            <i className="bi bi-calendar3 mr-1"></i>
+            {currentTime.toLocaleString("de-DE")}
+          </span>
+          {!hasData ? (
+            <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
+              <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
+              Waiting for MQTT data...
+            </span>
+          ) : (
+            <span
+              className={`text-xs px-3 py-1.5 rounded-full flex items-center gap-1 ${
+                mqttConnected ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"
+              }`}
+            >
+              <i className={`bi bi-${mqttConnected ? "wifi" : "wifi-off"}`}></i>
+              {machineCount} Machines online
+              {!mqttConnected && <span className="ml-1">(Reconnecting...)</span>}
+            </span>
+          )}
         </div>
-        <div className="text-xs text-slate-400">
-          {onlineMachines}/{machines.length} machines online
-        </div>
       </div>
 
-      {/* Machine selector */}
-      <MachineSelector
-        machines={machines}
-        selectedId={selectedMachine}
-        onSelect={setSelectedMachine}
-      />
-
-      {/* KPI Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-        <KpiCard
-          title="Produced Swabs"
-          value={totalProduced.toLocaleString()}
-          color="default"
-        />
-        <KpiCard
-          title="Avg Efficiency"
-          value={`${(avgEfficiency * 100).toFixed(1)}%`}
-          color={avgEfficiency >= 0.8 ? "success" : "warning"}
-        />
-        <KpiCard
-          title="Scrap Rate"
-          value={`${(avgScrapRate * 100).toFixed(2)}%`}
-          color={avgScrapRate <= 0.05 ? "success" : "danger"}
-        />
-        <KpiCard
-          title="Rejected Swabs"
-          value={totalRejected.toLocaleString()}
-          color={totalRejected === 0 ? "success" : "warning"}
-        />
-      </div>
-
-      {/* Charts row */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ProductionChart
-          readings={readings}
-          metric="efficiency"
-          title="Efficiency Over Time"
-          color="#16a34a"
-          yAxisLabel="Efficiency"
-        />
-        <ProductionChart
-          readings={readings}
-          metric="produced_swabs"
-          title="Swabs Produced"
-          color="#2563eb"
-          yAxisLabel="Count"
-        />
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-        <ProductionChart
-          readings={readings}
-          metric="machine_speed"
-          title="Machine Speed"
-          color="#8b5cf6"
-          yAxisLabel="Speed"
-        />
-        <ProductionChart
-          readings={readings}
-          metric="scrap_rate"
-          title="Scrap Rate"
-          color="#dc2626"
-          yAxisLabel="Rate"
-        />
-      </div>
-
-      {/* Alerts */}
-      <AlertsPanel alerts={alerts} onAcknowledge={handleAcknowledge} />
-
-      {/* Recent readings table */}
-      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
-        <div className="p-5 border-b border-slate-200">
-          <h3 className="text-sm font-semibold text-slate-700">
-            Recent Readings
-          </h3>
-        </div>
+      {/* Machine Table */}
+      <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead className="bg-slate-50 text-slate-500 text-xs uppercase">
+            <thead className="bg-gray-800">
               <tr>
-                <th className="px-4 py-3 text-left">Time</th>
-                <th className="px-4 py-3 text-right">Speed</th>
-                <th className="px-4 py-3 text-right">Produced</th>
-                <th className="px-4 py-3 text-right">Packed</th>
-                <th className="px-4 py-3 text-right">Rejected</th>
-                <th className="px-4 py-3 text-right">Efficiency</th>
-                <th className="px-4 py-3 text-right">Scrap</th>
-                <th className="px-4 py-3 text-right">Errors</th>
+                <SortHeader col="Machine" label="Machine" />
+                <SortHeader col="Status" label="Status" />
+                <SortHeader col="Speed" label="Speed" />
+                <SortHeader col="Swaps" label="Swaps" />
+                <SortHeader col="Boxes" label="Boxes" />
+                <SortHeader col="Efficiency" label="Efficiency" />
+                <SortHeader col="Reject" label="Reject Ratio" />
+                <SortHeader col="LastSync" label="Last Sync" />
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-100">
-              {readings.slice(0, 20).map((r) => (
-                <tr key={r.id} className="hover:bg-slate-50">
-                  <td className="px-4 py-2.5 text-slate-600">
-                    {new Date(r.recorded_at).toLocaleString()}
+            <tbody className="divide-y divide-gray-700/50">
+              {sortedMachines.map((m) => {
+                const status = getStatusColor(m.machineStatus?.Status);
+                return (
+                  <tr
+                    key={m.machine}
+                    onClick={() => router.push(`/production/${m.machine}`)}
+                    className="cursor-pointer hover:bg-white/5 transition-colors"
+                  >
+                    <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>
+                    <td className="px-4 py-3">
+                      <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
+                        <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
+                        {m.machineStatus?.Status || "offline"}
+                      </span>
+                    </td>
+                    <td className="px-4 py-3">
+                      {m.machineStatus?.Speed ? (
+                        <>{m.machineStatus.Speed} <span className="text-gray-500 text-xs">pcs/h</span></>
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-3">
+                      {m.machineStatus?.Swaps ? m.machineStatus.Swaps.toLocaleString() : ""}
+                    </td>
+                    <td className="px-4 py-3">
+                      {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
+                    </td>
+                    <td className="px-4 py-3">
+                      {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
+                    </td>
+                    <td className={`px-4 py-3 ${(m.machineStatus?.Reject || 0) > 5 ? "text-red-400" : ""}`}>
+                      {m.machineStatus?.Reject ? `${m.machineStatus.Reject.toFixed(1)}%` : ""}
+                    </td>
+                    <td className="px-4 py-3 text-gray-400">
+                      {m.lastSyncStatus
+                        ? new Date(m.lastSyncStatus).toLocaleTimeString("de-DE")
+                        : <span className="text-gray-600">---</span>}
+                    </td>
+                  </tr>
+                );
+              })}
+              {sortedMachines.length === 0 && (
+                <tr>
+                  <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
+                    No machines connected. Start the MQTT bridge and simulator to see data.
                   </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {r.machine_speed ?? "-"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {r.produced_swabs?.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {r.packed_swabs?.toLocaleString()}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {r.rejected_swabs}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {r.efficiency != null
-                      ? `${(r.efficiency * 100).toFixed(1)}%`
-                      : "-"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">
-                    {r.scrap_rate != null
-                      ? `${(r.scrap_rate * 100).toFixed(2)}%`
-                      : "-"}
-                  </td>
-                  <td className="px-4 py-2.5 text-right">{r.error_stops}</td>
                 </tr>
-              ))}
+              )}
             </tbody>
           </table>
         </div>

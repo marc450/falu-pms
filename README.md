@@ -5,22 +5,44 @@ Real-time monitoring system for cotton swab production machinery.
 ## Architecture
 
 ```
-Machines → MQTT Broker → Bridge Service → Supabase (PostgreSQL) → Next.js Dashboard
+Machines (PLC) ←→ MQTT Broker (HiveMQ) ←→ Bridge Service (Node.js + Express)
+                                                ↓               ↓
+                                           Supabase DB      CSV Logs
+                                                ↓
+                                        Frontend (Next.js + React)
 ```
 
 ## Project Structure
 
 ```
 falu-pms/
-├── database/migrations/   # SQL schema for Supabase
-├── mqtt-bridge/           # Node.js MQTT-to-Supabase bridge
-├── frontend/              # Next.js dashboard application
+├── database/migrations/     # SQL schema for Supabase
+├── mqtt-bridge/             # Node.js MQTT bridge + REST API + Machine Simulator
+│   └── src/
+│       ├── index.js         # Main bridge service
+│       └── simulator.js     # Machine simulator for testing
+├── frontend/                # Next.js + React + Tailwind dashboard
+│   └── src/
+│       ├── app/             # Pages (Dashboard, Production, Settings, Downloads, Debug)
+│       └── lib/             # Supabase client, API helpers, utilities
 └── README.md
 ```
 
+## MQTT Topics
+
+The system uses the same MQTT protocol as the original Blazor implementation:
+
+| Topic | Direction | Description |
+|-------|-----------|-------------|
+| `cloud/Status` | Machine → Bridge | Real-time machine status (speed, swaps, efficiency) |
+| `cloud/Shift` | Machine → Bridge | Per-shift production data (with Save flag for persistence) |
+| `cloud/RequestShift` | Bridge → Machine | Request shift data from a machine |
+
+For local broker, replace `cloud/` with `local/`.
+
 ## Setup
 
-### 1. Database
+### 1. Database (Supabase)
 
 Run the SQL migration in your Supabase SQL Editor:
 - `database/migrations/001_initial_schema.sql`
@@ -30,8 +52,9 @@ Run the SQL migration in your Supabase SQL Editor:
 ```bash
 cd mqtt-bridge
 npm install
-cp .env.example .env    # Fill in your Supabase and MQTT credentials
-npm start
+cp .env.example .env     # Configure Supabase and MQTT credentials
+npm start                # Start the bridge
+npm run simulator        # (Optional) Start the machine simulator
 ```
 
 ### 3. Frontend
@@ -39,18 +62,14 @@ npm start
 ```bash
 cd frontend
 npm install
-cp .env.example .env.local    # Fill in your Supabase public credentials
+cp .env.example .env.local   # Configure Supabase and API URL
 npm run dev
 ```
 
-## Environment Variables
+## Pages
 
-### MQTT Bridge (`mqtt-bridge/.env`)
-- `MQTT_BROKER_URL` - MQTT broker connection string
-- `MQTT_TOPIC` - Topic pattern to subscribe to
-- `SUPABASE_URL` - Supabase project URL
-- `SUPABASE_SERVICE_ROLE_KEY` - Service role key (server-side only)
-
-### Frontend (`frontend/.env.local`)
-- `NEXT_PUBLIC_SUPABASE_URL` - Supabase project URL
-- `NEXT_PUBLIC_SUPABASE_ANON_KEY` - Supabase anon/public key
+- **Dashboard** (`/`) — Live machine park status table with sortable columns
+- **Production** (`/production/:machine`) — Per-machine shift breakdown (Shift 1, 2, 3, Total)
+- **Settings** (`/settings`) — MQTT broker info, machine configuration
+- **Logfiles** (`/downloads`) — CSV log viewer and download
+- **Debug** (`/debug`) — Raw shift data inspection, save flag monitoring

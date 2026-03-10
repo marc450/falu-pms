@@ -1,33 +1,28 @@
 /**
- * FALU PMS - MQTT to Supabase Bridge
+ * FALU PMS - MQTT Bridge + REST API
  *
- * Subscribes to MQTT topics from cotton swab production machines
- * and writes the data to Supabase PostgreSQL.
+ * Two-way MQTT bridge that:
+ * 1. Subscribes to Status and Shift topics from cotton swab machines
+ * 2. Can publish RequestShift messages back to machines
+ * 3. Persists data to Supabase and CSV files
+ * 4. Exposes a REST API for the frontend
  *
- * Expected MQTT JSON payload format:
- * {
- *   "machine_code": "MACHINE-01",
- *   "timestamp": "2026-03-10T14:30:00Z",  // optional, defaults to NOW
- *   "production_time": 3600,
- *   "downtime": 120,
- *   "machine_speed": 450,
- *   "cotton_tears": 3,
- *   "produced_swabs": 15000,
- *   "packed_swabs": 14850,
- *   "produced_boxes": 120,
- *   "produced_boxes_extra_layer": 30,
- *   "rejected_swabs": 150,
- *   "faulty_pickups": 5,
- *   "error_stops": 2,
- *   "efficiency": 0.95,
- *   "scrap_rate": 0.01
- * }
+ * MQTT Topic Structure (matching developer's Blazor implementation):
+ *   Subscribe: cloud/# (or local/#)
+ *     - cloud/Status  → MachineStatus messages
+ *     - cloud/Shift   → ShiftData messages
+ *   Publish:
+ *     - cloud/RequestShift → Request shift data from a machine
  */
 
 require("dotenv").config();
 const mqtt = require("mqtt");
 const { createClient } = require("@supabase/supabase-js");
+const express = require("express");
+const cors = require("cors");
 const winston = require("winston");
+const fs = require("fs");
+const path = require("path");
 
 // ============================================
 // LOGGER
@@ -36,7 +31,9 @@ const logger = winston.createLogger({
   level: process.env.LOG_LEVEL || "info",
   format: winston.format.combine(
     winston.format.timestamp(),
-    winston.format.json()
+    winston.format.printf(({ timestamp, level, message }) =>
+      `${timestamp} [${level.toUpperCase()}] ${message}`
+    )
   ),
   transports: [
     new winston.transports.Console(),
@@ -45,8 +42,12 @@ const logger = winston.createLogger({
   ],
 });
 
+// Ensure log directories exist
+fs.mkdirSync("logs", { recursive: true });
+fs.mkdirSync("csv_logs/machines", { recursive: true });
+
 // ============================================
-// SUPABASE CLIENT (using service_role key for writes)
+// SUPABASE
 // ============================================
 const supabase = createClient(
   process.env.SUPABASE_URL,
@@ -54,15 +55,52 @@ const supabase = createClient(
 );
 
 // ============================================
-// MACHINE CACHE
-// Maps machine_code -> machine UUID to avoid repeated lookups
+// IN-MEMORY STATE (mirrors developer's AllMachines dictionary)
 // ============================================
-const machineCache = new Map();
+const allMachines = {};
+// Structure per machine:
+// {
+//   machine: "M12",
+//   machineStatus: { Machine, Status, Error, ActShift, Speed, Swaps, Boxes, Efficiency, Reject },
+//   shift1: { ...shift data },
+//   shift2: { ...shift data },
+//   shift3: { ...shift data },
+//   total: { ...shift data },
+//   lastSyncStatus: Date,
+//   lastSyncShift: Date,
+//   lastRequestShift: Date,
+// }
 
+let mqttConnected = false;
+let currentShiftNumber = 1;
+
+// Machine cache: machine_code -> UUID
+const machineIdCache = {};
+
+// ============================================
+// BROKER SETTINGS (loaded from env or defaults)
+// ============================================
+const brokerSettings = {
+  host: process.env.MQTT_HOST || "e21df7393cc24e69b198158d3af2b3d6.s1.eu.hivemq.cloud",
+  port: parseInt(process.env.MQTT_PORT || "8883"),
+  username: process.env.MQTT_USERNAME || "USCotton",
+  password: process.env.MQTT_PASSWORD || "Admin123",
+  isLocal: process.env.MQTT_IS_LOCAL === "true",
+};
+
+function getSubscribeTopic() {
+  return brokerSettings.isLocal ? "local/#" : "cloud/#";
+}
+
+function getPublishTopicPrefix() {
+  return brokerSettings.isLocal ? "local" : "cloud";
+}
+
+// ============================================
+// MACHINE ID RESOLUTION
+// ============================================
 async function getMachineId(machineCode) {
-  if (machineCache.has(machineCode)) {
-    return machineCache.get(machineCode);
-  }
+  if (machineIdCache[machineCode]) return machineIdCache[machineCode];
 
   const { data, error } = await supabase
     .from("machines")
@@ -71,188 +109,409 @@ async function getMachineId(machineCode) {
     .single();
 
   if (error || !data) {
-    logger.warn(`Unknown machine code: ${machineCode}. Auto-registering...`);
-    // Auto-register unknown machines
-    const { data: newMachine, error: insertError } = await supabase
+    // Auto-register
+    const { data: newMachine, error: insertErr } = await supabase
       .from("machines")
-      .insert({ machine_code: machineCode, name: machineCode, status: "online" })
+      .insert({ machine_code: machineCode, name: machineCode })
       .select("id")
       .single();
 
-    if (insertError) {
-      logger.error(`Failed to register machine ${machineCode}:`, insertError);
+    if (insertErr) {
+      logger.error(`Failed to register machine ${machineCode}: ${insertErr.message}`);
       return null;
     }
-    machineCache.set(machineCode, newMachine.id);
+    machineIdCache[machineCode] = newMachine.id;
+    logger.info(`Auto-registered new machine: ${machineCode}`);
     return newMachine.id;
   }
 
-  machineCache.set(machineCode, data.id);
+  machineIdCache[machineCode] = data.id;
   return data.id;
 }
 
 // ============================================
-// MESSAGE HANDLER
+// STATUS MESSAGE HANDLER
 // ============================================
-async function handleMessage(topic, message) {
-  let payload;
+async function handleStatusMessage(payload) {
+  const data = JSON.parse(payload);
+  const machineCode = data.Machine;
+  if (!machineCode) return;
 
-  try {
-    payload = JSON.parse(message.toString());
-  } catch (err) {
-    logger.error(`Invalid JSON on topic ${topic}:`, err.message);
-    return;
+  // Update in-memory state
+  if (!allMachines[machineCode]) {
+    allMachines[machineCode] = { machine: machineCode };
   }
+  allMachines[machineCode].machineStatus = data;
+  allMachines[machineCode].lastSyncStatus = new Date();
+  currentShiftNumber = data.ActShift || currentShiftNumber;
 
-  logger.debug(`Received message on ${topic}:`, payload);
-
-  const machineCode = payload.machine_code || topic.split("/").pop();
+  // Update Supabase
   const machineId = await getMachineId(machineCode);
+  if (!machineId) return;
 
-  if (!machineId) {
-    logger.error(`Could not resolve machine ID for: ${machineCode}`);
-    return;
-  }
-
-  // Update machine status to online
   await supabase
     .from("machines")
-    .update({ status: "online" })
+    .update({
+      status: (data.Status || "offline").toLowerCase(),
+      error_message: data.Error || null,
+      active_shift: data.ActShift || 1,
+      speed: data.Speed || 0,
+      current_swaps: data.Swaps || 0,
+      current_boxes: data.Boxes || 0,
+      current_efficiency: data.Efficiency || 0,
+      current_reject: data.Reject || 0,
+      last_sync_status: new Date().toISOString(),
+    })
     .eq("id", machineId);
 
-  // Insert reading
-  const reading = {
-    machine_id: machineId,
-    recorded_at: payload.timestamp || new Date().toISOString(),
-    production_time: payload.production_time,
-    downtime: payload.downtime,
-    machine_speed: payload.machine_speed,
-    cotton_tears: payload.cotton_tears,
-    produced_swabs: payload.produced_swabs,
-    packed_swabs: payload.packed_swabs,
-    produced_boxes: payload.produced_boxes,
-    produced_boxes_extra_layer: payload.produced_boxes_extra_layer,
-    rejected_swabs: payload.rejected_swabs,
-    faulty_pickups: payload.faulty_pickups,
-    error_stops: payload.error_stops,
-    efficiency: payload.efficiency,
-    scrap_rate: payload.scrap_rate,
-    raw_payload: payload,
-  };
+  logger.debug(`Status updated: ${machineCode} - ${data.Status} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
+}
 
-  const { error } = await supabase.from("production_readings").insert(reading);
+// ============================================
+// SHIFT MESSAGE HANDLER
+// ============================================
+async function handleShiftMessage(payload) {
+  const data = JSON.parse(payload);
+  const machineCode = data.Machine;
+  if (!machineCode) return;
 
-  if (error) {
-    logger.error(`Failed to insert reading for ${machineCode}:`, error);
+  // Check if data has meaningful content
+  const hasData = (data.ProductionTime || 0) > 0 ||
+                  (data.IdleTime || 0) > 0 ||
+                  (data.ProducedSwaps || 0) > 0 ||
+                  (data.ProducedBoxes || 0) > 0;
+
+  // Update in-memory state
+  if (!allMachines[machineCode]) {
+    allMachines[machineCode] = { machine: machineCode };
+  }
+
+  const m = allMachines[machineCode];
+  const shiftKey = data.Shift === 4 ? "total" : `shift${data.Shift}`;
+
+  // Only update if we have data or slot is empty (mirrors developer logic)
+  if (hasData || !m[shiftKey]) {
+    m[shiftKey] = data;
+    if (hasData) m.lastSyncShift = new Date();
+    logger.debug(`${shiftKey} updated for ${machineCode} - HasData: ${hasData}`);
   } else {
-    logger.info(
-      `Saved reading for ${machineCode}: ${payload.produced_swabs || 0} swabs, efficiency: ${payload.efficiency || "N/A"}`
-    );
+    logger.debug(`${shiftKey} update skipped for ${machineCode} - empty data`);
   }
 
-  // Check for alert conditions
-  await checkAlerts(machineId, payload, reading);
+  // Persist to Supabase
+  const machineId = await getMachineId(machineCode);
+  if (!machineId) return;
+
+  if (hasData) {
+    await supabase.from("shift_readings").insert({
+      machine_id: machineId,
+      shift_number: data.Shift,
+      production_time: data.ProductionTime || 0,
+      idle_time: data.IdleTime || 0,
+      cotton_tears: data.CottonTears || 0,
+      missing_sticks: data.MissingSticks || 0,
+      faulty_pickups: data.FoultyPickups || 0,
+      other_errors: data.OtherErrors || 0,
+      produced_swabs: data.ProducedSwaps || 0,
+      packaged_swabs: data.PackagedSwaps || 0,
+      produced_boxes: data.ProducedBoxes || 0,
+      produced_boxes_layer_plus: data.ProducedBoxesLayerPlus || 0,
+      discarded_swabs: data.DisgardedSwaps || 0,
+      efficiency: data.Efficiency || 0,
+      reject_rate: data.Reject || 0,
+      save_flag: data.Save || false,
+      raw_payload: data,
+    });
+
+    await supabase
+      .from("machines")
+      .update({ last_sync_shift: new Date().toISOString() })
+      .eq("id", machineId);
+  }
+
+  // CSV logging when Save flag is true
+  if (data.Save) {
+    logger.info(`Save flag received for ${machineCode}, Shift ${data.Shift} - Logging...`);
+    logToCsv(data);
+    await logToSavedShiftLogs(machineId, machineCode, data);
+  }
 }
 
 // ============================================
-// ALERT CHECKING
+// CSV LOGGING (matches developer's format exactly)
 // ============================================
-async function checkAlerts(machineId, payload) {
-  const alerts = [];
+function formatMinutesToTime(minutes) {
+  if (!minutes || minutes === 0) return "00:00";
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
 
-  // High scrap rate alert (> 5%)
-  if (payload.scrap_rate && payload.scrap_rate > 0.05) {
-    alerts.push({
-      machine_id: machineId,
-      alert_type: "high_scrap_rate",
-      severity: payload.scrap_rate > 0.1 ? "critical" : "warning",
-      message: `Scrap rate at ${(payload.scrap_rate * 100).toFixed(1)}% (threshold: 5%)`,
-    });
+function logToCsv(data) {
+  const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
+  const prodTime = formatMinutesToTime(data.ProductionTime);
+  const idleTime = formatMinutesToTime(data.IdleTime);
+  const header = "Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FoultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DisgardedSwaps;Efficiency;Reject";
+  const row = `${timestamp};${data.Machine};${data.Shift};${prodTime};${idleTime};${data.CottonTears || 0};${data.MissingSticks || 0};${data.FoultyPickups || 0};${data.OtherErrors || 0};${data.ProducedSwaps || 0};${data.PackagedSwaps || 0};${data.ProducedBoxes || 0};${data.ProducedBoxesLayerPlus || 0};${data.DisgardedSwaps || 0};${(data.Efficiency || 0).toFixed(2)};${(data.Reject || 0).toFixed(2)}`;
+
+  // Per-machine log
+  const machineLogPath = path.join("csv_logs", "machines", `${data.Machine}.csv`);
+  if (!fs.existsSync(machineLogPath)) {
+    fs.writeFileSync(machineLogPath, header + "\n", "utf8");
   }
+  fs.appendFileSync(machineLogPath, row + "\n", "utf8");
 
-  // Low efficiency alert (< 80%)
-  if (payload.efficiency && payload.efficiency < 0.8) {
-    alerts.push({
-      machine_id: machineId,
-      alert_type: "low_efficiency",
-      severity: payload.efficiency < 0.6 ? "critical" : "warning",
-      message: `Efficiency at ${(payload.efficiency * 100).toFixed(1)}% (threshold: 80%)`,
-    });
+  // All-machines log
+  const allLogPath = path.join("csv_logs", "AllMachines.csv");
+  if (!fs.existsSync(allLogPath)) {
+    fs.writeFileSync(allLogPath, header + "\n", "utf8");
   }
+  fs.appendFileSync(allLogPath, row + "\n", "utf8");
 
-  // High error stops
-  if (payload.error_stops && payload.error_stops > 5) {
-    alerts.push({
-      machine_id: machineId,
-      alert_type: "excessive_error_stops",
-      severity: "warning",
-      message: `${payload.error_stops} error stops recorded`,
+  logger.info(`CSV logged: ${data.Machine} Shift ${data.Shift}`);
+}
+
+async function logToSavedShiftLogs(machineId, machineCode, data) {
+  await supabase.from("saved_shift_logs").insert({
+    machine_id: machineId,
+    machine_code: machineCode,
+    shift_number: data.Shift,
+    production_time: data.ProductionTime || 0,
+    idle_time: data.IdleTime || 0,
+    cotton_tears: data.CottonTears || 0,
+    missing_sticks: data.MissingSticks || 0,
+    faulty_pickups: data.FoultyPickups || 0,
+    other_errors: data.OtherErrors || 0,
+    produced_swabs: data.ProducedSwaps || 0,
+    packaged_swabs: data.PackagedSwaps || 0,
+    produced_boxes: data.ProducedBoxes || 0,
+    produced_boxes_layer_plus: data.ProducedBoxesLayerPlus || 0,
+    discarded_swabs: data.DisgardedSwaps || 0,
+    efficiency: data.Efficiency || 0,
+    reject_rate: data.Reject || 0,
+  });
+}
+
+// ============================================
+// MQTT CLIENT
+// ============================================
+function buildMqttUrl() {
+  const protocol = brokerSettings.isLocal ? "mqtt" : "mqtts";
+  return `${protocol}://${brokerSettings.host}:${brokerSettings.port}`;
+}
+
+let mqttClient;
+
+function connectMqtt() {
+  const url = buildMqttUrl();
+  logger.info(`Connecting to MQTT: ${url} (${brokerSettings.isLocal ? "local" : "cloud+TLS"})`);
+
+  mqttClient = mqtt.connect(url, {
+    username: brokerSettings.username,
+    password: brokerSettings.password,
+    clientId: `falu-pms-bridge-${Date.now()}`,
+    clean: true,
+    reconnectPeriod: 5000,
+    rejectUnauthorized: !brokerSettings.isLocal,
+  });
+
+  mqttClient.on("connect", () => {
+    mqttConnected = true;
+    const topic = getSubscribeTopic();
+    mqttClient.subscribe(topic, { qos: 1 }, (err) => {
+      if (err) {
+        logger.error(`Subscribe failed: ${err.message}`);
+      } else {
+        logger.info(`Subscribed to: ${topic}`);
+      }
     });
-  }
+  });
 
-  if (alerts.length > 0) {
-    const { error } = await supabase.from("alerts").insert(alerts);
-    if (error) {
-      logger.error("Failed to insert alerts:", error);
-    } else {
-      logger.warn(`Created ${alerts.length} alert(s) for machine ${machineId}`);
+  mqttClient.on("message", async (topic, message) => {
+    try {
+      const payload = message.toString();
+      if (topic.includes("Status")) {
+        await handleStatusMessage(payload);
+      } else if (topic.includes("Shift") && !topic.includes("Request")) {
+        await handleShiftMessage(payload);
+      }
+    } catch (err) {
+      logger.error(`Message handling error on ${topic}: ${err.message}`);
     }
-  }
+  });
+
+  mqttClient.on("error", (err) => {
+    logger.error(`MQTT error: ${err.message}`);
+  });
+
+  mqttClient.on("reconnect", () => {
+    logger.info("MQTT reconnecting...");
+  });
+
+  mqttClient.on("offline", () => {
+    mqttConnected = false;
+    logger.warn("MQTT offline");
+  });
+
+  mqttClient.on("disconnect", () => {
+    mqttConnected = false;
+  });
 }
 
-// ============================================
-// MQTT CONNECTION
-// ============================================
-const MQTT_TOPIC = process.env.MQTT_TOPIC || "falu/production/#";
+function publishRequestShift(machine, shift) {
+  if (!mqttClient || !mqttConnected) {
+    logger.warn("Cannot publish - MQTT not connected");
+    return false;
+  }
 
-const mqttClient = mqtt.connect(process.env.MQTT_BROKER_URL, {
-  username: process.env.MQTT_USERNAME || undefined,
-  password: process.env.MQTT_PASSWORD || undefined,
-  clientId: `falu-pms-bridge-${Date.now()}`,
-  clean: true,
-  reconnectPeriod: 5000,
-});
+  const topic = `${getPublishTopicPrefix()}/RequestShift`;
+  const payload = JSON.stringify({ Machine: machine, Shift: shift });
 
-mqttClient.on("connect", () => {
-  logger.info(`Connected to MQTT broker: ${process.env.MQTT_BROKER_URL}`);
-  mqttClient.subscribe(MQTT_TOPIC, { qos: 1 }, (err) => {
+  mqttClient.publish(topic, payload, { qos: 1 }, (err) => {
     if (err) {
-      logger.error(`Failed to subscribe to ${MQTT_TOPIC}:`, err);
+      logger.error(`Publish error: ${err.message}`);
     } else {
-      logger.info(`Subscribed to topic: ${MQTT_TOPIC}`);
+      logger.info(`RequestShift published: ${machine} Shift ${shift} on ${topic}`);
+      if (allMachines[machine]) {
+        allMachines[machine].lastRequestShift = new Date();
+      }
     }
   });
+  return true;
+}
+
+// ============================================
+// REST API (for frontend)
+// ============================================
+const app = express();
+app.use(cors());
+app.use(express.json());
+
+// Health check
+app.get("/api/health", (req, res) => {
+  res.json({ status: "ok", mqttConnected, machineCount: Object.keys(allMachines).length });
 });
 
-mqttClient.on("message", (topic, message) => {
-  handleMessage(topic, message).catch((err) => {
-    logger.error("Unhandled error in message handler:", err);
+// Get all machines (live in-memory data)
+app.get("/api/machines", (req, res) => {
+  res.json({
+    machines: allMachines,
+    mqttConnected,
+    currentShiftNumber,
   });
 });
 
-mqttClient.on("error", (err) => {
-  logger.error("MQTT connection error:", err);
+// Get single machine
+app.get("/api/machines/:code", (req, res) => {
+  const machine = allMachines[req.params.code];
+  if (!machine) {
+    return res.status(404).json({ error: "Machine not found" });
+  }
+  res.json(machine);
 });
 
-mqttClient.on("reconnect", () => {
-  logger.info("Reconnecting to MQTT broker...");
+// Request shift data from a machine
+app.post("/api/machines/:code/request-shift", (req, res) => {
+  const { shift } = req.body;
+  const success = publishRequestShift(req.params.code, shift || 0);
+  res.json({ success });
 });
 
-mqttClient.on("offline", () => {
-  logger.warn("MQTT client went offline");
+// Get broker settings
+app.get("/api/settings/broker", (req, res) => {
+  res.json({
+    host: brokerSettings.host,
+    port: brokerSettings.port,
+    username: brokerSettings.username,
+    isLocal: brokerSettings.isLocal,
+    subscribeTopic: getSubscribeTopic(),
+    publishTopicPrefix: getPublishTopicPrefix(),
+  });
+});
+
+// CSV log files listing
+app.get("/api/logs", (req, res) => {
+  const logs = [];
+  const allLogPath = path.join("csv_logs", "AllMachines.csv");
+
+  if (fs.existsSync(allLogPath)) {
+    const stat = fs.statSync(allLogPath);
+    logs.push({
+      name: "AllMachines.csv",
+      path: "AllMachines.csv",
+      size: stat.size,
+      lastModified: stat.mtime,
+    });
+  }
+
+  const machineLogsDir = path.join("csv_logs", "machines");
+  if (fs.existsSync(machineLogsDir)) {
+    const files = fs.readdirSync(machineLogsDir).filter(f => f.endsWith(".csv"));
+    for (const file of files) {
+      const stat = fs.statSync(path.join(machineLogsDir, file));
+      logs.push({
+        name: file,
+        path: `machines/${file}`,
+        size: stat.size,
+        lastModified: stat.mtime,
+      });
+    }
+  }
+
+  res.json(logs);
+});
+
+// Download a CSV log
+app.get("/api/logs/download/:filename", (req, res) => {
+  const filePath = path.join("csv_logs", req.params.filename);
+  if (fs.existsSync(filePath)) {
+    return res.download(filePath);
+  }
+  res.status(404).json({ error: "File not found" });
+});
+
+app.get("/api/logs/download/machines/:filename", (req, res) => {
+  const filePath = path.join("csv_logs", "machines", req.params.filename);
+  if (fs.existsSync(filePath)) {
+    return res.download(filePath);
+  }
+  res.status(404).json({ error: "File not found" });
+});
+
+// Get CSV content (for inline preview)
+app.get("/api/logs/preview/:filename", (req, res) => {
+  let filePath = path.join("csv_logs", req.params.filename);
+  if (!fs.existsSync(filePath)) {
+    filePath = path.join("csv_logs", "machines", req.params.filename);
+  }
+  if (!fs.existsSync(filePath)) {
+    return res.status(404).json({ error: "File not found" });
+  }
+
+  const content = fs.readFileSync(filePath, "utf8");
+  const lines = content.trim().split("\n");
+  const headers = lines[0] ? lines[0].split(";") : [];
+  const rows = lines.slice(1).map(line => line.split(";"));
+
+  res.json({ headers, rows: rows.slice(-50) }); // Last 50 rows
 });
 
 // ============================================
-// GRACEFUL SHUTDOWN
+// START
 // ============================================
+const PORT = process.env.API_PORT || 3001;
+
+connectMqtt();
+
+app.listen(PORT, () => {
+  logger.info(`FALU PMS Bridge API running on port ${PORT}`);
+  logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
+  logger.info(`Topic: ${getSubscribeTopic()}`);
+});
+
+// Graceful shutdown
 process.on("SIGINT", () => {
-  logger.info("Shutting down MQTT bridge...");
-  mqttClient.end(true, () => {
-    logger.info("MQTT connection closed.");
-    process.exit(0);
-  });
+  logger.info("Shutting down...");
+  if (mqttClient) mqttClient.end(true);
+  process.exit(0);
 });
-
-logger.info("FALU PMS MQTT Bridge starting...");
-logger.info(`Broker: ${process.env.MQTT_BROKER_URL}`);
-logger.info(`Topic: ${MQTT_TOPIC}`);

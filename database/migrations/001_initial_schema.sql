@@ -1,185 +1,156 @@
 -- ============================================
 -- FALU PMS - Production Monitoring System
--- Initial Database Schema
+-- Database Schema (aligned with MQTT payload)
 -- ============================================
 
--- Enable UUID generation
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
 -- ============================================
--- MACHINES TABLE
--- Stores metadata about each production machine
+-- MACHINES
 -- ============================================
 CREATE TABLE machines (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    machine_code VARCHAR(50) UNIQUE NOT NULL,       -- e.g., "MACHINE-01"
-    name VARCHAR(255) NOT NULL,                      -- Human-readable name
-    location VARCHAR(255),                           -- Factory floor location
-    line VARCHAR(100),                               -- Production line identifier
-    mqtt_topic VARCHAR(255),                         -- MQTT topic this machine publishes to
-    status VARCHAR(20) DEFAULT 'offline'             -- online, offline, maintenance
-        CHECK (status IN ('online', 'offline', 'maintenance')),
-    metadata JSONB DEFAULT '{}',                     -- Flexible field for extra machine info
+    machine_code VARCHAR(50) UNIQUE NOT NULL,
+    name VARCHAR(255) NOT NULL,
+    location VARCHAR(255),
+    line VARCHAR(100),
+    status VARCHAR(20) DEFAULT 'offline'
+        CHECK (status IN ('run', 'idle', 'error', 'offline')),
+    error_message TEXT,
+    active_shift INTEGER DEFAULT 1 CHECK (active_shift BETWEEN 1 AND 3),
+    speed BIGINT DEFAULT 0,
+    current_swaps BIGINT DEFAULT 0,
+    current_boxes BIGINT DEFAULT 0,
+    current_efficiency DOUBLE PRECISION DEFAULT 0,
+    current_reject DOUBLE PRECISION DEFAULT 0,
+    last_sync_status TIMESTAMPTZ,
+    last_sync_shift TIMESTAMPTZ,
+    mqtt_topic VARCHAR(255),
+    metadata JSONB DEFAULT '{}',
     created_at TIMESTAMPTZ DEFAULT NOW(),
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
 -- ============================================
--- PRODUCTION_READINGS TABLE
--- Time-series data from each machine
+-- SHIFT_READINGS
+-- Per-shift production data (Shift 1, 2, 3, Total=4)
 -- ============================================
-CREATE TABLE production_readings (
+CREATE TABLE shift_readings (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     machine_id UUID NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
-    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),  -- When the reading was taken
+    shift_number INTEGER NOT NULL CHECK (shift_number BETWEEN 1 AND 4),
+    recorded_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 
-    -- Time metrics (in seconds or minutes — define unit in your MQTT payload)
-    production_time NUMERIC,
-    downtime NUMERIC,
-
-    -- Speed
-    machine_speed NUMERIC,
-
-    -- Production counts
-    cotton_tears INTEGER DEFAULT 0,
-    produced_swabs INTEGER DEFAULT 0,
-    packed_swabs INTEGER DEFAULT 0,
-    produced_boxes INTEGER DEFAULT 0,
-    produced_boxes_extra_layer INTEGER DEFAULT 0,
-    rejected_swabs INTEGER DEFAULT 0,
+    -- Time metrics (in minutes)
+    production_time BIGINT DEFAULT 0,
+    idle_time BIGINT DEFAULT 0,
 
     -- Error counts
-    faulty_pickups INTEGER DEFAULT 0,
-    error_stops INTEGER DEFAULT 0,
+    cotton_tears BIGINT DEFAULT 0,
+    missing_sticks BIGINT DEFAULT 0,
+    faulty_pickups BIGINT DEFAULT 0,
+    other_errors BIGINT DEFAULT 0,
 
-    -- Calculated ratios (0.0 to 1.0 or percentage)
-    efficiency NUMERIC,
-    scrap_rate NUMERIC,
+    -- Production counts
+    produced_swabs BIGINT DEFAULT 0,
+    packaged_swabs BIGINT DEFAULT 0,
+    produced_boxes BIGINT DEFAULT 0,
+    produced_boxes_layer_plus BIGINT DEFAULT 0,
+    discarded_swabs BIGINT DEFAULT 0,
 
-    -- Raw JSON payload for reference/debugging
+    -- Calculated ratios (percentage, e.g. 95.5)
+    efficiency DOUBLE PRECISION DEFAULT 0,
+    reject_rate DOUBLE PRECISION DEFAULT 0,
+
+    -- Save flag from PLC
+    save_flag BOOLEAN DEFAULT FALSE,
+
+    -- Raw MQTT payload
     raw_payload JSONB,
 
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Index for fast time-range queries per machine
-CREATE INDEX idx_readings_machine_time
-    ON production_readings (machine_id, recorded_at DESC);
+CREATE INDEX idx_shift_readings_machine_shift
+    ON shift_readings (machine_id, shift_number, recorded_at DESC);
 
--- Index for dashboard queries (latest readings)
-CREATE INDEX idx_readings_recorded_at
-    ON production_readings (recorded_at DESC);
+CREATE INDEX idx_shift_readings_recorded
+    ON shift_readings (recorded_at DESC);
+
+CREATE INDEX idx_shift_readings_saved
+    ON shift_readings (save_flag, recorded_at DESC)
+    WHERE save_flag = TRUE;
 
 -- ============================================
--- ALERTS TABLE
--- Threshold-based alerts for monitoring
+-- SAVED_SHIFT_LOGS
+-- Only rows where Save=true (PLC-triggered persistence)
+-- This is the Supabase equivalent of the CSV logs
 -- ============================================
-CREATE TABLE alerts (
+CREATE TABLE saved_shift_logs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     machine_id UUID NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
-    alert_type VARCHAR(50) NOT NULL,                 -- e.g., "high_scrap_rate", "machine_down"
-    severity VARCHAR(20) DEFAULT 'warning'
-        CHECK (severity IN ('info', 'warning', 'critical')),
-    message TEXT,
-    reading_id UUID REFERENCES production_readings(id),
-    acknowledged BOOLEAN DEFAULT FALSE,
-    acknowledged_by VARCHAR(255),
-    acknowledged_at TIMESTAMPTZ,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    machine_code VARCHAR(50) NOT NULL,
+    shift_number INTEGER NOT NULL,
+    production_time BIGINT DEFAULT 0,
+    idle_time BIGINT DEFAULT 0,
+    cotton_tears BIGINT DEFAULT 0,
+    missing_sticks BIGINT DEFAULT 0,
+    faulty_pickups BIGINT DEFAULT 0,
+    other_errors BIGINT DEFAULT 0,
+    produced_swabs BIGINT DEFAULT 0,
+    packaged_swabs BIGINT DEFAULT 0,
+    produced_boxes BIGINT DEFAULT 0,
+    produced_boxes_layer_plus BIGINT DEFAULT 0,
+    discarded_swabs BIGINT DEFAULT 0,
+    efficiency DOUBLE PRECISION DEFAULT 0,
+    reject_rate DOUBLE PRECISION DEFAULT 0,
+    saved_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_alerts_machine ON alerts (machine_id, created_at DESC);
-CREATE INDEX idx_alerts_unacknowledged ON alerts (acknowledged, created_at DESC)
-    WHERE acknowledged = FALSE;
+CREATE INDEX idx_saved_logs_machine ON saved_shift_logs (machine_code, saved_at DESC);
 
 -- ============================================
--- SHIFT_SUMMARIES TABLE
--- Aggregated data per shift for reporting
+-- APP SETTINGS (broker config, persisted in DB)
 -- ============================================
-CREATE TABLE shift_summaries (
-    id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
-    machine_id UUID NOT NULL REFERENCES machines(id) ON DELETE CASCADE,
-    shift_date DATE NOT NULL,
-    shift_name VARCHAR(50) NOT NULL,                 -- e.g., "morning", "afternoon", "night"
-    shift_start TIMESTAMPTZ NOT NULL,
-    shift_end TIMESTAMPTZ NOT NULL,
-
-    -- Aggregated metrics
-    total_production_time NUMERIC,
-    total_downtime NUMERIC,
-    avg_speed NUMERIC,
-    total_cotton_tears INTEGER DEFAULT 0,
-    total_produced_swabs INTEGER DEFAULT 0,
-    total_packed_swabs INTEGER DEFAULT 0,
-    total_produced_boxes INTEGER DEFAULT 0,
-    total_produced_boxes_extra_layer INTEGER DEFAULT 0,
-    total_rejected_swabs INTEGER DEFAULT 0,
-    total_faulty_pickups INTEGER DEFAULT 0,
-    total_error_stops INTEGER DEFAULT 0,
-    avg_efficiency NUMERIC,
-    avg_scrap_rate NUMERIC,
-
-    created_at TIMESTAMPTZ DEFAULT NOW(),
-
-    UNIQUE(machine_id, shift_date, shift_name)
+CREATE TABLE app_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- Default broker settings
+INSERT INTO app_settings (key, value) VALUES
+('broker', '{
+    "host": "e21df7393cc24e69b198158d3af2b3d6.s1.eu.hivemq.cloud",
+    "port": 8883,
+    "username": "USCotton",
+    "password": "Admin123",
+    "isLocal": false
+}'::jsonb),
+('enabled_machines', '[]'::jsonb);
+
 -- ============================================
--- ROW LEVEL SECURITY POLICIES
+-- ROW LEVEL SECURITY
 -- ============================================
 ALTER TABLE machines ENABLE ROW LEVEL SECURITY;
-ALTER TABLE production_readings ENABLE ROW LEVEL SECURITY;
-ALTER TABLE alerts ENABLE ROW LEVEL SECURITY;
-ALTER TABLE shift_summaries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE shift_readings ENABLE ROW LEVEL SECURITY;
+ALTER TABLE saved_shift_logs ENABLE ROW LEVEL SECURITY;
+ALTER TABLE app_settings ENABLE ROW LEVEL SECURITY;
 
--- Allow authenticated users to read all data
-CREATE POLICY "Authenticated users can view machines"
-    ON machines FOR SELECT
-    TO authenticated
-    USING (true);
+-- Read access for authenticated users
+CREATE POLICY "auth_read_machines" ON machines FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_read_readings" ON shift_readings FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_read_logs" ON saved_shift_logs FOR SELECT TO authenticated USING (true);
+CREATE POLICY "auth_read_settings" ON app_settings FOR SELECT TO authenticated USING (true);
 
-CREATE POLICY "Authenticated users can view readings"
-    ON production_readings FOR SELECT
-    TO authenticated
-    USING (true);
+-- Write access for service role (MQTT bridge)
+CREATE POLICY "service_write_machines" ON machines FOR ALL TO service_role USING (true);
+CREATE POLICY "service_write_readings" ON shift_readings FOR ALL TO service_role USING (true);
+CREATE POLICY "service_write_logs" ON saved_shift_logs FOR ALL TO service_role USING (true);
+CREATE POLICY "service_write_settings" ON app_settings FOR ALL TO service_role USING (true);
 
-CREATE POLICY "Authenticated users can view alerts"
-    ON alerts FOR SELECT
-    TO authenticated
-    USING (true);
-
-CREATE POLICY "Authenticated users can view shift summaries"
-    ON shift_summaries FOR SELECT
-    TO authenticated
-    USING (true);
-
--- Allow service role (MQTT bridge) to insert data
-CREATE POLICY "Service role can insert readings"
-    ON production_readings FOR INSERT
-    TO service_role
-    WITH CHECK (true);
-
-CREATE POLICY "Service role can manage machines"
-    ON machines FOR ALL
-    TO service_role
-    USING (true);
-
-CREATE POLICY "Service role can insert alerts"
-    ON alerts FOR INSERT
-    TO service_role
-    WITH CHECK (true);
-
-CREATE POLICY "Service role can insert shift summaries"
-    ON shift_summaries FOR ALL
-    TO service_role
-    USING (true);
-
--- Allow authenticated users to acknowledge alerts
-CREATE POLICY "Authenticated users can update alerts"
-    ON alerts FOR UPDATE
-    TO authenticated
-    USING (true)
-    WITH CHECK (true);
+-- Allow authenticated users to update settings (for admin UI)
+CREATE POLICY "auth_write_settings" ON app_settings FOR UPDATE TO authenticated USING (true) WITH CHECK (true);
 
 -- ============================================
 -- UPDATED_AT TRIGGER
@@ -194,4 +165,8 @@ $$ LANGUAGE plpgsql;
 
 CREATE TRIGGER machines_updated_at
     BEFORE UPDATE ON machines
+    FOR EACH ROW EXECUTE FUNCTION update_updated_at();
+
+CREATE TRIGGER settings_updated_at
+    BEFORE UPDATE ON app_settings
     FOR EACH ROW EXECUTE FUNCTION update_updated_at();

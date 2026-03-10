@@ -6,127 +6,116 @@ const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);
 
 // ============================================
-// TYPE DEFINITIONS
+// TYPES (matching MQTT payload structure)
 // ============================================
 
-export interface Machine {
-  id: string;
-  machine_code: string;
+export interface MachineStatusMessage {
+  Machine: string;
+  Status: string;
+  Error: string;
+  ActShift: number;
+  Speed: number;
+  Swaps: number;
+  Boxes: number;
+  Efficiency: number;
+  Reject: number;
+}
+
+export interface ShiftDataMessage {
+  Machine: string;
+  Shift: number;
+  ProductionTime: number;
+  IdleTime: number;
+  CottonTears: number;
+  MissingSticks: number;
+  FoultyPickups: number;
+  OtherErrors: number;
+  ProducedSwaps: number;
+  PackagedSwaps: number;
+  ProducedBoxes: number;
+  ProducedBoxesLayerPlus: number;
+  DisgardedSwaps: number;
+  Efficiency: number;
+  Reject: number;
+  Save: boolean;
+}
+
+export interface MachineData {
+  machine: string;
+  machineStatus?: MachineStatusMessage;
+  shift1?: ShiftDataMessage;
+  shift2?: ShiftDataMessage;
+  shift3?: ShiftDataMessage;
+  total?: ShiftDataMessage;
+  lastSyncStatus?: string;
+  lastSyncShift?: string;
+  lastRequestShift?: string;
+}
+
+export interface BridgeState {
+  machines: Record<string, MachineData>;
+  mqttConnected: boolean;
+  currentShiftNumber: number;
+}
+
+export interface LogFile {
   name: string;
-  location: string | null;
-  line: string | null;
-  status: "online" | "offline" | "maintenance";
-  metadata: Record<string, unknown>;
-  created_at: string;
-  updated_at: string;
+  path: string;
+  size: number;
+  lastModified: string;
 }
 
-export interface ProductionReading {
-  id: string;
-  machine_id: string;
-  recorded_at: string;
-  production_time: number | null;
-  downtime: number | null;
-  machine_speed: number | null;
-  cotton_tears: number;
-  produced_swabs: number;
-  packed_swabs: number;
-  produced_boxes: number;
-  produced_boxes_extra_layer: number;
-  rejected_swabs: number;
-  faulty_pickups: number;
-  error_stops: number;
-  efficiency: number | null;
-  scrap_rate: number | null;
-  raw_payload: Record<string, unknown> | null;
-  created_at: string;
-}
-
-export interface Alert {
-  id: string;
-  machine_id: string;
-  alert_type: string;
-  severity: "info" | "warning" | "critical";
-  message: string | null;
-  acknowledged: boolean;
-  acknowledged_by: string | null;
-  acknowledged_at: string | null;
-  created_at: string;
+export interface CsvPreview {
+  headers: string[];
+  rows: string[][];
 }
 
 // ============================================
-// DATA FETCHING FUNCTIONS
+// BRIDGE API CLIENT
 // ============================================
 
-export async function getMachines(): Promise<Machine[]> {
-  const { data, error } = await supabase
-    .from("machines")
-    .select("*")
-    .order("machine_code");
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
-  if (error) throw error;
-  return data || [];
+export async function fetchMachines(): Promise<BridgeState> {
+  const res = await fetch(`${API_BASE}/api/machines`);
+  if (!res.ok) throw new Error("Failed to fetch machines");
+  return res.json();
 }
 
-export async function getLatestReadings(
-  machineId?: string,
-  limit: number = 50
-): Promise<ProductionReading[]> {
-  let query = supabase
-    .from("production_readings")
-    .select("*")
-    .order("recorded_at", { ascending: false })
-    .limit(limit);
-
-  if (machineId) {
-    query = query.eq("machine_id", machineId);
-  }
-
-  const { data, error } = await query;
-  if (error) throw error;
-  return data || [];
+export async function fetchMachine(code: string): Promise<MachineData> {
+  const res = await fetch(`${API_BASE}/api/machines/${code}`);
+  if (!res.ok) throw new Error("Machine not found");
+  return res.json();
 }
 
-export async function getReadingsInRange(
-  machineId: string,
-  from: string,
-  to: string
-): Promise<ProductionReading[]> {
-  const { data, error } = await supabase
-    .from("production_readings")
-    .select("*")
-    .eq("machine_id", machineId)
-    .gte("recorded_at", from)
-    .lte("recorded_at", to)
-    .order("recorded_at", { ascending: true });
-
-  if (error) throw error;
-  return data || [];
+export async function requestShiftData(machineCode: string, shift: number): Promise<void> {
+  await fetch(`${API_BASE}/api/machines/${machineCode}/request-shift`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ shift }),
+  });
 }
 
-export async function getActiveAlerts(): Promise<Alert[]> {
-  const { data, error } = await supabase
-    .from("alerts")
-    .select("*")
-    .eq("acknowledged", false)
-    .order("created_at", { ascending: false });
-
-  if (error) throw error;
-  return data || [];
+export async function fetchBrokerSettings() {
+  const res = await fetch(`${API_BASE}/api/settings/broker`);
+  return res.json();
 }
 
-export async function acknowledgeAlert(
-  alertId: string,
-  userName: string
-): Promise<void> {
-  const { error } = await supabase
-    .from("alerts")
-    .update({
-      acknowledged: true,
-      acknowledged_by: userName,
-      acknowledged_at: new Date().toISOString(),
-    })
-    .eq("id", alertId);
+export async function fetchLogFiles(): Promise<LogFile[]> {
+  const res = await fetch(`${API_BASE}/api/logs`);
+  return res.json();
+}
 
-  if (error) throw error;
+export async function fetchLogPreview(filename: string): Promise<CsvPreview> {
+  const res = await fetch(`${API_BASE}/api/logs/preview/${filename}`);
+  return res.json();
+}
+
+export function getLogDownloadUrl(path: string): string {
+  return `${API_BASE}/api/logs/download/${path}`;
+}
+
+export async function fetchHealth() {
+  const res = await fetch(`${API_BASE}/api/health`);
+  return res.json();
 }
