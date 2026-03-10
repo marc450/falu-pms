@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { fetchMachines } from "@/lib/supabase";
 import type { MachineData } from "@/lib/supabase";
-import { getStatusColor } from "@/lib/utils";
+import { getStatusColor, formatStatus } from "@/lib/utils";
 
 type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
 
@@ -122,7 +122,7 @@ export default function Dashboard() {
                 <SortHeader col="Status" label="Status" />
                 <SortHeader col="Speed" label="Speed" />
                 <SortHeader col="Swaps" label="Total Swabs" />
-                <SortHeader col="Boxes" label="Blisters" />
+                <SortHeader col="Boxes" label="Total Blisters" />
                 <SortHeader col="Efficiency" label="Efficiency" />
                 <SortHeader col="Reject" label="Scrap Rate" />
                 <SortHeader col="LastSync" label="Last Sync" />
@@ -141,7 +141,7 @@ export default function Dashboard() {
                     <td className="px-4 py-3">
                       <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
                         <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
-                        {m.machineStatus?.Status || "offline"}
+                        {formatStatus(m.machineStatus?.Status)}
                       </span>
                     </td>
                     <td className="px-4 py-3">

@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { fetchMachine, requestShiftData } from "@/lib/supabase";
 import type { MachineData, ShiftDataMessage } from "@/lib/supabase";
-import { formatMinutesToTime, getStatusColor } from "@/lib/utils";
+import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 
 function ProductionContent() {
   const searchParams = useSearchParams();
@@ -150,7 +150,7 @@ function ProductionContent() {
             <div className="flex items-center gap-2">
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
-                {machine.machineStatus?.Status || "offline"}
+                {formatStatus(machine.machineStatus?.Status)}
               </span>
               <span className="bg-gray-700/50 text-gray-300 text-xs px-2.5 py-1 rounded-full">
                 Last Request: {machine.lastRequestShift

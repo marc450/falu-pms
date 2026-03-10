@@ -36,3 +36,16 @@ export function getStatusColor(status?: string): {
       return { bg: "bg-slate-700/50", text: "text-slate-500", dot: "bg-slate-500" };
   }
 }
+
+/**
+ * Map raw MQTT status values to display labels
+ */
+export function formatStatus(status?: string): string {
+  switch (status?.toLowerCase()) {
+    case "run":    return "Running";
+    case "idle":   return "Idle";
+    case "error":  return "Error";
+    case "offline": return "Offline";
+    default:       return "Offline";
+  }
+}

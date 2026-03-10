@@ -15,7 +15,19 @@ const BROKER_USER = process.env.MQTT_USERNAME || "USCotton";
 const BROKER_PASS = process.env.MQTT_PASSWORD || "Admin123";
 const IS_LOCAL = process.env.MQTT_IS_LOCAL === "true";
 const SEND_FREQUENCY = parseInt(process.env.SIM_FREQUENCY_MS || "2000");
-const MACHINE_NAMES = (process.env.SIM_MACHINES || "CB-30,CB-31,CB-32,CB-33,CB-34,CB-35,CB-36,CB-37,CB-38").split(",");
+const MACHINE_NAMES = (process.env.SIM_MACHINES || "CB-30,CB-31,CB-32,CB-33,CB-34,CB-35,CB-36,CB-37").split(",");
+
+// Per-machine speed ranges (min/max pcs/m)
+const MACHINE_SPEED_RANGES = {
+  "CB-30": [2821, 2943],
+  "CB-31": [1589, 1802],
+  "CB-32": [2785, 2897],
+  "CB-33": [2821, 2943],
+  "CB-34": [2785, 2897],
+  "CB-35": [2821, 2943],
+  "CB-36": [2785, 2897],
+  "CB-37": [2844, 2937],
+};
 
 const topicPrefix = IS_LOCAL ? "local" : "cloud";
 
@@ -25,11 +37,14 @@ const topicPrefix = IS_LOCAL ? "local" : "cloud";
 const machines = {};
 
 function initMachine(name) {
+  const [minSpeed, maxSpeed] = MACHINE_SPEED_RANGES[name] || [400, 500];
   machines[name] = {
     name,
     status: "run",       // run, idle, error
     activeShift: 1,
-    speed: 400 + Math.floor(Math.random() * 100),
+    speed: minSpeed + Math.floor(Math.random() * (maxSpeed - minSpeed)),
+    minSpeed,
+    maxSpeed,
     efficiency: 90 + Math.random() * 8,
     reject: 1 + Math.random() * 4,
     shifts: {
@@ -106,8 +121,8 @@ function simulateTick(machine) {
   shift.efficiency = machine.efficiency;
   shift.reject = machine.reject;
 
-  // Update speed with small variance
-  machine.speed = Math.max(300, Math.min(600, machine.speed + Math.floor(Math.random() * 11) - 5));
+  // Update speed with small variance, clamped to machine's range
+  machine.speed = Math.max(machine.minSpeed, Math.min(machine.maxSpeed, machine.speed + Math.floor(Math.random() * 11) - 5));
 }
 
 // ============================================
