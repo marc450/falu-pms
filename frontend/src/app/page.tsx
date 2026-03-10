@@ -75,7 +75,7 @@ export default function Dashboard() {
   const SortHeader = ({ col, label, className }: { col: SortColumn; label: string; className?: string }) => (
     <th
       onClick={() => handleSort(col)}
-      className={`px-4 py-3 text-left text-xs font-medium uppercase tracking-wider cursor-pointer select-none transition-colors hover:text-cyan-400 hover:bg-cyan-900/10 ${
+      className={`px-4 py-3 text-left text-sm font-medium cursor-pointer select-none transition-colors hover:text-cyan-400 hover:bg-cyan-900/10 ${
         sortColumn === col ? "sort-active text-white" : "text-gray-400"
       } ${className || ""}`}
     >
@@ -121,10 +121,10 @@ export default function Dashboard() {
                 <SortHeader col="Machine" label="Machine" />
                 <SortHeader col="Status" label="Status" />
                 <SortHeader col="Speed" label="Speed" />
-                <SortHeader col="Swaps" label="Swaps" />
-                <SortHeader col="Boxes" label="Boxes" />
+                <SortHeader col="Swaps" label="Total Swabs" />
+                <SortHeader col="Boxes" label="Blisters" />
                 <SortHeader col="Efficiency" label="Efficiency" />
-                <SortHeader col="Reject" label="Reject Ratio" />
+                <SortHeader col="Reject" label="Scrap Rate" />
                 <SortHeader col="LastSync" label="Last Sync" />
               </tr>
             </thead>
@@ -146,7 +146,7 @@ export default function Dashboard() {
                     </td>
                     <td className="px-4 py-3">
                       {m.machineStatus?.Speed ? (
-                        <>{m.machineStatus.Speed} <span className="text-gray-500 text-xs">pcs/h</span></>
+                        <>{m.machineStatus.Speed} <span className="text-gray-500 text-xs">pcs/m</span></>
                       ) : null}
                     </td>
                     <td className="px-4 py-3">

@@ -15,7 +15,7 @@ const BROKER_USER = process.env.MQTT_USERNAME || "USCotton";
 const BROKER_PASS = process.env.MQTT_PASSWORD || "Admin123";
 const IS_LOCAL = process.env.MQTT_IS_LOCAL === "true";
 const SEND_FREQUENCY = parseInt(process.env.SIM_FREQUENCY_MS || "2000");
-const MACHINE_NAMES = (process.env.SIM_MACHINES || "M112,M12").split(",");
+const MACHINE_NAMES = (process.env.SIM_MACHINES || "CB-30,CB-31,CB-32,CB-33,CB-34,CB-35,CB-36,CB-37,CB-38").split(",");
 
 const topicPrefix = IS_LOCAL ? "local" : "cloud";
 
