@@ -154,7 +154,7 @@ export default function Dashboard() {
                     </td>
                     <td className="px-4 py-3">
                       {m.machineStatus?.Speed ? (
-                        <>{m.machineStatus.Speed} <span className="text-gray-500 text-xs">pcs/min</span></>
+                        <>{m.machineStatus.Speed.toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
                       ) : null}
                     </td>
                     <td className="px-4 py-3">
