@@ -10,6 +10,7 @@ function ProductionContent() {
   const searchParams = useSearchParams();
   const machineName = searchParams.get("machine") || "";
   const [machine, setMachine] = useState<MachineData | null>(null);
+  const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
 
@@ -18,8 +19,9 @@ function ProductionContent() {
     try {
       const data = await fetchMachine(machineName);
       setMachine(data);
+      setOffline(false);
     } catch {
-      // Machine might not have data yet
+      setOffline(true);
     } finally {
       setLoading(false);
     }
@@ -137,10 +139,13 @@ function ProductionContent() {
         </span>
       </div>
 
-      {!machine ? (
-        <div className="bg-gray-800/50 border border-yellow-700/50 rounded-lg p-4 text-yellow-400 flex items-center gap-2">
-          <span className="inline-block w-4 h-4 border-2 border-yellow-400 border-t-transparent rounded-full animate-spin"></span>
-          Loading machine data...
+      {offline || !machine ? (
+        <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-6 py-12 flex flex-col items-center gap-3 text-center">
+          <i className="bi bi-wifi-off text-4xl text-gray-600"></i>
+          <p className="text-gray-300 font-medium">Machine Offline</p>
+          <p className="text-gray-500 text-sm max-w-sm">
+            <span className="text-cyan-400 font-mono">{machineName}</span> is not currently connected to the MQTT bridge. Live shift data will appear here automatically once the machine comes online.
+          </p>
         </div>
       ) : (
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
