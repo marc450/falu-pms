@@ -87,6 +87,7 @@ export interface RegisteredMachine {
   last_sync_status: string | null;
   last_sync_shift: string | null;
   cell_id: string | null;
+  cell_position: number | null;
 }
 
 export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
@@ -94,7 +95,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id"
+      "machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position"
     )
     .order("machine_code");
 
@@ -153,6 +154,20 @@ export async function assignMachineToCell(machineCode: string, cellId: string | 
     .update({ cell_id: cellId })
     .eq("machine_code", machineCode);
   if (error) throw new Error(error.message);
+}
+
+export async function updateCellOrder(
+  entries: { code: string; position: number }[]
+): Promise<void> {
+  const sb = getSupabase();
+  await Promise.all(
+    entries.map(({ code, position }) =>
+      sb.from("machines")
+        .update({ cell_position: position })
+        .eq("machine_code", code)
+        .then(({ error }) => { if (error) throw new Error(error.message); })
+    )
+  );
 }
 
 // ============================================

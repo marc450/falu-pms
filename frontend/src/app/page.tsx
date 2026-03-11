@@ -243,9 +243,13 @@ export default function Dashboard() {
       setInitialLoading(false);
     }
 
-    const merged: Record<string, MachineData & { cellId?: string | null }> = {};
+    const merged: Record<string, MachineData & { cellId?: string | null; cellPosition?: number }> = {};
     for (const row of registered) {
-      merged[row.machine_code] = { ...offlinePlaceholder(row), cellId: row.cell_id };
+      merged[row.machine_code] = {
+        ...offlinePlaceholder(row),
+        cellId: row.cell_id,
+        cellPosition: row.cell_position ?? 0,
+      };
     }
 
     try {
@@ -253,7 +257,11 @@ export default function Dashboard() {
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
       for (const [code, live] of Object.entries(state.machines)) {
-        merged[code] = { ...live, cellId: merged[code]?.cellId ?? null };
+        merged[code] = {
+          ...live,
+          cellId: merged[code]?.cellId ?? null,
+          cellPosition: merged[code]?.cellPosition ?? 0,
+        };
       }
     } catch {
       setMqttConnected(false);
@@ -277,9 +285,12 @@ export default function Dashboard() {
   const machineCount = Object.keys(machines).length;
   const hasData = machineCount > 0;
 
+  type WithCell = { cellId?: string | null; cellPosition?: number };
   const machinesForCell = (cellId: string) =>
-    Object.values(machines).filter((m) => (m as { cellId?: string | null }).cellId === cellId);
-  const unassigned = Object.values(machines).filter((m) => !(m as { cellId?: string | null }).cellId);
+    Object.values(machines)
+      .filter((m) => (m as WithCell).cellId === cellId)
+      .sort((a, b) => ((a as WithCell).cellPosition ?? 0) - ((b as WithCell).cellPosition ?? 0));
+  const unassigned = Object.values(machines).filter((m) => !(m as WithCell).cellId);
 
   const useCells = cells.length > 0;
 

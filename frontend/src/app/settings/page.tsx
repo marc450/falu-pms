@@ -9,8 +9,14 @@ import {
   renameProductionCell,
   deleteProductionCell,
   assignMachineToCell,
+  updateCellOrder,
 } from "@/lib/supabase";
 import type { RegisteredMachine, ProductionCell } from "@/lib/supabase";
+
+type DropTarget = {
+  cellId: string | null;      // destination cell (null = unassigned)
+  beforeCode: string | null;  // insert before this machine (null = append to end)
+};
 
 type Tab = "users" | "machines" | "mqtt";
 
@@ -21,8 +27,8 @@ function MachinesTab() {
   const [machines, setMachines] = useState<RegisteredMachine[]>([]);
   const [cells, setCells] = useState<ProductionCell[]>([]);
   const [loading, setLoading] = useState(true);
-  const [draggedMachine, setDraggedMachine] = useState<string | null>(null);
-  const [dragOverCell, setDragOverCell] = useState<string | "unassigned" | null>(null);
+  const [dragging, setDragging] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<DropTarget | null>(null);
   const [renamingCell, setRenamingCell] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [newCellName, setNewCellName] = useState("");
@@ -30,22 +36,89 @@ function MachinesTab() {
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newCellInputRef = useRef<HTMLInputElement>(null);
 
-  const reload = async () => {
+  const reload = async (silent = false) => {
     const [m, c] = await Promise.all([fetchRegisteredMachines(), fetchProductionCells()]);
     setMachines(m);
     setCells(c);
-    setLoading(false);
+    if (!silent) setLoading(false);
   };
 
   useEffect(() => { reload(); }, []);
+  useEffect(() => { if (renamingCell) renameInputRef.current?.focus(); }, [renamingCell]);
+  useEffect(() => { if (addingCell) newCellInputRef.current?.focus(); }, [addingCell]);
 
-  useEffect(() => {
-    if (renamingCell && renameInputRef.current) renameInputRef.current.focus();
-  }, [renamingCell]);
+  const machinesInCell = (cellId: string) =>
+    machines
+      .filter((m) => m.cell_id === cellId)
+      .sort((a, b) => (a.cell_position ?? 0) - (b.cell_position ?? 0));
 
-  useEffect(() => {
-    if (addingCell && newCellInputRef.current) newCellInputRef.current.focus();
-  }, [addingCell]);
+  const unassigned = machines
+    .filter((m) => !m.cell_id)
+    .sort((a, b) => a.machine_code.localeCompare(b.machine_code));
+
+  // ── Optimistic drop handler ───────────────────────────────────
+  const handleDrop = async (e: React.DragEvent, targetCellId: string | null, beforeCode: string | null) => {
+    e.preventDefault();
+    if (!dragging) return;
+
+    const machine = machines.find((m) => m.machine_code === dragging);
+    if (!machine) return;
+    const sourceCellId = machine.cell_id;
+
+    // Build new ordered list for target cell (exclude dragged machine)
+    const targetList = (targetCellId === null
+      ? machines.filter((m) => !m.cell_id)
+      : machines.filter((m) => m.cell_id === targetCellId)
+    )
+      .filter((m) => m.machine_code !== dragging)
+      .sort((a, b) => (a.cell_position ?? 0) - (b.cell_position ?? 0));
+
+    const insertIdx = beforeCode
+      ? targetList.findIndex((m) => m.machine_code === beforeCode)
+      : targetList.length;
+    const idx = insertIdx === -1 ? targetList.length : insertIdx;
+
+    const newTargetList = [
+      ...targetList.slice(0, idx),
+      { ...machine, cell_id: targetCellId, cell_position: idx },
+      ...targetList.slice(idx),
+    ].map((m, i) => ({ ...m, cell_position: i }));
+
+    // Recompute source cell positions if moving to a different cell
+    const newSourceList = sourceCellId !== targetCellId
+      ? machines
+          .filter((m) => m.cell_id === sourceCellId && m.machine_code !== dragging)
+          .sort((a, b) => (a.cell_position ?? 0) - (b.cell_position ?? 0))
+          .map((m, i) => ({ ...m, cell_position: i }))
+      : [];
+
+    // Build full new machine array
+    const unchanged = machines.filter((m) =>
+      m.machine_code !== dragging &&
+      m.cell_id !== targetCellId &&
+      m.cell_id !== sourceCellId
+    );
+    const newMachines = [...unchanged, ...newTargetList, ...newSourceList];
+
+    // ── Apply immediately — no flicker ────────────────────────
+    setMachines(newMachines);
+    setDragging(null);
+    setDropTarget(null);
+
+    // ── Persist in background ─────────────────────────────────
+    try {
+      if (sourceCellId !== targetCellId) {
+        await assignMachineToCell(dragging, targetCellId);
+      }
+      await updateCellOrder(newTargetList.map((m, i) => ({ code: m.machine_code, position: i })));
+      if (sourceCellId !== targetCellId && newSourceList.length > 0) {
+        await updateCellOrder(newSourceList.map((m, i) => ({ code: m.machine_code, position: i })));
+      }
+    } catch (err) {
+      console.error("Failed to save order:", err);
+      reload(true); // revert to server state on error
+    }
+  };
 
   const handleAddCell = async () => {
     if (!newCellName.trim()) return;
@@ -72,20 +145,35 @@ function MachinesTab() {
     await reload();
   };
 
-  // ── Drag handlers ────────────────────────────────────────────
-  const onDragStart = (machineCode: string) => setDraggedMachine(machineCode);
-  const onDragEnd = () => { setDraggedMachine(null); setDragOverCell(null); };
-
-  const onDrop = async (cellId: string | null) => {
-    if (!draggedMachine) return;
-    await assignMachineToCell(draggedMachine, cellId);
-    setDraggedMachine(null);
-    setDragOverCell(null);
-    await reload();
-  };
-
-  const machinesInCell = (cellId: string) => machines.filter((m) => m.cell_id === cellId);
-  const unassigned = machines.filter((m) => !m.cell_id);
+  // Render chips with insertion-line indicators
+  const renderChips = (chipList: RegisteredMachine[], cellId: string | null) => (
+    <>
+      {chipList.map((m) => (
+        <div key={m.machine_code} className="flex items-center">
+          {/* Blue insertion line: appears to the left of the chip when dragging over it */}
+          {dropTarget?.cellId === cellId && dropTarget?.beforeCode === m.machine_code && (
+            <div className="w-0.5 h-8 bg-cyan-400 rounded-full mr-1 shrink-0" />
+          )}
+          <MachineChip
+            code={m.machine_code}
+            isDragging={dragging === m.machine_code}
+            onDragStart={() => setDragging(m.machine_code)}
+            onDragEnd={() => { setDragging(null); setDropTarget(null); }}
+            onChipDragOver={(e) => {
+              e.preventDefault();
+              e.stopPropagation(); // prevent cell container from overriding
+              setDropTarget({ cellId, beforeCode: m.machine_code });
+            }}
+          />
+        </div>
+      ))}
+      {/* Append-to-end indicator: appears after last chip */}
+      {dropTarget?.cellId === cellId && dropTarget?.beforeCode === null &&
+       dragging && !chipList.find((m) => m.machine_code === dragging) && (
+        <div className="w-0.5 h-8 bg-cyan-400 rounded-full ml-1 shrink-0" />
+      )}
+    </>
+  );
 
   if (loading) {
     return (
@@ -146,37 +234,30 @@ function MachinesTab() {
       {/* Unassigned pool — always on top */}
       <div
         className={`rounded-lg border overflow-hidden transition-colors ${
-          dragOverCell === "unassigned" ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
+          dropTarget?.cellId === null ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
         }`}
-        onDragOver={(e) => { e.preventDefault(); setDragOverCell("unassigned"); }}
-        onDragLeave={() => setDragOverCell(null)}
-        onDrop={() => onDrop(null)}
+        onDragOver={(e) => { e.preventDefault(); setDropTarget({ cellId: null, beforeCode: null }); }}
+        onDragLeave={(e) => {
+          if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
+        }}
+        onDrop={(e) => handleDrop(e, null, dropTarget?.beforeCode ?? null)}
       >
         <div className="flex items-center justify-between px-4 py-3 bg-gray-800/60 border-b border-gray-700/50">
           <h4 className="text-gray-400 font-semibold text-sm flex items-center gap-2">
             <i className="bi bi-inbox text-gray-500"></i>
             Unassigned Machines
-            <span className="text-gray-600 font-normal text-xs">{unassigned.length} machine{unassigned.length !== 1 ? "s" : ""}</span>
+            <span className="text-gray-600 font-normal text-xs">
+              {unassigned.length} machine{unassigned.length !== 1 ? "s" : ""}
+            </span>
           </h4>
         </div>
-        <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-start">
-          {unassigned.length === 0 && dragOverCell !== "unassigned" && (
+        <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-center">
+          {unassigned.length === 0 && dropTarget?.cellId !== null && (
             <div className="flex items-center justify-center w-full text-gray-700 text-xs select-none">
               All machines assigned
             </div>
           )}
-          {unassigned.map((m) => (
-            <MachineChip
-              key={m.machine_code}
-              code={m.machine_code}
-              isDragging={draggedMachine === m.machine_code}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-            />
-          ))}
-          {dragOverCell === "unassigned" && draggedMachine && !unassigned.find((m) => m.machine_code === draggedMachine) && (
-            <MachineChip code={draggedMachine} ghost />
-          )}
+          {renderChips(unassigned, null)}
         </div>
       </div>
 
@@ -189,16 +270,18 @@ function MachinesTab() {
 
       {cells.map((cell) => {
         const cellMachines = machinesInCell(cell.id);
-        const isOver = dragOverCell === cell.id;
+        const isTarget = dropTarget?.cellId === cell.id;
         return (
           <div
             key={cell.id}
             className={`rounded-lg border overflow-hidden transition-colors ${
-              isOver ? "border-cyan-500 bg-cyan-900/10" : "border-gray-700 bg-gray-800/50"
+              isTarget ? "border-cyan-500 bg-cyan-900/10" : "border-gray-700 bg-gray-800/50"
             }`}
-            onDragOver={(e) => { e.preventDefault(); setDragOverCell(cell.id); }}
-            onDragLeave={() => setDragOverCell(null)}
-            onDrop={() => onDrop(cell.id)}
+            onDragOver={(e) => { e.preventDefault(); setDropTarget({ cellId: cell.id, beforeCode: null }); }}
+            onDragLeave={(e) => {
+              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
+            }}
+            onDrop={(e) => handleDrop(e, cell.id, dropTarget?.beforeCode ?? null)}
           >
             {/* Cell header */}
             <div className="flex items-center justify-between px-4 py-3 bg-gray-800 border-b border-gray-700">
@@ -218,7 +301,9 @@ function MachinesTab() {
                 <h4 className="text-white font-semibold text-sm flex items-center gap-2">
                   <i className="bi bi-collection text-cyan-400"></i>
                   {cell.name}
-                  <span className="text-gray-500 font-normal text-xs">{cellMachines.length} machine{cellMachines.length !== 1 ? "s" : ""}</span>
+                  <span className="text-gray-500 font-normal text-xs">
+                    {cellMachines.length} machine{cellMachines.length !== 1 ? "s" : ""}
+                  </span>
                 </h4>
               )}
               <div className="flex items-center gap-2">
@@ -238,61 +323,50 @@ function MachinesTab() {
             </div>
 
             {/* Drop zone */}
-            <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-start">
-              {cellMachines.length === 0 && !isOver && (
+            <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-center">
+              {cellMachines.length === 0 && !isTarget && (
                 <div className="flex items-center justify-center w-full text-gray-600 text-xs select-none">
                   <i className="bi bi-arrow-down-circle mr-1.5"></i> Drop machines here
                 </div>
               )}
-              {cellMachines.map((m) => (
-                <MachineChip
-                  key={m.machine_code}
-                  code={m.machine_code}
-                  isDragging={draggedMachine === m.machine_code}
-                  onDragStart={onDragStart}
-                  onDragEnd={onDragEnd}
-                />
-              ))}
-              {isOver && draggedMachine && !cellMachines.find((m) => m.machine_code === draggedMachine) && (
-                <MachineChip code={draggedMachine} ghost />
-              )}
+              {renderChips(cellMachines, cell.id)}
             </div>
           </div>
         );
       })}
-
     </div>
   );
 }
 
+// ─────────────────────────────────────────────────────────────
 // Draggable machine chip
+// ─────────────────────────────────────────────────────────────
 function MachineChip({
   code,
   isDragging,
-  ghost,
   onDragStart,
   onDragEnd,
+  onChipDragOver,
 }: {
   code: string;
   isDragging?: boolean;
-  ghost?: boolean;
-  onDragStart?: (code: string) => void;
+  onDragStart?: () => void;
   onDragEnd?: () => void;
+  onChipDragOver?: (e: React.DragEvent) => void;
 }) {
   return (
     <div
-      draggable={!ghost}
-      onDragStart={() => onDragStart?.(code)}
+      draggable
+      onDragStart={onDragStart}
       onDragEnd={onDragEnd}
+      onDragOver={onChipDragOver}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium select-none transition-all ${
-        ghost
-          ? "border-2 border-dashed border-cyan-600 text-cyan-600 bg-cyan-900/10 opacity-60 cursor-copy"
-          : isDragging
+        isDragging
           ? "opacity-30 cursor-grabbing bg-gray-600 text-gray-400 border border-gray-500"
           : "bg-gray-700 text-white border border-gray-600 cursor-grab hover:border-cyan-500 hover:bg-gray-600 active:cursor-grabbing"
       }`}
     >
-      {!ghost && <i className="bi bi-grip-vertical text-gray-400 text-xs"></i>}
+      <i className="bi bi-grip-vertical text-gray-400 text-xs"></i>
       <i className="bi bi-cpu text-cyan-400 text-xs"></i>
       {code}
     </div>
