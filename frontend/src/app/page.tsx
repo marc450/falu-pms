@@ -130,14 +130,17 @@ function MachineRow({ m, onClick }: { m: MachineData; onClick: () => void }) {
 // ─────────────────────────────────────────────────────────────
 // Cell group section
 // ─────────────────────────────────────────────────────────────
+const COL_LABELS: Record<string, string> = {
+  Machine: "Machine", Status: "Status", Speed: "Speed",
+  Swaps: "Total Swabs", Boxes: "Total Blisters",
+  Efficiency: "Efficiency", Reject: "Scrap Rate", LastSync: "Last Sync",
+};
+
 function CellSection({
   title,
   icon,
   color,
   machines,
-  sortColumn,
-  sortAsc,
-  onSort,
   onMachineClick,
   defaultOpen = true,
 }: {
@@ -145,18 +148,13 @@ function CellSection({
   icon: string;
   color: string;
   machines: MachineData[];
-  sortColumn: SortColumn;
-  sortAsc: boolean;
-  onSort: (col: SortColumn) => void;
   onMachineClick: (code: string) => void;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const sorted = sortMachineList(machines, sortColumn, sortAsc);
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
-      {/* Section header */}
       <button
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-4 py-3 bg-gray-800 hover:bg-gray-750 transition-colors"
@@ -174,27 +172,18 @@ function CellSection({
           <table className="w-full text-sm">
             <thead className="bg-gray-800/70">
               <tr>
-                {(["Machine","Status","Speed","Swaps","Boxes","Efficiency","Reject","LastSync"] as SortColumn[]).map((col) => (
-                  <SortHeader
-                    key={col}
-                    col={col}
-                    label={col === "Swaps" ? "Total Swabs" : col === "Boxes" ? "Total Blisters" : col === "LastSync" ? "Last Sync" : col}
-                    sortColumn={sortColumn}
-                    sortAsc={sortAsc}
-                    onSort={onSort}
-                  />
+                {Object.entries(COL_LABELS).map(([key, label]) => (
+                  <th key={key} className="px-4 py-3 text-left text-sm font-medium text-gray-400">
+                    {label}
+                  </th>
                 ))}
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-700/50">
-              {sorted.map((m) => (
-                <MachineRow
-                  key={m.machine}
-                  m={m}
-                  onClick={() => onMachineClick(m.machine)}
-                />
+              {machines.map((m) => (
+                <MachineRow key={m.machine} m={m} onClick={() => onMachineClick(m.machine)} />
               ))}
-              {sorted.length === 0 && (
+              {machines.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-4 py-6 text-center text-gray-600 text-xs">
                     No machines in this cell
@@ -345,9 +334,6 @@ export default function Dashboard() {
               icon="bi-collection"
               color="text-cyan-400"
               machines={machinesForCell(cell.id)}
-              sortColumn={sortColumn}
-              sortAsc={sortAsc}
-              onSort={handleSort}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
             />
           ))}
@@ -357,9 +343,6 @@ export default function Dashboard() {
               icon="bi-inbox"
               color="text-gray-400"
               machines={unassigned}
-              sortColumn={sortColumn}
-              sortAsc={sortAsc}
-              onSort={handleSort}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
             />
           )}
