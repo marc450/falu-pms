@@ -86,6 +86,7 @@ export interface RegisteredMachine {
   current_reject: number | null;
   last_sync_status: string | null;
   last_sync_shift: string | null;
+  cell_id: string | null;
 }
 
 export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
@@ -93,12 +94,65 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift"
+      "machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id"
     )
     .order("machine_code");
 
   if (error) throw new Error(error.message);
   return data ?? [];
+}
+
+// ============================================
+// PRODUCTION CELLS
+// ============================================
+
+export interface ProductionCell {
+  id: string;
+  name: string;
+  position: number;
+}
+
+export async function fetchProductionCells(): Promise<ProductionCell[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("production_cells")
+    .select("id, name, position")
+    .order("position");
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+export async function createProductionCell(name: string, position: number): Promise<ProductionCell> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("production_cells")
+    .insert({ name, position })
+    .select("id, name, position")
+    .single();
+  if (error) throw new Error(error.message);
+  return data;
+}
+
+export async function renameProductionCell(id: string, name: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.from("production_cells").update({ name }).eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteProductionCell(id: string): Promise<void> {
+  // Machines in this cell will have cell_id set to null via ON DELETE SET NULL
+  const sb = getSupabase();
+  const { error } = await sb.from("production_cells").delete().eq("id", id);
+  if (error) throw new Error(error.message);
+}
+
+export async function assignMachineToCell(machineCode: string, cellId: string | null): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("machines")
+    .update({ cell_id: cellId })
+    .eq("machine_code", machineCode);
+  if (error) throw new Error(error.message);
 }
 
 // ============================================
