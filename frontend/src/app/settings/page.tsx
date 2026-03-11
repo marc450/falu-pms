@@ -1,8 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { fetchBrokerSettings, fetchMachines } from "@/lib/supabase";
-import type { MachineData } from "@/lib/supabase";
+import { fetchBrokerSettings, fetchRegisteredMachines } from "@/lib/supabase";
+import type { RegisteredMachine } from "@/lib/supabase";
 
 export default function SettingsPage() {
   const [brokerSettings, setBrokerSettings] = useState({
@@ -13,16 +13,14 @@ export default function SettingsPage() {
     subscribeTopic: "",
     publishTopicPrefix: "",
   });
-  const [machines, setMachines] = useState<Record<string, MachineData>>({});
+  const [machines, setMachines] = useState<RegisteredMachine[]>([]);
   const [enabledMachines, setEnabledMachines] = useState<string[]>([]);
   const [newMachineName, setNewMachineName] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
 
   useEffect(() => {
     fetchBrokerSettings().then(setBrokerSettings).catch(console.error);
-    fetchMachines()
-      .then((state) => setMachines(state.machines))
-      .catch(console.error);
+    fetchRegisteredMachines().then(setMachines).catch(console.error);
   }, []);
 
   const addMachine = () => {
@@ -42,9 +40,9 @@ export default function SettingsPage() {
     }
   };
 
-  const discoveredNotEnabled = Object.keys(machines).filter(
-    (m) => !enabledMachines.includes(m)
-  );
+  const discoveredNotEnabled = machines
+    .map((m) => m.machine_code)
+    .filter((code) => !enabledMachines.includes(code));
 
   return (
     <div>
@@ -171,15 +169,15 @@ export default function SettingsPage() {
       <div className="bg-gray-800/50 border border-cyan-700/50 rounded-lg overflow-hidden">
         <div className="bg-cyan-600 px-5 py-3">
           <h4 className="text-white font-semibold">
-            <i className="bi bi-broadcast mr-2"></i>Discovered Machines
+            <i className="bi bi-database mr-2"></i>Registered Machines
           </h4>
-          <p className="text-cyan-100 text-xs">Machines currently connected via MQTT</p>
+          <p className="text-cyan-100 text-xs">All machines registered in the database</p>
         </div>
         <div className="p-5">
-          {discoveredNotEnabled.length === 0 && Object.keys(machines).length === 0 ? (
+          {discoveredNotEnabled.length === 0 && machines.length === 0 ? (
             <div className="text-yellow-400 text-sm">
               <i className="bi bi-exclamation-triangle mr-1"></i>
-              No machines discovered yet. Waiting for MQTT data...
+              No machines registered in the database yet.
             </div>
           ) : discoveredNotEnabled.length === 0 ? (
             <div className="text-gray-400 text-sm">All discovered machines are already enabled.</div>
