@@ -1,12 +1,18 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
-import { fetchMachines, fetchHealth } from "@/lib/supabase";
+import { fetchMachines, fetchHealth, fetchRegisteredMachines, getSupabase } from "@/lib/supabase";
 import type { MachineData } from "@/lib/supabase";
 
 export default function DebugPage() {
   const [machines, setMachines] = useState<Record<string, MachineData>>({});
   const [health, setHealth] = useState({ status: "unknown", mqttConnected: false, machineCount: 0 });
+
+  // Supabase diagnostics
+  const [supabaseUrl, setSupabaseUrl] = useState<string>("");
+  const [sessionStatus, setSessionStatus] = useState<string>("checking...");
+  const [dbQueryResult, setDbQueryResult] = useState<string>("not run");
+  const [dbRowCount, setDbRowCount] = useState<number | null>(null);
 
   const loadData = useCallback(async () => {
     try {
@@ -16,6 +22,44 @@ export default function DebugPage() {
     } catch (err) {
       console.error("Debug fetch error:", err);
     }
+  }, []);
+
+  // Run Supabase diagnostics once on mount
+  useEffect(() => {
+    async function runDiagnostics() {
+      try {
+        const sb = getSupabase();
+
+        // Show URL (partially)
+        const url = process.env.NEXT_PUBLIC_SUPABASE_URL || "(not set)";
+        setSupabaseUrl(url.replace(/https?:\/\//, "").substring(0, 30) + "...");
+
+        // Check session
+        const { data: { session }, error: sessionError } = await sb.auth.getSession();
+        if (sessionError) {
+          setSessionStatus(`Error: ${sessionError.message}`);
+        } else if (session) {
+          setSessionStatus(`Authenticated as ${session.user.email} (role: ${session.user.role ?? "authenticated"})`);
+        } else {
+          setSessionStatus("No active session");
+        }
+
+        // Direct machines query
+        const { data, error } = await sb.from("machines").select("machine_code");
+        if (error) {
+          setDbQueryResult(`Error: ${error.message} (code: ${error.code})`);
+        } else {
+          setDbRowCount(data?.length ?? 0);
+          setDbQueryResult(`OK — returned ${data?.length ?? 0} rows`);
+        }
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        setDbQueryResult(`Exception: ${msg}`);
+        setSessionStatus("Exception during diagnostics");
+      }
+    }
+
+    runDiagnostics();
   }, []);
 
   useEffect(() => {
@@ -31,7 +75,6 @@ export default function DebugPage() {
         <pre className="text-gray-600 text-xs ml-2">null</pre>
       </div>
     );
-
     return (
       <div className="mb-2">
         <h6 className="text-gray-400 text-xs font-semibold">{label}:</h6>
@@ -45,11 +88,42 @@ export default function DebugPage() {
     );
   };
 
+  const statusColor = (s: string) =>
+    s.startsWith("OK") ? "text-green-400" :
+    s.startsWith("Error") || s.startsWith("Exception") || s === "No active session" ? "text-red-400" :
+    "text-yellow-400";
+
   return (
     <div>
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-bold text-white">Debug Information</h2>
         <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full">Debug Mode</span>
+      </div>
+
+      {/* Supabase Diagnostics */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg mb-4 overflow-hidden">
+        <div className="bg-purple-700 px-5 py-3">
+          <h4 className="text-white font-semibold">Supabase Diagnostics</h4>
+        </div>
+        <div className="p-5 space-y-3 text-sm">
+          <div className="flex gap-2">
+            <span className="text-gray-400 w-36 shrink-0">Supabase URL:</span>
+            <span className="text-gray-200 font-mono text-xs">{supabaseUrl}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-400 w-36 shrink-0">Auth Session:</span>
+            <span className={`font-mono text-xs ${statusColor(sessionStatus)}`}>{sessionStatus}</span>
+          </div>
+          <div className="flex gap-2">
+            <span className="text-gray-400 w-36 shrink-0">Machines Query:</span>
+            <span className={`font-mono text-xs ${statusColor(dbQueryResult)}`}>{dbQueryResult}</span>
+          </div>
+          {dbRowCount !== null && dbRowCount === 0 && (
+            <div className="bg-yellow-900/30 border border-yellow-700/50 text-yellow-400 text-xs rounded px-3 py-2 mt-2">
+              Query returned 0 rows. Either the machines table is empty, or the RLS policy is blocking reads for this user.
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Bridge Health */}
@@ -70,7 +144,7 @@ export default function DebugPage() {
               </span>
             </div>
             <div>
-              <span className="text-gray-400">Machines:</span>{" "}
+              <span className="text-gray-400">Machines (bridge):</span>{" "}
               <span className="text-white">{health.machineCount}</span>
             </div>
           </div>
@@ -80,11 +154,11 @@ export default function DebugPage() {
       {/* Machine Data */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden mb-4">
         <div className="bg-yellow-600 px-5 py-3">
-          <h4 className="text-gray-900 font-semibold">Current Machine Data</h4>
+          <h4 className="text-gray-900 font-semibold">Current Machine Data (Bridge)</h4>
         </div>
         <div className="p-5">
           {Object.keys(machines).length === 0 ? (
-            <p className="text-yellow-400 text-sm">No machine data received yet...</p>
+            <p className="text-yellow-400 text-sm">No machine data from bridge.</p>
           ) : (
             Object.values(machines).map((m) => (
               <div key={m.machine} className="mb-4 p-4 border border-gray-700 rounded-lg">
@@ -99,19 +173,6 @@ export default function DebugPage() {
               </div>
             ))
           )}
-        </div>
-      </div>
-
-      {/* Instructions */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-        <div className="bg-cyan-600 px-5 py-3">
-          <h4 className="text-white font-semibold">Instructions</h4>
-        </div>
-        <div className="p-5 text-sm text-gray-300 space-y-2">
-          <p>1. Check if the "Save Flag" shows <strong className="text-white">true</strong> for any shift</p>
-          <p>2. If Save Flag is always <strong className="text-white">false</strong>, the MQTT message does not include Save=true</p>
-          <p>3. Check the bridge logs (mqtt-bridge/logs/) for "Save flag received" messages</p>
-          <p>4. CSV log files and Supabase saved_shift_logs will only be created when Save=true is received</p>
         </div>
       </div>
     </div>
