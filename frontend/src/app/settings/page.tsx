@@ -10,15 +10,18 @@ import {
   deleteProductionCell,
   assignMachineToCell,
   updateCellOrder,
+  fetchThresholds,
+  saveThresholds,
+  DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds } from "@/lib/supabase";
 
 type DropTarget = {
   cellId: string | null;      // destination cell (null = unassigned)
   beforeCode: string | null;  // insert before this machine (null = append to end)
 };
 
-type Tab = "users" | "machines" | "mqtt";
+type Tab = "users" | "machines" | "thresholds" | "mqtt";
 
 // ─────────────────────────────────────────────────────────────
 // Machines tab — production cell management with drag-and-drop
@@ -374,6 +377,172 @@ function MachineChip({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Thresholds tab
+// ─────────────────────────────────────────────────────────────
+function ThresholdRow({
+  label, sublabel, value, onChange, unit, inverted,
+}: {
+  label: string; sublabel: string; value: number;
+  onChange: (v: number) => void; unit: string; inverted?: boolean;
+}) {
+  return (
+    <div className="flex items-center justify-between py-2">
+      <div>
+        <span className="text-sm text-white">{label}</span>
+        <span className="text-xs text-gray-500 ml-2">{sublabel}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <input
+          type="number"
+          min={0} max={100} step={0.5}
+          value={value}
+          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
+        />
+        <span className="text-gray-400 text-sm w-4">{unit}</span>
+      </div>
+    </div>
+  );
+}
+
+function ThresholdPreview({ good, mediocre, inverted }: { good: number; mediocre: number; inverted?: boolean }) {
+  const zones = inverted
+    ? [
+        { label: `≤ ${good}%`,              pct: good,                       color: "bg-green-500"  },
+        { label: `${good}–${mediocre}%`,    pct: mediocre - good,            color: "bg-yellow-500" },
+        { label: `> ${mediocre}%`,          pct: Math.max(5, 100 - mediocre), color: "bg-red-500"   },
+      ]
+    : [
+        { label: `≥ ${good}%`,              pct: Math.max(5, 100 - good),    color: "bg-green-500"  },
+        { label: `${mediocre}–${good}%`,    pct: good - mediocre,            color: "bg-yellow-500" },
+        { label: `< ${mediocre}%`,          pct: mediocre,                   color: "bg-red-500"    },
+      ];
+  const total = zones.reduce((s, z) => s + z.pct, 0);
+  return (
+    <div className="mt-3">
+      <div className="flex h-2 rounded-full overflow-hidden gap-0.5">
+        {zones.map((z) => (
+          <div key={z.label} className={`${z.color} rounded-full`} style={{ flex: z.pct / total }} />
+        ))}
+      </div>
+      <div className="flex justify-between mt-1">
+        {zones.map((z) => (
+          <span key={z.label} className="text-xs text-gray-500">{z.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function ThresholdsTab() {
+  const [t, setT] = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [savedMsg, setSavedMsg] = useState(false);
+
+  useEffect(() => {
+    fetchThresholds().then(setT).catch(console.error).finally(() => setLoading(false));
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    try {
+      await saveThresholds(t);
+      setSavedMsg(true);
+      setTimeout(() => setSavedMsg(false), 2500);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (loading) return (
+    <div className="flex items-center gap-2 text-gray-400 py-8">
+      <span className="animate-spin text-lg">⟳</span> Loading…
+    </div>
+  );
+
+  return (
+    <div className="space-y-4 max-w-lg">
+      <p className="text-sm text-gray-400">
+        Define cut-off values that determine when a metric is shown as{" "}
+        <span className="text-green-400 font-medium">Good</span>,{" "}
+        <span className="text-yellow-400 font-medium">Mediocre</span>, or{" "}
+        <span className="text-red-400 font-medium">Bad</span> on the dashboard.
+      </p>
+
+      {/* Efficiency */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-speedometer2 text-cyan-400"></i>Efficiency
+          </h4>
+          <p className="text-gray-500 text-xs mt-0.5">Higher is better</p>
+        </div>
+        <div className="px-5 py-3 divide-y divide-gray-700/50">
+          <ThresholdRow
+            label="Good threshold"
+            sublabel="≥ this value = green"
+            value={t.efficiency.good}
+            onChange={(v) => setT({ ...t, efficiency: { ...t.efficiency, good: v } })}
+            unit="%"
+          />
+          <ThresholdRow
+            label="Mediocre threshold"
+            sublabel="≥ this value = amber, below = red"
+            value={t.efficiency.mediocre}
+            onChange={(v) => setT({ ...t, efficiency: { ...t.efficiency, mediocre: v } })}
+            unit="%"
+          />
+        </div>
+        <div className="px-5 pb-4">
+          <ThresholdPreview good={t.efficiency.good} mediocre={t.efficiency.mediocre} />
+        </div>
+      </div>
+
+      {/* Scrap Rate */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-exclamation-triangle text-yellow-400"></i>Scrap Rate
+          </h4>
+          <p className="text-gray-500 text-xs mt-0.5">Lower is better</p>
+        </div>
+        <div className="px-5 py-3 divide-y divide-gray-700/50">
+          <ThresholdRow
+            label="Good threshold"
+            sublabel="≤ this value = green"
+            value={t.scrap.good}
+            onChange={(v) => setT({ ...t, scrap: { ...t.scrap, good: v } })}
+            unit="%"
+            inverted
+          />
+          <ThresholdRow
+            label="Mediocre threshold"
+            sublabel="≤ this value = amber, above = red"
+            value={t.scrap.mediocre}
+            onChange={(v) => setT({ ...t, scrap: { ...t.scrap, mediocre: v } })}
+            unit="%"
+            inverted
+          />
+        </div>
+        <div className="px-5 pb-4">
+          <ThresholdPreview good={t.scrap.good} mediocre={t.scrap.mediocre} inverted />
+        </div>
+      </div>
+
+      <button
+        onClick={handleSave}
+        disabled={saving}
+        className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors"
+      >
+        {saving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
+        {savedMsg ? "Saved!" : saving ? "Saving…" : "Save Thresholds"}
+      </button>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main settings page
 // ─────────────────────────────────────────────────────────────
 export default function SettingsPage() {
@@ -392,9 +561,10 @@ export default function SettingsPage() {
   }, []);
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: "users",    label: "Users",    icon: "bi-people-fill" },
-    { id: "machines", label: "Machines", icon: "bi-cpu-fill" },
-    { id: "mqtt",     label: "MQTT",     icon: "bi-router-fill" },
+    { id: "users",       label: "Users",       icon: "bi-people-fill"    },
+    { id: "machines",    label: "Machines",    icon: "bi-cpu-fill"       },
+    { id: "thresholds",  label: "Thresholds",  icon: "bi-sliders"        },
+    { id: "mqtt",        label: "MQTT",        icon: "bi-router-fill"    },
   ];
 
   return (
@@ -444,6 +614,9 @@ export default function SettingsPage() {
 
       {/* ── MACHINES ── */}
       {activeTab === "machines" && <MachinesTab />}
+
+      {/* ── THRESHOLDS ── */}
+      {activeTab === "thresholds" && <ThresholdsTab />}
 
       {/* ── MQTT ── */}
       {activeTab === "mqtt" && (

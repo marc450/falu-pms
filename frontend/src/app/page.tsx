@@ -6,8 +6,12 @@ import {
   fetchMachines,
   fetchRegisteredMachines,
   fetchProductionCells,
+  fetchThresholds,
+  applyEfficiencyColor,
+  applyScrapColor,
+  DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { MachineData, RegisteredMachine, ProductionCell } from "@/lib/supabase";
+import type { MachineData, RegisteredMachine, ProductionCell, Thresholds } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 
 type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
@@ -199,6 +203,106 @@ function CellSection({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Summary tile
+// ─────────────────────────────────────────────────────────────
+function SummaryTile({
+  icon, label, value, sub, colorClass, borderClass,
+}: {
+  icon: string; label: string; value: string;
+  sub?: string; colorClass: string; borderClass: string;
+}) {
+  return (
+    <div className={`bg-gray-800/50 border-l-4 ${borderClass} rounded-lg px-5 py-4 flex flex-col gap-1`}>
+      <div className="flex items-center gap-2 text-gray-400 text-xs">
+        <i className={`bi ${icon}`}></i>
+        {label}
+      </div>
+      <div className={`text-2xl font-bold ${colorClass}`}>{value}</div>
+      {sub && <div className="text-xs text-gray-500">{sub}</div>}
+    </div>
+  );
+}
+
+function ParkSummaryTiles({
+  machines, thresholds,
+}: {
+  machines: Record<string, MachineData>;
+  thresholds: Thresholds;
+}) {
+  const all = Object.values(machines);
+  const total = all.length;
+
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, swabsTotal = 0;
+  for (const m of all) {
+    const s = m.machineStatus?.Status?.toLowerCase();
+    const isOnline = s && s !== "offline" && s !== "error";
+    if (isOnline) running++;
+    if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
+    if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
+    if (m.machineStatus?.Swaps)      swabsTotal += m.machineStatus.Swaps;
+  }
+
+  const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
+  const avgScrap = scrapCount > 0 ? scrapSum / scrapCount : null;
+
+  const ec = applyEfficiencyColor(avgEff,   thresholds);
+  const sc = applyScrapColor     (avgScrap, thresholds);
+
+  // Machines online: green if all running, amber if some, red if none
+  const onlineColor  = running === 0 ? "text-red-400"
+                     : running < total ? "text-yellow-400"
+                     : "text-green-400";
+  const onlineBorder = running === 0 ? "border-red-600"
+                     : running < total ? "border-yellow-600"
+                     : "border-green-600";
+
+  if (total === 0) return null;
+
+  return (
+    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+      <SummaryTile
+        icon="bi-activity"
+        label="Machines Online"
+        value={`${running} / ${total}`}
+        sub="currently running"
+        colorClass={onlineColor}
+        borderClass={onlineBorder}
+      />
+      <SummaryTile
+        icon="bi-speedometer2"
+        label="Avg Efficiency"
+        value={avgEff !== null ? `${avgEff.toFixed(1)}%` : "—"}
+        sub={avgEff !== null
+          ? avgEff >= thresholds.efficiency.good ? "Good"
+          : avgEff >= thresholds.efficiency.mediocre ? "Mediocre" : "Below target"
+          : "No live data"}
+        colorClass={ec.text}
+        borderClass={ec.border}
+      />
+      <SummaryTile
+        icon="bi-exclamation-triangle"
+        label="Avg Scrap Rate"
+        value={avgScrap !== null ? `${avgScrap.toFixed(1)}%` : "—"}
+        sub={avgScrap !== null
+          ? avgScrap <= thresholds.scrap.good ? "Good"
+          : avgScrap <= thresholds.scrap.mediocre ? "Mediocre" : "Above target"
+          : "No live data"}
+        colorClass={sc.text}
+        borderClass={sc.border}
+      />
+      <SummaryTile
+        icon="bi-box-seam"
+        label="Total Swabs"
+        value={swabsTotal > 0 ? swabsTotal.toLocaleString() : "—"}
+        sub="this shift, all machines"
+        colorClass="text-white"
+        borderClass="border-gray-600"
+      />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
@@ -211,6 +315,7 @@ export default function Dashboard() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const [dbError, setDbError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
+  const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const router = useRouter();
 
   const loadData = useCallback(async () => {
@@ -261,6 +366,7 @@ export default function Dashboard() {
 
   useEffect(() => {
     loadData();
+    fetchThresholds().then(setThresholds).catch(() => {/* use defaults */});
     const dataInterval = setInterval(loadData, 2000);
     const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
@@ -322,6 +428,11 @@ export default function Dashboard() {
           <i className="bi bi-exclamation-circle shrink-0 mt-0.5"></i>
           <div><span className="font-medium">Could not load machines from database:</span> {dbError}</div>
         </div>
+      )}
+
+      {/* ── Park summary tiles ── */}
+      {hasData && (
+        <ParkSummaryTiles machines={machines} thresholds={thresholds} />
       )}
 
       {/* ── Grouped by production cell ── */}

@@ -156,6 +156,56 @@ export async function assignMachineToCell(machineCode: string, cellId: string | 
   if (error) throw new Error(error.message);
 }
 
+// ============================================
+// THRESHOLDS
+// ============================================
+
+export interface Thresholds {
+  efficiency: { good: number; mediocre: number }; // good ≥ good, mediocre ≥ mediocre, bad < mediocre
+  scrap:      { good: number; mediocre: number }; // good ≤ good, mediocre ≤ mediocre, bad > mediocre
+}
+
+export const DEFAULT_THRESHOLDS: Thresholds = {
+  efficiency: { good: 85, mediocre: 70 },
+  scrap:      { good: 2,  mediocre: 5  },
+};
+
+export async function fetchThresholds(): Promise<Thresholds> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("app_settings")
+    .select("key, value")
+    .in("key", ["threshold_efficiency", "threshold_scrap"]);
+  if (error) throw new Error(error.message);
+  const map = Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
+  return {
+    efficiency: map["threshold_efficiency"] ?? DEFAULT_THRESHOLDS.efficiency,
+    scrap:      map["threshold_scrap"]      ?? DEFAULT_THRESHOLDS.scrap,
+  };
+}
+
+export async function saveThresholds(t: Thresholds): Promise<void> {
+  const sb = getSupabase();
+  await Promise.all([
+    sb.from("app_settings").upsert({ key: "threshold_efficiency", value: t.efficiency, updated_at: new Date().toISOString() }),
+    sb.from("app_settings").upsert({ key: "threshold_scrap",      value: t.scrap,      updated_at: new Date().toISOString() }),
+  ]);
+}
+
+export function applyEfficiencyColor(val: number | null, t: Thresholds) {
+  if (val === null) return { text: "text-gray-500", border: "border-gray-700", bg: "bg-gray-800/50" };
+  if (val >= t.efficiency.good)    return { text: "text-green-400",  border: "border-green-700",  bg: "bg-green-900/10"  };
+  if (val >= t.efficiency.mediocre) return { text: "text-yellow-400", border: "border-yellow-700", bg: "bg-yellow-900/10" };
+  return                                   { text: "text-red-400",    border: "border-red-700",    bg: "bg-red-900/10"    };
+}
+
+export function applyScrapColor(val: number | null, t: Thresholds) {
+  if (val === null) return { text: "text-gray-500", border: "border-gray-700", bg: "bg-gray-800/50" };
+  if (val <= t.scrap.good)    return { text: "text-green-400",  border: "border-green-700",  bg: "bg-green-900/10"  };
+  if (val <= t.scrap.mediocre) return { text: "text-yellow-400", border: "border-yellow-700", bg: "bg-yellow-900/10" };
+  return                              { text: "text-red-400",    border: "border-red-700",    bg: "bg-red-900/10"    };
+}
+
 export async function updateCellOrder(
   entries: { code: string; position: number }[]
 ): Promise<void> {
