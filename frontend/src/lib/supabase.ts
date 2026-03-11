@@ -92,7 +92,7 @@ export interface RegisteredMachine {
   error_message: string | null;
   active_shift: number | null;
   speed: number | null;
-  current_swabs: number | null;
+  current_swaps: number | null;
   current_boxes: number | null;
   current_efficiency: number | null;
   current_reject: number | null;
@@ -105,7 +105,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift"
+      "machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift"
     )
     .order("machine_code");
 

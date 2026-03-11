@@ -21,7 +21,7 @@ function machineFromDb(row: RegisteredMachine): MachineData {
       Error: row.error_message || "",
       ActShift: row.active_shift || 0,
       Speed: row.speed || 0,
-      Swaps: row.current_swabs || 0,
+      Swaps: row.current_swaps || 0,
       Boxes: row.current_boxes || 0,
       Efficiency: row.current_efficiency || 0,
       Reject: row.current_reject || 0,
