@@ -9,22 +9,24 @@ import { getStatusColor, formatStatus } from "@/lib/utils";
 type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
 
 /**
- * Build a MachineData entry from a Supabase registered machine row.
- * Used as the fallback when the bridge has no live data for a machine.
+ * Build an offline placeholder for a registered machine.
+ * Used whenever the bridge has no live data — status is Offline,
+ * all metrics are blank. Last Sync is preserved from the DB so
+ * the user can see when the machine was last active.
  */
-function machineFromDb(row: RegisteredMachine): MachineData {
+function offlinePlaceholder(row: RegisteredMachine): MachineData {
   return {
     machine: row.machine_code,
     machineStatus: {
       Machine: row.machine_code,
-      Status: row.status || "offline",
-      Error: row.error_message || "",
-      ActShift: row.active_shift || 0,
-      Speed: row.speed || 0,
-      Swaps: row.current_swaps || 0,
-      Boxes: row.current_boxes || 0,
-      Efficiency: row.current_efficiency || 0,
-      Reject: row.current_reject || 0,
+      Status: "offline",
+      Error: "",
+      ActShift: 0,
+      Speed: 0,
+      Swaps: 0,
+      Boxes: 0,
+      Efficiency: 0,
+      Reject: 0,
     },
     lastSyncStatus: row.last_sync_status || undefined,
     lastSyncShift: row.last_sync_shift || undefined,
@@ -64,26 +66,25 @@ export default function Dashboard() {
       setInitialLoading(false);
     }
 
-    // Build base map from DB rows
+    // All machines start as Offline with no metric data.
+    // Only live MQTT data from the bridge will populate metrics.
     const merged: Record<string, MachineData> = {};
     for (const row of registered) {
-      merged[row.machine_code] = machineFromDb(row);
+      merged[row.machine_code] = offlinePlaceholder(row);
     }
 
     // ── 2. Live bridge data (best-effort) ──────────────────────────────
+    // Machines the bridge reports overwrite the offline placeholder.
+    // Machines not heard from stay Offline with blank metrics.
     try {
       const state = await fetchMachines();
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
 
-      // Overlay live data on top of DB fallbacks
       for (const [code, live] of Object.entries(state.machines)) {
-        merged[code] = live;
-        // If this machine wasn't in Supabase yet, still show it
-        if (!merged[code]) merged[code] = live;
+        merged[code] = live; // Replace offline placeholder with live data
       }
     } catch {
-      // Bridge offline — DB data is still shown, MQTT indicator will reflect this
       setMqttConnected(false);
     }
 
