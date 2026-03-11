@@ -168,8 +168,9 @@ function CellSection({
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
     if (m.machineStatus?.Boxes)      blisters += m.machineStatus.Boxes;
   }
-  const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
-  const avgScrap = scrapCount > 0 ? scrapSum / scrapCount : null;
+  // Always show 0 when machines are present but offline, rather than hiding the stats
+  const avgEff   = machines.length > 0 ? (effCount   > 0 ? effSum   / effCount   : 0) : null;
+  const avgScrap = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
   const ec = applyEfficiencyColor(avgEff,   thresholds);
   const sc = applyScrapColor     (avgScrap, thresholds);
 
@@ -193,11 +194,9 @@ function CellSection({
               <i className="bi bi-exclamation-triangle mr-1"></i>{avgScrap.toFixed(1)}%
             </span>
           )}
-          {blisters > 0 && (
-            <span className="text-xs text-gray-400">
-              <i className="bi bi-box-seam mr-1"></i>{blisters.toLocaleString()} blisters
-            </span>
-          )}
+          <span className="text-xs text-gray-400">
+            <i className="bi bi-box-seam mr-1"></i>{blisters.toLocaleString()} blisters
+          </span>
         </div>
         <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
       </button>
