@@ -206,7 +206,7 @@ export default function Dashboard() {
                 <SortHeader col="Machine" label="Machine" />
                 <SortHeader col="Status" label="Status" />
                 <SortHeader col="Speed" label="Speed" />
-                <SortHeader col="Swaps" label="Total Swaps" />
+                <SortHeader col="Swaps" label="Total Swabs" />
                 <SortHeader col="Boxes" label="Total Blisters" />
                 <SortHeader col="Efficiency" label="Efficiency" />
                 <SortHeader col="Reject" label="Scrap Rate" />
