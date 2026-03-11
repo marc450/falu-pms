@@ -232,14 +232,14 @@ function ParkSummaryTiles({
   const all = Object.values(machines);
   const total = all.length;
 
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, swabsTotal = 0;
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, blistersTotal = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
     const isOnline = s && s !== "offline" && s !== "error";
     if (isOnline) running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
-    if (m.machineStatus?.Swaps)      swabsTotal += m.machineStatus.Swaps;
+    if (m.machineStatus?.Boxes)      blistersTotal += m.machineStatus.Boxes;
   }
 
   const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
@@ -292,8 +292,8 @@ function ParkSummaryTiles({
       />
       <SummaryTile
         icon="bi-box-seam"
-        label="Total Swabs"
-        value={swabsTotal > 0 ? swabsTotal.toLocaleString() : "—"}
+        label="Total Blisters"
+        value={blistersTotal > 0 ? blistersTotal.toLocaleString() : "—"}
         sub="this shift, all machines"
         colorClass="text-white"
         borderClass="border-gray-600"
