@@ -25,7 +25,10 @@ function MachinesTab() {
   const [dragOverCell, setDragOverCell] = useState<string | "unassigned" | null>(null);
   const [renamingCell, setRenamingCell] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [newCellName, setNewCellName] = useState("");
+  const [addingCell, setAddingCell] = useState(false);
   const renameInputRef = useRef<HTMLInputElement>(null);
+  const newCellInputRef = useRef<HTMLInputElement>(null);
 
   const reload = async () => {
     const [m, c] = await Promise.all([fetchRegisteredMachines(), fetchProductionCells()]);
@@ -40,9 +43,15 @@ function MachinesTab() {
     if (renamingCell && renameInputRef.current) renameInputRef.current.focus();
   }, [renamingCell]);
 
+  useEffect(() => {
+    if (addingCell && newCellInputRef.current) newCellInputRef.current.focus();
+  }, [addingCell]);
+
   const handleAddCell = async () => {
-    const name = `Cell ${cells.length + 1}`;
-    await createProductionCell(name, cells.length);
+    if (!newCellName.trim()) return;
+    await createProductionCell(newCellName.trim(), cells.length);
+    setNewCellName("");
+    setAddingCell(false);
     await reload();
   };
 
@@ -88,21 +97,91 @@ function MachinesTab() {
 
   return (
     <div className="space-y-4">
-      {/* Add cell button */}
+      {/* Toolbar */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-400">
           Drag machines into cells to organise your production floor.
         </p>
-        <button
-          onClick={handleAddCell}
-          className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm px-4 py-2 rounded-lg transition-colors"
-        >
-          <i className="bi bi-plus-circle"></i> Add Production Cell
-        </button>
+        {!addingCell && (
+          <button
+            onClick={() => setAddingCell(true)}
+            className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 text-white text-sm px-4 py-2 rounded-lg transition-colors"
+          >
+            <i className="bi bi-plus-circle"></i> Add Production Cell
+          </button>
+        )}
+      </div>
+
+      {/* New cell name prompt */}
+      {addingCell && (
+        <div className="flex items-center gap-2 bg-gray-800/60 border border-cyan-600/50 rounded-lg px-4 py-3">
+          <i className="bi bi-collection text-cyan-400"></i>
+          <input
+            ref={newCellInputRef}
+            value={newCellName}
+            onChange={(e) => setNewCellName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") handleAddCell();
+              if (e.key === "Escape") { setAddingCell(false); setNewCellName(""); }
+            }}
+            placeholder="Enter cell name…"
+            className="flex-1 bg-transparent text-white text-sm placeholder-gray-500 outline-none"
+          />
+          <button
+            onClick={handleAddCell}
+            disabled={!newCellName.trim()}
+            className="bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white text-sm px-3 py-1 rounded transition-colors"
+          >
+            Create
+          </button>
+          <button
+            onClick={() => { setAddingCell(false); setNewCellName(""); }}
+            className="text-gray-400 hover:text-white text-sm px-2 py-1 rounded transition-colors"
+          >
+            <i className="bi bi-x-lg"></i>
+          </button>
+        </div>
+      )}
+
+      {/* Unassigned pool — always on top */}
+      <div
+        className={`rounded-lg border overflow-hidden transition-colors ${
+          dragOverCell === "unassigned" ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
+        }`}
+        onDragOver={(e) => { e.preventDefault(); setDragOverCell("unassigned"); }}
+        onDragLeave={() => setDragOverCell(null)}
+        onDrop={() => onDrop(null)}
+      >
+        <div className="flex items-center justify-between px-4 py-3 bg-gray-800/60 border-b border-gray-700/50">
+          <h4 className="text-gray-400 font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-inbox text-gray-500"></i>
+            Unassigned Machines
+            <span className="text-gray-600 font-normal text-xs">{unassigned.length} machine{unassigned.length !== 1 ? "s" : ""}</span>
+          </h4>
+        </div>
+        <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-start">
+          {unassigned.length === 0 && dragOverCell !== "unassigned" && (
+            <div className="flex items-center justify-center w-full text-gray-700 text-xs select-none">
+              All machines assigned
+            </div>
+          )}
+          {unassigned.map((m) => (
+            <MachineChip
+              key={m.machine_code}
+              code={m.machine_code}
+              isDragging={draggedMachine === m.machine_code}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+            />
+          ))}
+          {dragOverCell === "unassigned" && draggedMachine && !unassigned.find((m) => m.machine_code === draggedMachine) && (
+            <MachineChip code={draggedMachine} ghost />
+          )}
+        </div>
       </div>
 
       {/* Production cells */}
-      {cells.length === 0 && (
+      {cells.length === 0 && !addingCell && (
         <div className="bg-gray-800/50 border border-dashed border-gray-600 rounded-lg p-8 text-center text-gray-500 text-sm">
           No production cells yet. Click <strong className="text-gray-400">Add Production Cell</strong> to create one.
         </div>
@@ -182,42 +261,6 @@ function MachinesTab() {
         );
       })}
 
-      {/* Unassigned pool */}
-      <div
-        className={`rounded-lg border overflow-hidden transition-colors ${
-          dragOverCell === "unassigned" ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
-        }`}
-        onDragOver={(e) => { e.preventDefault(); setDragOverCell("unassigned"); }}
-        onDragLeave={() => setDragOverCell(null)}
-        onDrop={() => onDrop(null)}
-      >
-        <div className="flex items-center justify-between px-4 py-3 bg-gray-800/60 border-b border-gray-700/50">
-          <h4 className="text-gray-400 font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-inbox text-gray-500"></i>
-            Unassigned Machines
-            <span className="text-gray-600 font-normal text-xs">{unassigned.length} machine{unassigned.length !== 1 ? "s" : ""}</span>
-          </h4>
-        </div>
-        <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-start">
-          {unassigned.length === 0 && dragOverCell !== "unassigned" && (
-            <div className="flex items-center justify-center w-full text-gray-700 text-xs select-none">
-              All machines assigned
-            </div>
-          )}
-          {unassigned.map((m) => (
-            <MachineChip
-              key={m.machine_code}
-              code={m.machine_code}
-              isDragging={draggedMachine === m.machine_code}
-              onDragStart={onDragStart}
-              onDragEnd={onDragEnd}
-            />
-          ))}
-          {dragOverCell === "unassigned" && draggedMachine && !unassigned.find((m) => m.machine_code === draggedMachine) && (
-            <MachineChip code={draggedMachine} ghost />
-          )}
-        </div>
-      </div>
     </div>
   );
 }
