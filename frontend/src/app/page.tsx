@@ -38,6 +38,8 @@ export default function Dashboard() {
   const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
+  const [dbError, setDbError] = useState<string | null>(null);
+  const [initialLoading, setInitialLoading] = useState(true);
   const router = useRouter();
 
   /**
@@ -53,8 +55,13 @@ export default function Dashboard() {
     let registered: RegisteredMachine[] = [];
     try {
       registered = await fetchRegisteredMachines();
+      setDbError(null);
     } catch (err) {
-      console.error("Failed to fetch registered machines:", err);
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Failed to fetch registered machines:", msg);
+      setDbError(msg);
+    } finally {
+      setInitialLoading(false);
     }
 
     // Build base map from DB rows
@@ -156,10 +163,15 @@ export default function Dashboard() {
               Shift {currentShift}
             </span>
           )}
-          {!hasData ? (
+          {initialLoading ? (
             <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
               <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
-              Loading machines...
+              Loading...
+            </span>
+          ) : !hasData ? (
+            <span className="bg-gray-700 text-gray-400 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
+              <i className="bi bi-database"></i>
+              0 machines registered
             </span>
           ) : (
             <span
@@ -174,6 +186,16 @@ export default function Dashboard() {
           )}
         </div>
       </div>
+
+      {/* Supabase error banner */}
+      {dbError && (
+        <div className="mb-4 bg-red-900/30 border border-red-700/50 text-red-400 text-sm rounded-lg px-4 py-3 flex items-start gap-2">
+          <i className="bi bi-exclamation-circle shrink-0 mt-0.5"></i>
+          <div>
+            <span className="font-medium">Could not load machines from database:</span> {dbError}
+          </div>
+        </div>
+      )}
 
       {/* Machine Table */}
       <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden">
