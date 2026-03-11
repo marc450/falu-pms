@@ -70,18 +70,6 @@ export interface BridgeState {
   currentShiftNumber: number;
 }
 
-export interface LogFile {
-  name: string;
-  path: string;
-  size: number;
-  lastModified: string;
-}
-
-export interface CsvPreview {
-  headers: string[];
-  rows: string[][];
-}
-
 // ============================================
 // SUPABASE DIRECT QUERIES
 // ============================================
@@ -148,20 +136,6 @@ export async function requestShiftData(machineCode: string, shift: number): Prom
 export async function fetchBrokerSettings() {
   const res = await fetch(`${API_BASE}/api/settings/broker`, { headers: API_HEADERS });
   return res.json();
-}
-
-export async function fetchLogFiles(): Promise<LogFile[]> {
-  const res = await fetch(`${API_BASE}/api/logs`, { headers: API_HEADERS });
-  return res.json();
-}
-
-export async function fetchLogPreview(filename: string): Promise<CsvPreview> {
-  const res = await fetch(`${API_BASE}/api/logs/preview/${filename}`, { headers: API_HEADERS });
-  return res.json();
-}
-
-export function getLogDownloadUrl(path: string): string {
-  return `${API_BASE}/api/logs/download/${path}`;
 }
 
 export async function fetchHealth() {

@@ -63,7 +63,6 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <nav className="flex-1 p-3 space-y-1">
           <NavLink href="/" icon="speedometer2" label="Dashboard" current={pathname} />
           <NavLink href="/settings" icon="gear" label="Settings" current={pathname} />
-          <NavLink href="/downloads" icon="download" label="Logfiles" current={pathname} />
           <NavLink href="/debug" icon="bug" label="Debug" current={pathname} />
         </nav>
 
