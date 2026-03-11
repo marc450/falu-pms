@@ -146,6 +146,7 @@ function CellSection({
   color,
   machines,
   onMachineClick,
+  thresholds,
   defaultOpen = true,
 }: {
   title: string;
@@ -153,9 +154,24 @@ function CellSection({
   color: string;
   machines: MachineData[];
   onMachineClick: (code: string) => void;
+  thresholds: Thresholds;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+
+  // Compute cell-level stats
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, blisters = 0;
+  for (const m of machines) {
+    const s = m.machineStatus?.Status?.toLowerCase();
+    if (s && s !== "offline" && s !== "error") running++;
+    if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
+    if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
+    if (m.machineStatus?.Boxes)      blisters += m.machineStatus.Boxes;
+  }
+  const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
+  const avgScrap = scrapCount > 0 ? scrapSum / scrapCount : null;
+  const ec = applyEfficiencyColor(avgEff,   thresholds);
+  const sc = applyScrapColor     (avgScrap, thresholds);
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
@@ -163,10 +179,25 @@ function CellSection({
         onClick={() => setOpen(!open)}
         className="w-full flex items-center justify-between px-4 py-3 bg-gray-800 hover:bg-gray-750 transition-colors"
       >
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <i className={`bi ${icon} ${color}`}></i>
           <span className="text-white font-semibold text-sm">{title}</span>
-          <span className="text-gray-500 text-xs">{machines.length} machine{machines.length !== 1 ? "s" : ""}</span>
+          <span className="text-gray-500 text-xs">{running}/{machines.length} running</span>
+          {avgEff !== null && (
+            <span className={`text-xs font-medium ${ec.text}`}>
+              <i className="bi bi-speedometer2 mr-1"></i>{avgEff.toFixed(1)}%
+            </span>
+          )}
+          {avgScrap !== null && (
+            <span className={`text-xs font-medium ${sc.text}`}>
+              <i className="bi bi-exclamation-triangle mr-1"></i>{avgScrap.toFixed(1)}%
+            </span>
+          )}
+          {blisters > 0 && (
+            <span className="text-xs text-gray-400">
+              <i className="bi bi-box-seam mr-1"></i>{blisters.toLocaleString()} blisters
+            </span>
+          )}
         </div>
         <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
       </button>
@@ -446,6 +477,7 @@ export default function Dashboard() {
               color="text-cyan-400"
               machines={machinesForCell(cell.id)}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
+              thresholds={thresholds}
             />
           ))}
           {unassigned.length > 0 && (
@@ -455,6 +487,7 @@ export default function Dashboard() {
               color="text-gray-400"
               machines={unassigned}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
+              thresholds={thresholds}
             />
           )}
           {!hasData && (
