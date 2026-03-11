@@ -83,6 +83,37 @@ export interface CsvPreview {
 }
 
 // ============================================
+// SUPABASE DIRECT QUERIES
+// ============================================
+
+export interface RegisteredMachine {
+  machine_code: string;
+  status: string | null;
+  error_message: string | null;
+  active_shift: number | null;
+  speed: number | null;
+  current_swabs: number | null;
+  current_boxes: number | null;
+  current_efficiency: number | null;
+  current_reject: number | null;
+  last_sync_status: string | null;
+  last_sync_shift: string | null;
+}
+
+export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("machines")
+    .select(
+      "machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift"
+    )
+    .order("machine_code");
+
+  if (error) throw new Error(error.message);
+  return data ?? [];
+}
+
+// ============================================
 // BRIDGE API CLIENT
 // ============================================
 

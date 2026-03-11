@@ -2,11 +2,34 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { fetchMachines } from "@/lib/supabase";
-import type { MachineData } from "@/lib/supabase";
+import { fetchMachines, fetchRegisteredMachines } from "@/lib/supabase";
+import type { MachineData, RegisteredMachine } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 
 type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
+
+/**
+ * Build a MachineData entry from a Supabase registered machine row.
+ * Used as the fallback when the bridge has no live data for a machine.
+ */
+function machineFromDb(row: RegisteredMachine): MachineData {
+  return {
+    machine: row.machine_code,
+    machineStatus: {
+      Machine: row.machine_code,
+      Status: row.status || "offline",
+      Error: row.error_message || "",
+      ActShift: row.active_shift || 0,
+      Speed: row.speed || 0,
+      Swaps: row.current_swabs || 0,
+      Boxes: row.current_boxes || 0,
+      Efficiency: row.current_efficiency || 0,
+      Reject: row.current_reject || 0,
+    },
+    lastSyncStatus: row.last_sync_status || undefined,
+    lastSyncShift: row.last_sync_shift || undefined,
+  };
+}
 
 export default function Dashboard() {
   const [machines, setMachines] = useState<Record<string, MachineData>>({});
@@ -17,15 +40,47 @@ export default function Dashboard() {
   const [currentTime, setCurrentTime] = useState(new Date());
   const router = useRouter();
 
+  /**
+   * Load data from both sources:
+   * 1. Supabase machines table  → all registered machines (source of truth for the list)
+   * 2. Bridge API               → live MQTT values (overlaid on top)
+   *
+   * This means the dashboard always shows every registered machine,
+   * even when the bridge is offline or a machine hasn't sent data yet.
+   */
   const loadData = useCallback(async () => {
+    // ── 1. Registered machines from Supabase ───────────────────────────
+    let registered: RegisteredMachine[] = [];
+    try {
+      registered = await fetchRegisteredMachines();
+    } catch (err) {
+      console.error("Failed to fetch registered machines:", err);
+    }
+
+    // Build base map from DB rows
+    const merged: Record<string, MachineData> = {};
+    for (const row of registered) {
+      merged[row.machine_code] = machineFromDb(row);
+    }
+
+    // ── 2. Live bridge data (best-effort) ──────────────────────────────
     try {
       const state = await fetchMachines();
-      setMachines(state.machines);
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
-    } catch (err) {
-      console.error("Failed to fetch machines:", err);
+
+      // Overlay live data on top of DB fallbacks
+      for (const [code, live] of Object.entries(state.machines)) {
+        merged[code] = live;
+        // If this machine wasn't in Supabase yet, still show it
+        if (!merged[code]) merged[code] = live;
+      }
+    } catch {
+      // Bridge offline — DB data is still shown, MQTT indicator will reflect this
+      setMqttConnected(false);
     }
+
+    setMachines(merged);
   }, []);
 
   useEffect(() => {
@@ -104,7 +159,7 @@ export default function Dashboard() {
           {!hasData ? (
             <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
               <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
-              Waiting for MQTT data...
+              Loading machines...
             </span>
           ) : (
             <span
@@ -113,8 +168,8 @@ export default function Dashboard() {
               }`}
             >
               <i className={`bi bi-${mqttConnected ? "wifi" : "wifi-off"}`}></i>
-              {machineCount} Machines online
-              {!mqttConnected && <span className="ml-1">(Reconnecting...)</span>}
+              {machineCount} Machines
+              {!mqttConnected && <span className="ml-1">(Bridge offline)</span>}
             </span>
           )}
         </div>
@@ -129,7 +184,7 @@ export default function Dashboard() {
                 <SortHeader col="Machine" label="Machine" />
                 <SortHeader col="Status" label="Status" />
                 <SortHeader col="Speed" label="Speed" />
-                <SortHeader col="Swaps" label="Total Swabs" />
+                <SortHeader col="Swaps" label="Total Swaps" />
                 <SortHeader col="Boxes" label="Total Blisters" />
                 <SortHeader col="Efficiency" label="Efficiency" />
                 <SortHeader col="Reject" label="Scrap Rate" />
@@ -180,7 +235,7 @@ export default function Dashboard() {
               {sortedMachines.length === 0 && (
                 <tr>
                   <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
-                    No machines connected. Start the MQTT bridge and simulator to see data.
+                    No machines registered. Add machines in Supabase to see them here.
                   </td>
                 </tr>
               )}
