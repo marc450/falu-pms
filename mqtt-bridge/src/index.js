@@ -97,6 +97,51 @@ function getPublishTopicPrefix() {
 }
 
 // ============================================
+// STARTUP: LOAD ALL REGISTERED MACHINES
+// Ensures every machine in the DB appears on the dashboard,
+// even if it hasn't sent MQTT data yet this session.
+// ============================================
+async function loadRegisteredMachines() {
+  const { data, error } = await supabase
+    .from("machines")
+    .select("id, machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift")
+    .order("machine_code");
+
+  if (error) {
+    logger.error(`Failed to load registered machines: ${error.message}`);
+    return;
+  }
+
+  for (const row of data) {
+    const code = row.machine_code;
+    // Pre-populate cache so getMachineId() doesn't need a DB round-trip
+    machineIdCache[code] = row.id;
+
+    // Only seed if no live MQTT data has arrived yet for this machine
+    if (!allMachines[code]) {
+      allMachines[code] = {
+        machine: code,
+        machineStatus: {
+          Machine: code,
+          Status: row.status || "offline",
+          Error: row.error_message || "",
+          ActShift: row.active_shift || 0,
+          Speed: row.speed || 0,
+          Swaps: row.current_swaps || 0,
+          Boxes: row.current_boxes || 0,
+          Efficiency: row.current_efficiency || 0,
+          Reject: row.current_reject || 0,
+        },
+        lastSyncStatus: row.last_sync_status || null,
+        lastSyncShift: row.last_sync_shift || null,
+      };
+    }
+  }
+
+  logger.info(`Loaded ${data.length} registered machines from Supabase`);
+}
+
+// ============================================
 // MACHINE ID RESOLUTION
 // ============================================
 async function getMachineId(machineCode) {
@@ -510,12 +555,17 @@ app.get("/api/logs/preview/:filename", (req, res) => {
 // ============================================
 const PORT = process.env.API_PORT || 3001;
 
-connectMqtt();
-
-app.listen(PORT, () => {
-  logger.info(`FALU PMS Bridge API running on port ${PORT}`);
-  logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
-  logger.info(`Topic: ${getSubscribeTopic()}`);
+// Load registered machines first, then start MQTT and HTTP server
+loadRegisteredMachines().then(() => {
+  connectMqtt();
+  app.listen(PORT, () => {
+    logger.info(`FALU PMS Bridge API running on port ${PORT}`);
+    logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
+    logger.info(`Topic: ${getSubscribeTopic()}`);
+  });
+}).catch((err) => {
+  logger.error(`Startup failed: ${err.message}`);
+  process.exit(1);
 });
 
 // Graceful shutdown
