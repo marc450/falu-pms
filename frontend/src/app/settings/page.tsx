@@ -578,6 +578,122 @@ function TargetInput({
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// Module-level so React never re-mounts them on parent re-render
+// ─────────────────────────────────────────────────────────────
+function MachineTargetRow({
+  m, targets, onSetTarget,
+}: {
+  m: RegisteredMachine;
+  targets: Record<string, MachineTargets>;
+  onSetTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
+}) {
+  const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
+  return (
+    <tr className="border-t border-gray-700/50 hover:bg-gray-800/30">
+      <td className="px-4 py-2.5 font-bold text-cyan-400 text-sm whitespace-nowrap">{m.machine_code}</td>
+      {/* Efficiency group — cyan tint */}
+      <td className="px-3 py-2.5 bg-cyan-900/5">
+        <TargetInput value={tgt.efficiency_good} onChange={v => onSetTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 82" />
+      </td>
+      <td className="px-3 py-2.5 bg-cyan-900/5 border-r border-gray-700/50">
+        <TargetInput value={tgt.efficiency_mediocre} onChange={v => onSetTarget(m.machine_code, "efficiency_mediocre", v)} unit="%" placeholder="e.g. 72" />
+      </td>
+      {/* Scrap group — orange tint */}
+      <td className="px-3 py-2.5 bg-orange-900/5">
+        <TargetInput value={tgt.scrap_good} onChange={v => onSetTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 4" />
+      </td>
+      <td className="px-3 py-2.5 bg-orange-900/5 border-r border-gray-700/50">
+        <TargetInput value={tgt.scrap_mediocre} onChange={v => onSetTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
+      </td>
+      {/* BU target — purple tint */}
+      <td className="px-3 py-2.5 bg-purple-900/5">
+        <TargetInput value={tgt.bu_target} onChange={v => onSetTarget(m.machine_code, "bu_target", v)} unit="BUs" placeholder="e.g. 180" />
+      </td>
+    </tr>
+  );
+}
+
+function CellGroup({
+  title, ms, targets, onSetTarget,
+}: {
+  title: string;
+  ms: RegisteredMachine[];
+  targets: Record<string, MachineTargets>;
+  onSetTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
+}) {
+  if (ms.length === 0) return null;
+  return (
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+      <div className="bg-gray-800 px-4 py-2.5 border-b border-gray-700">
+        <span className="text-white font-semibold text-sm">
+          <i className="bi bi-collection text-cyan-400 mr-2"></i>{title}
+        </span>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            <tr>
+              <th className="px-4 py-2 text-left" rowSpan={2}>
+                <span className="text-xs text-gray-500 font-medium">Machine</span>
+              </th>
+              <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-cyan-500 bg-cyan-900/20">
+                <span className="text-xs font-semibold text-cyan-300 tracking-wide uppercase">
+                  <i className="bi bi-speedometer2 mr-1.5"></i>Efficiency Thresholds
+                </span>
+              </th>
+              <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-orange-500 bg-orange-900/20">
+                <span className="text-xs font-semibold text-orange-300 tracking-wide uppercase">
+                  <i className="bi bi-exclamation-triangle mr-1.5"></i>Scrap Rate Thresholds
+                </span>
+              </th>
+              <th className="px-3 pt-2.5 pb-1 text-center border-b-2 border-purple-500 bg-purple-900/20">
+                <span className="text-xs font-semibold text-purple-300 tracking-wide uppercase">
+                  <i className="bi bi-bullseye mr-1.5"></i>Output Target
+                </span>
+              </th>
+            </tr>
+            <tr className="bg-gray-800/30">
+              <th className="px-3 py-1.5 text-center bg-cyan-900/10 border-r border-gray-700/50">
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                  Good <span className="text-gray-500 font-normal">(≥)</span>
+                </span>
+              </th>
+              <th className="px-3 py-1.5 text-center bg-cyan-900/10">
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-yellow-400">
+                  <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>
+                  Mediocre <span className="text-gray-500 font-normal">(≥)</span>
+                </span>
+              </th>
+              <th className="px-3 py-1.5 text-center bg-orange-900/10 border-r border-gray-700/50 border-l border-gray-700/50">
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
+                  <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                  Good <span className="text-gray-500 font-normal">(≤)</span>
+                </span>
+              </th>
+              <th className="px-3 py-1.5 text-center bg-orange-900/10">
+                <span className="inline-flex items-center gap-1 text-xs font-medium text-yellow-400">
+                  <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>
+                  Mediocre <span className="text-gray-500 font-normal">(≤)</span>
+                </span>
+              </th>
+              <th className="px-3 py-1.5 text-center bg-purple-900/10 border-l border-gray-700/50">
+                <span className="text-xs font-medium text-purple-300">BUs / shift</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {ms.map(m => (
+              <MachineTargetRow key={m.machine_code} m={m} targets={targets} onSetTarget={onSetTarget} />
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ThresholdsTab() {
   // ── Shift length (global) ──────────────────────────────────
   const [t, setT] = useState<Thresholds>(DEFAULT_THRESHOLDS);
@@ -646,110 +762,6 @@ function ThresholdsTab() {
       .sort((a, b) => (a.cell_position ?? 0) - (b.cell_position ?? 0));
   const unassigned = machines.filter(m => !m.cell_id);
 
-  const MachineTargetRow = ({ m }: { m: RegisteredMachine }) => {
-    const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
-    return (
-      <tr className="border-t border-gray-700/50 hover:bg-gray-800/30">
-        <td className="px-4 py-2.5 font-bold text-cyan-400 text-sm whitespace-nowrap">{m.machine_code}</td>
-        {/* Efficiency group — cyan tint */}
-        <td className="px-3 py-2.5 bg-cyan-900/5">
-          <TargetInput value={tgt.efficiency_good} onChange={v => setTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 82" />
-        </td>
-        <td className="px-3 py-2.5 bg-cyan-900/5 border-r border-gray-700/50">
-          <TargetInput value={tgt.efficiency_mediocre} onChange={v => setTarget(m.machine_code, "efficiency_mediocre", v)} unit="%" placeholder="e.g. 72" />
-        </td>
-        {/* Scrap group — orange tint */}
-        <td className="px-3 py-2.5 bg-orange-900/5">
-          <TargetInput value={tgt.scrap_good} onChange={v => setTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 4" />
-        </td>
-        <td className="px-3 py-2.5 bg-orange-900/5 border-r border-gray-700/50">
-          <TargetInput value={tgt.scrap_mediocre} onChange={v => setTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
-        </td>
-        {/* BU target — purple tint */}
-        <td className="px-3 py-2.5 bg-purple-900/5">
-          <TargetInput value={tgt.bu_target} onChange={v => setTarget(m.machine_code, "bu_target", v)} unit="BUs" placeholder="e.g. 180" />
-        </td>
-      </tr>
-    );
-  };
-
-  const CellGroup = ({ title, ms }: { title: string; ms: RegisteredMachine[] }) => {
-    if (ms.length === 0) return null;
-    return (
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-        {/* Cell name header */}
-        <div className="bg-gray-800 px-4 py-2.5 border-b border-gray-700">
-          <span className="text-white font-semibold text-sm">
-            <i className="bi bi-collection text-cyan-400 mr-2"></i>{title}
-          </span>
-        </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              {/* Row 1: group headers */}
-              <tr>
-                <th className="px-4 py-2 text-left" rowSpan={2}>
-                  <span className="text-xs text-gray-500 font-medium">Machine</span>
-                </th>
-                {/* Efficiency group */}
-                <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-cyan-500 bg-cyan-900/20">
-                  <span className="text-xs font-semibold text-cyan-300 tracking-wide uppercase">
-                    <i className="bi bi-speedometer2 mr-1.5"></i>Efficiency Thresholds
-                  </span>
-                </th>
-                {/* Scrap group */}
-                <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-orange-500 bg-orange-900/20">
-                  <span className="text-xs font-semibold text-orange-300 tracking-wide uppercase">
-                    <i className="bi bi-exclamation-triangle mr-1.5"></i>Scrap Rate Thresholds
-                  </span>
-                </th>
-                {/* BU target */}
-                <th className="px-3 pt-2.5 pb-1 text-center border-b-2 border-purple-500 bg-purple-900/20">
-                  <span className="text-xs font-semibold text-purple-300 tracking-wide uppercase">
-                    <i className="bi bi-bullseye mr-1.5"></i>Output Target
-                  </span>
-                </th>
-              </tr>
-              {/* Row 2: sub-column labels */}
-              <tr className="bg-gray-800/30">
-                <th className="px-3 py-1.5 text-center bg-cyan-900/10 border-r border-gray-700/50">
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
-                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
-                    Good <span className="text-gray-500 font-normal">(≥)</span>
-                  </span>
-                </th>
-                <th className="px-3 py-1.5 text-center bg-cyan-900/10">
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-yellow-400">
-                    <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>
-                    Mediocre <span className="text-gray-500 font-normal">(≥)</span>
-                  </span>
-                </th>
-                <th className="px-3 py-1.5 text-center bg-orange-900/10 border-r border-gray-700/50 border-l border-gray-700/50">
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
-                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
-                    Good <span className="text-gray-500 font-normal">(≤)</span>
-                  </span>
-                </th>
-                <th className="px-3 py-1.5 text-center bg-orange-900/10">
-                  <span className="inline-flex items-center gap-1 text-xs font-medium text-yellow-400">
-                    <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>
-                    Mediocre <span className="text-gray-500 font-normal">(≤)</span>
-                  </span>
-                </th>
-                <th className="px-3 py-1.5 text-center bg-purple-900/10 border-l border-gray-700/50">
-                  <span className="text-xs font-medium text-purple-300">BUs / shift</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {ms.map(m => <MachineTargetRow key={m.machine_code} m={m} />)}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    );
-  };
-
   return (
     <div className="space-y-5">
       {/* ── Top toolbar ───────────────────────────────────────── */}
@@ -795,10 +807,10 @@ function ThresholdsTab() {
       ) : (
         <div className="space-y-4">
           {cells.map(cell => (
-            <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} />
+            <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} targets={targets} onSetTarget={setTarget} />
           ))}
           {unassigned.length > 0 && (
-            <CellGroup title="Unassigned" ms={unassigned} />
+            <CellGroup title="Unassigned" ms={unassigned} targets={targets} onSetTarget={setTarget} />
           )}
         </div>
       )}
