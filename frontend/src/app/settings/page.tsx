@@ -416,6 +416,13 @@ function ThresholdRow({
   label: string; sublabel: string; value: number;
   onChange: (v: number) => void; unit: string; inverted?: boolean; max?: number;
 }) {
+  const [display, setDisplay] = useState(String(value));
+
+  // Keep display in sync when parent value changes externally (e.g. on load)
+  useEffect(() => {
+    setDisplay(String(value));
+  }, [value]);
+
   return (
     <div className="flex items-center justify-between py-2">
       <div>
@@ -426,8 +433,21 @@ function ThresholdRow({
         <input
           type="number"
           min={0} max={max ?? 100} step={0.5}
-          value={value}
-          onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
+          value={display}
+          onChange={(e) => {
+            setDisplay(e.target.value);
+            const n = parseFloat(e.target.value);
+            if (!isNaN(n)) onChange(n);
+          }}
+          onBlur={(e) => {
+            const n = parseFloat(e.target.value);
+            if (isNaN(n) || e.target.value === "") {
+              setDisplay(String(value)); // revert to last valid value
+            } else {
+              onChange(n);
+              setDisplay(String(n));
+            }
+          }}
           className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
         />
         <span className="text-gray-400 text-sm w-8">{unit}</span>
