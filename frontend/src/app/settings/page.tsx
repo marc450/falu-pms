@@ -553,7 +553,15 @@ function TargetInput({
   unit?: string; placeholder?: string;
 }) {
   const [display, setDisplay] = useState(value !== null ? String(value) : "");
-  useEffect(() => { setDisplay(value !== null ? String(value) : ""); }, [value]);
+  const focused = useRef(false);
+
+  // Only sync incoming value changes when the field is not being edited
+  useEffect(() => {
+    if (!focused.current) {
+      setDisplay(value !== null ? String(value) : "");
+    }
+  }, [value]);
+
   return (
     <div className="flex items-center gap-1">
       <input
@@ -561,12 +569,14 @@ function TargetInput({
         min={0} step={0.5}
         value={display}
         placeholder={placeholder ?? "—"}
+        onFocus={() => { focused.current = true; }}
         onChange={(e) => {
           setDisplay(e.target.value);
           const n = parseFloat(e.target.value);
           if (!isNaN(n)) onChange(n);
         }}
         onBlur={(e) => {
+          focused.current = false;
           const n = parseFloat(e.target.value);
           if (e.target.value === "" || isNaN(n)) { setDisplay(""); onChange(null); }
           else { onChange(n); setDisplay(String(n)); }
