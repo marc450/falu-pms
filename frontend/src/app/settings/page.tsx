@@ -640,8 +640,11 @@ function ThresholdsTab() {
   );
 
   // Group machines by cell
-  const cellMachines = (cellId: string) => machines.filter(m => m.cell_id === cellId);
-  const unassigned   = machines.filter(m => !m.cell_id);
+  const cellMachines = (cellId: string) =>
+    machines
+      .filter(m => m.cell_id === cellId)
+      .sort((a, b) => (a.cell_position ?? 0) - (b.cell_position ?? 0));
+  const unassigned = machines.filter(m => !m.cell_id);
 
   const MachineTargetRow = ({ m }: { m: RegisteredMachine }) => {
     const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
