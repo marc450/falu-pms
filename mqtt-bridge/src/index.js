@@ -409,7 +409,7 @@ function publishRequestShift(machine, shift) {
     return false;
   }
 
-  const topic = `${getPublishTopicPrefix()}/RequestShift`;
+  const topic = `${getPublishTopicPrefix()}/RequestShift/${machine}`;
   const payload = JSON.stringify({ Machine: machine, Shift: shift });
 
   mqttClient.publish(topic, payload, { qos: 1 }, (err) => {

@@ -197,8 +197,8 @@ client.on("connect", () => {
   // Init machines
   MACHINE_NAMES.forEach(name => initMachine(name.trim()));
 
-  // Subscribe to RequestShift
-  client.subscribe(`${topicPrefix}/RequestShift`, { qos: 1 });
+  // Subscribe to machine-specific RequestShift topics
+  client.subscribe(`${topicPrefix}/RequestShift/+`, { qos: 1 });
 
   // Start simulation loop
   setInterval(() => {
@@ -229,12 +229,13 @@ client.on("connect", () => {
   console.log("Simulation started. Press Ctrl+C to stop.\n");
 });
 
-// Handle RequestShift messages
+// Handle RequestShift messages (topic: {prefix}/RequestShift/{machineName})
 client.on("message", (topic, message) => {
   if (topic.includes("RequestShift")) {
     try {
+      const machineName = topic.split("/").pop();
       const req = JSON.parse(message.toString());
-      const m = machines[req.Machine];
+      const m = machines[machineName];
       if (m) {
         if (req.Shift === 0) {
           // Send all shifts
@@ -263,7 +264,7 @@ client.on("message", (topic, message) => {
 
           // Publish total as Shift 4
           const msg = {
-            Machine: req.Machine,
+            Machine: machineName,
             Shift: 4,
             ProductionTime: totalShift.productionTime,
             IdleTime: totalShift.idleTime,
@@ -284,7 +285,7 @@ client.on("message", (topic, message) => {
         } else {
           publishShiftData(client, m, req.Shift);
         }
-        console.log(`[REQ] Shift data sent for ${req.Machine} Shift ${req.Shift}`);
+        console.log(`[REQ] Shift data sent for ${machineName} Shift ${req.Shift}`);
       }
     } catch (err) {
       console.error(`RequestShift error: ${err.message}`);
