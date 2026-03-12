@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, requestShiftData, fetchRegisteredMachines } from "@/lib/supabase";
+import { fetchMachine, requestShiftData } from "@/lib/supabase";
 import type { MachineData, ShiftDataMessage } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 
@@ -10,7 +10,6 @@ function ProductionContent() {
   const searchParams = useSearchParams();
   const machineName = searchParams.get("machine") || "";
   const [machine, setMachine] = useState<MachineData | null>(null);
-  const [displayName, setDisplayName] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
   const router = useRouter();
@@ -33,14 +32,6 @@ function ProductionContent() {
       setLoading(false);
       return;
     }
-
-    // Fetch display name once from Supabase
-    fetchRegisteredMachines()
-      .then((rows) => {
-        const row = rows.find((r) => r.machine_code === machineName);
-        setDisplayName(row?.display_name ?? null);
-      })
-      .catch(() => {});
 
     loadData();
 
@@ -139,14 +130,9 @@ function ProductionContent() {
           >
             <i className="bi bi-arrow-left mr-1"></i> Back
           </button>
-          <div className="flex flex-col leading-tight">
-            <h2 className="text-xl font-bold text-white">
-              {displayName ?? machineName}
-            </h2>
-            {displayName && (
-              <span className="text-xs font-mono text-gray-500">{machineName}</span>
-            )}
-          </div>
+          <h2 className="text-xl font-bold text-white">
+            Production Details — {machineName}
+          </h2>
         </div>
         <span className="bg-cyan-900/30 text-cyan-400 text-xs px-3 py-1.5 rounded-full">
           Live Data
@@ -165,10 +151,7 @@ function ProductionContent() {
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
           {/* Card header */}
           <div className="bg-blue-600 px-5 py-3 flex justify-between items-center">
-            <h4 className="text-white font-semibold">
-              {displayName ?? machine.machine}
-              {displayName && <span className="ml-2 text-blue-200 text-xs font-mono font-normal">{machine.machine}</span>}
-            </h4>
+            <h4 className="text-white font-semibold">Machine: {machine.machine}</h4>
             <div className="flex items-center gap-2">
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>

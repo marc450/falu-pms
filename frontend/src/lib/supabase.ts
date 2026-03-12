@@ -89,7 +89,6 @@ export type PackingFormat = keyof typeof PACKING_FORMATS;
 
 export interface RegisteredMachine {
   machine_code: string;
-  display_name: string | null;
   packing_format: PackingFormat | null;
   status: string | null;
   error_message: string | null;
@@ -110,24 +109,12 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, display_name, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position"
+      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position"
     )
     .order("machine_code");
 
   if (error) throw new Error(error.message);
   return data ?? [];
-}
-
-export async function updateMachineDisplayName(
-  machine_code: string,
-  display_name: string | null
-): Promise<void> {
-  const sb = getSupabase();
-  const { error } = await sb
-    .from("machines")
-    .update({ display_name: display_name || null })
-    .eq("machine_code", machine_code);
-  if (error) throw new Error(error.message);
 }
 
 export async function updateMachinePackingFormat(
