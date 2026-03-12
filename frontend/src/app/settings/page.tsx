@@ -849,9 +849,9 @@ export default function SettingsPage() {
   }, []);
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: "users",       label: "Users",       icon: "bi-people-fill"    },
     { id: "machines",    label: "Machines",    icon: "bi-cpu-fill"       },
-    { id: "thresholds",  label: "Thresholds & Targets",  icon: "bi-sliders"  },
+    { id: "thresholds",  label: "Targets",     icon: "bi-sliders"        },
+    { id: "users",       label: "Users",       icon: "bi-people-fill"    },
     { id: "mqtt",        label: "MQTT",        icon: "bi-router-fill"    },
   ];
 
