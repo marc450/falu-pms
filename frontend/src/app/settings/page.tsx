@@ -522,8 +522,6 @@ function TargetInput({
 function ThresholdsTab() {
   // ── Shift length (global) ──────────────────────────────────
   const [t, setT] = useState<Thresholds>(DEFAULT_THRESHOLDS);
-  const [shiftSaving, setShiftSaving] = useState(false);
-  const [shiftSaved, setShiftSaved] = useState(false);
 
   // ── Per-machine targets ────────────────────────────────────
   const [machines, setMachines] = useState<RegisteredMachine[]>([]);
@@ -531,7 +529,7 @@ function ThresholdsTab() {
   const [targets, setTargets] = useState<Record<string, MachineTargets>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-  const [savedMsg, setSavedMsg] = useState(false);
+  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -561,26 +559,18 @@ function ThresholdsTab() {
     setTargets(prev => ({ ...prev, [code]: { ...prev[code], [field]: val } }));
   };
 
-  const handleSaveShift = async () => {
-    setShiftSaving(true);
-    try {
-      await saveThresholds(t);
-      setShiftSaved(true);
-      setTimeout(() => setShiftSaved(false), 2500);
-    } finally { setShiftSaving(false); }
-  };
-
-  const handleSaveTargets = async () => {
+  const handleSaveAll = async () => {
     setSaving(true);
     try {
-      await Promise.all(
-        machines.map(m => updateMachineTargets(m.machine_code, targets[m.machine_code] ?? {
+      await Promise.all([
+        saveThresholds(t),
+        ...machines.map(m => updateMachineTargets(m.machine_code, targets[m.machine_code] ?? {
           efficiency_good: null, efficiency_mediocre: null,
           scrap_good: null, scrap_mediocre: null, bu_target: null,
-        }))
-      );
-      setSavedMsg(true);
-      setTimeout(() => setSavedMsg(false), 2500);
+        })),
+      ]);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
     } finally { setSaving(false); }
   };
 
@@ -700,6 +690,23 @@ function ThresholdsTab() {
 
   return (
     <div className="space-y-5">
+      {/* ── Top toolbar ───────────────────────────────────────── */}
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-400">
+          Set thresholds and BU targets per machine. Leave a field empty to disable that metric.
+          Traffic light:{" "}
+          <span className="text-green-400">good</span> / <span className="text-yellow-400">mediocre</span> / <span className="text-red-400">below</span>.
+        </p>
+        <button
+          onClick={handleSaveAll}
+          disabled={saving}
+          className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors shrink-0 ml-6"
+        >
+          {saving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
+          {saved ? "Saved!" : saving ? "Saving…" : "Save Settings"}
+        </button>
+      </div>
+
       {/* ── Shift length ──────────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-sm">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
@@ -718,48 +725,20 @@ function ThresholdsTab() {
             max={24}
           />
         </div>
-        <div className="px-5 pb-4">
-          <button
-            onClick={handleSaveShift}
-            disabled={shiftSaving}
-            className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-xs px-4 py-1.5 rounded-lg transition-colors"
-          >
-            {shiftSaving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
-            {shiftSaved ? "Saved!" : shiftSaving ? "Saving…" : "Save"}
-          </button>
-        </div>
       </div>
 
       {/* ── Per-machine targets ───────────────────────────────── */}
-      <div>
-        <p className="text-sm text-gray-400 mb-3">
-          Set thresholds and BU targets per machine. Leave a field empty to disable that metric for the machine.
-          Efficiency and scrap use a two-tier traffic light:{" "}
-          <span className="text-green-400">good</span> / <span className="text-yellow-400">mediocre</span> / <span className="text-red-400">below</span>.
-        </p>
-        {machines.length === 0 ? (
-          <p className="text-gray-500 text-sm">No machines registered yet.</p>
-        ) : (
-          <div className="space-y-4">
-            {cells.map(cell => (
-              <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} />
-            ))}
-            {unassigned.length > 0 && (
-              <CellGroup title="Unassigned" ms={unassigned} />
-            )}
-          </div>
-        )}
-      </div>
-
-      {machines.length > 0 && (
-        <button
-          onClick={handleSaveTargets}
-          disabled={saving}
-          className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors"
-        >
-          {saving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
-          {savedMsg ? "Saved!" : saving ? "Saving…" : "Save All Targets"}
-        </button>
+      {machines.length === 0 ? (
+        <p className="text-gray-500 text-sm">No machines registered yet.</p>
+      ) : (
+        <div className="space-y-4">
+          {cells.map(cell => (
+            <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} />
+          ))}
+          {unassigned.length > 0 && (
+            <CellGroup title="Unassigned" ms={unassigned} />
+          )}
+        </div>
       )}
     </div>
   );
