@@ -189,13 +189,13 @@ export async function assignMachineToCell(machineCode: string, cellId: string | 
 export interface Thresholds {
   efficiency: { good: number; mediocre: number }; // good ≥ good, mediocre ≥ mediocre, bad < mediocre
   scrap:      { good: number; mediocre: number }; // good ≤ good, mediocre ≤ mediocre, bad > mediocre
-  bu:         { good: number; mediocre: number }; // good ≥ good, mediocre ≥ mediocre, bad < mediocre
+  bu:         { good: number; mediocre: number; shiftLengthMinutes: number }; // good ≥ good, mediocre ≥ mediocre, bad < mediocre
 }
 
 export const DEFAULT_THRESHOLDS: Thresholds = {
   efficiency: { good: 85,  mediocre: 70 },
   scrap:      { good: 2,   mediocre: 5  },
-  bu:         { good: 100, mediocre: 50 },
+  bu:         { good: 1400, mediocre: 800, shiftLengthMinutes: 480 },
 };
 
 export async function fetchThresholds(): Promise<Thresholds> {

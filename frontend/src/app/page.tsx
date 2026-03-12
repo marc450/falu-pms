@@ -278,20 +278,30 @@ function ParkSummaryTiles({
   const total = all.length;
 
   let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, swabsTotal = 0;
+  let prodTimeSum = 0, prodTimeCount = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
     if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
     swabsTotal += m.machineStatus?.Swaps ?? 0;
+    if (m.shift1?.ProductionTime) { prodTimeSum += m.shift1.ProductionTime; prodTimeCount++; }
   }
 
   const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
   const avgScrap = scrapCount > 0 ? scrapSum / scrapCount : null;
-  const bu       = swabsTotal / 7200;
-  const ec  = applyEfficiencyColor(avgEff,   thresholds);
-  const sc  = applyScrapColor     (avgScrap, thresholds);
-  const buc = applyBuColor        (bu,       thresholds);
+
+  // Project current BUs to a full shift based on elapsed production time
+  const shiftLen   = thresholds.bu.shiftLengthMinutes;
+  const currentBUs = swabsTotal / 7200;
+  const avgElapsed = prodTimeCount > 0 ? prodTimeSum / prodTimeCount : 0;
+  const projectedBUs: number | null = avgElapsed > 0
+    ? (currentBUs / avgElapsed) * shiftLen
+    : null;
+
+  const ec  = applyEfficiencyColor(avgEff,        thresholds);
+  const sc  = applyScrapColor     (avgScrap,       thresholds);
+  const buc = applyBuColor        (projectedBUs,   thresholds);
 
   const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
   const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
@@ -333,10 +343,12 @@ function ParkSummaryTiles({
       <SummaryTile
         icon="bi-box-seam"
         label="Business Units"
-        value={`${bu.toFixed(1)} BUs`}
-        sub={bu >= thresholds.bu.good ? "On target"
-          : bu >= thresholds.bu.mediocre ? "Below target"
-          : "Critical"}
+        value={projectedBUs !== null ? `${Math.round(projectedBUs)} BUs/shift` : "—"}
+        sub={projectedBUs !== null
+          ? projectedBUs >= thresholds.bu.good ? "On target"
+          : projectedBUs >= thresholds.bu.mediocre ? "Below target"
+          : "Critical"
+          : "Awaiting shift data"}
         colorClass={buc.text}
         borderClass={buc.border}
       />

@@ -567,9 +567,17 @@ function ThresholdsTab() {
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
             <i className="bi bi-box-seam text-cyan-400"></i>Business Units (BUs)
           </h4>
-          <p className="text-gray-500 text-xs mt-0.5">Higher is better · total swabs ÷ 7200</p>
+          <p className="text-gray-500 text-xs mt-0.5">Higher is better · projected swabs ÷ 7200 for the full shift</p>
         </div>
         <div className="px-5 py-3 divide-y divide-gray-700/50">
+          <ThresholdRow
+            label="Shift length"
+            sublabel="Duration of one full shift"
+            value={t.bu.shiftLengthMinutes / 60}
+            onChange={(v) => setT({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(v * 60) } })}
+            unit="hrs"
+            max={24}
+          />
           <ThresholdRow
             label="On target threshold"
             sublabel="≥ this value = green"
