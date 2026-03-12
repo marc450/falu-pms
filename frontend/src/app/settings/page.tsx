@@ -598,20 +598,23 @@ function ThresholdsTab() {
     const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
     return (
       <tr className="border-t border-gray-700/50 hover:bg-gray-800/30">
-        <td className="px-4 py-2 font-bold text-cyan-400 text-sm">{m.machine_code}</td>
-        <td className="px-3 py-2">
+        <td className="px-4 py-2.5 font-bold text-cyan-400 text-sm whitespace-nowrap">{m.machine_code}</td>
+        {/* Efficiency group — cyan tint */}
+        <td className="px-3 py-2.5 bg-cyan-900/5">
           <TargetInput value={tgt.efficiency_good} onChange={v => setTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 88" />
         </td>
-        <td className="px-3 py-2">
+        <td className="px-3 py-2.5 bg-cyan-900/5 border-r border-gray-700/50">
           <TargetInput value={tgt.efficiency_mediocre} onChange={v => setTarget(m.machine_code, "efficiency_mediocre", v)} unit="%" placeholder="e.g. 72" />
         </td>
-        <td className="px-3 py-2">
+        {/* Scrap group — orange tint */}
+        <td className="px-3 py-2.5 bg-orange-900/5">
           <TargetInput value={tgt.scrap_good} onChange={v => setTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 2" />
         </td>
-        <td className="px-3 py-2">
+        <td className="px-3 py-2.5 bg-orange-900/5 border-r border-gray-700/50">
           <TargetInput value={tgt.scrap_mediocre} onChange={v => setTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
         </td>
-        <td className="px-3 py-2">
+        {/* BU target — purple tint */}
+        <td className="px-3 py-2.5 bg-purple-900/5">
           <TargetInput value={tgt.bu_target} onChange={v => setTarget(m.machine_code, "bu_target", v)} unit="BUs" placeholder="e.g. 180" />
         </td>
       </tr>
@@ -622,6 +625,7 @@ function ThresholdsTab() {
     if (ms.length === 0) return null;
     return (
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        {/* Cell name header */}
         <div className="bg-gray-800 px-4 py-2.5 border-b border-gray-700">
           <span className="text-white font-semibold text-sm">
             <i className="bi bi-collection text-cyan-400 mr-2"></i>{title}
@@ -630,25 +634,59 @@ function ThresholdsTab() {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="bg-gray-800/40">
-                <th className="px-4 py-2 text-left text-xs text-gray-500 font-medium">Machine</th>
-                <th className="px-3 py-2 text-left text-xs text-gray-500 font-medium" colSpan={2}>
-                  <i className="bi bi-speedometer2 mr-1"></i>Efficiency (good / mediocre)
+              {/* Row 1: group headers */}
+              <tr>
+                <th className="px-4 py-2 text-left" rowSpan={2}>
+                  <span className="text-xs text-gray-500 font-medium">Machine</span>
                 </th>
-                <th className="px-3 py-2 text-left text-xs text-gray-500 font-medium" colSpan={2}>
-                  <i className="bi bi-exclamation-triangle mr-1"></i>Scrap Rate (good / mediocre)
+                {/* Efficiency group */}
+                <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-cyan-500 bg-cyan-900/20">
+                  <span className="text-xs font-semibold text-cyan-300 tracking-wide uppercase">
+                    <i className="bi bi-speedometer2 mr-1.5"></i>Efficiency Thresholds
+                  </span>
                 </th>
-                <th className="px-3 py-2 text-left text-xs text-gray-500 font-medium">
-                  <i className="bi bi-bullseye mr-1"></i>BU Target / shift
+                {/* Scrap group */}
+                <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-orange-500 bg-orange-900/20">
+                  <span className="text-xs font-semibold text-orange-300 tracking-wide uppercase">
+                    <i className="bi bi-exclamation-triangle mr-1.5"></i>Scrap Rate Thresholds
+                  </span>
+                </th>
+                {/* BU target */}
+                <th className="px-3 pt-2.5 pb-1 text-center border-b-2 border-purple-500 bg-purple-900/20">
+                  <span className="text-xs font-semibold text-purple-300 tracking-wide uppercase">
+                    <i className="bi bi-bullseye mr-1.5"></i>Output Target
+                  </span>
                 </th>
               </tr>
-              <tr className="bg-gray-800/20">
-                <th className="px-4 py-1"></th>
-                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≥ good</th>
-                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≥ mediocre</th>
-                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≤ good</th>
-                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≤ mediocre</th>
-                <th className="px-3 py-1 text-xs text-gray-600 font-normal">projected BUs</th>
+              {/* Row 2: sub-column labels */}
+              <tr className="bg-gray-800/30">
+                <th className="px-3 py-1.5 text-center bg-cyan-900/10 border-r border-gray-700/50">
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
+                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                    Good <span className="text-gray-500 font-normal">(≥)</span>
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-center bg-cyan-900/10">
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-yellow-400">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>
+                    Mediocre <span className="text-gray-500 font-normal">(≥)</span>
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-center bg-orange-900/10 border-r border-gray-700/50 border-l border-gray-700/50">
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-green-400">
+                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block"></span>
+                    Good <span className="text-gray-500 font-normal">(≤)</span>
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-center bg-orange-900/10">
+                  <span className="inline-flex items-center gap-1 text-xs font-medium text-yellow-400">
+                    <span className="w-2 h-2 rounded-full bg-yellow-500 inline-block"></span>
+                    Mediocre <span className="text-gray-500 font-normal">(≤)</span>
+                  </span>
+                </th>
+                <th className="px-3 py-1.5 text-center bg-purple-900/10 border-l border-gray-700/50">
+                  <span className="text-xs font-medium text-purple-300">BUs / shift</span>
+                </th>
               </tr>
             </thead>
             <tbody>
