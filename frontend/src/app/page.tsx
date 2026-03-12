@@ -142,17 +142,6 @@ function MachineRow({ m, shiftLengthMinutes, onClick }: { m: DashboardMachine; s
           {formatStatus(m.machineStatus?.Status)}
         </span>
       </td>
-      <td className="px-4 py-3">
-        {m.machineStatus?.Speed ? (
-          <>{m.machineStatus.Speed.toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
-        ) : null}
-      </td>
-      <td className="px-4 py-3">
-        {m.machineStatus?.Swaps ? m.machineStatus.Swaps.toLocaleString() : ""}
-      </td>
-      <td className="px-4 py-3">
-        {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
-      </td>
       <td className={`px-4 py-3 font-medium ${effColor.text}`}>
         {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
       </td>
@@ -163,6 +152,17 @@ function MachineRow({ m, shiftLengthMinutes, onClick }: { m: DashboardMachine; s
         {buRate !== null
           ? <>{Math.round(buRate.projected)} <span className="text-xs font-normal opacity-60">/ {buRate.target} BUs</span></>
           : m.buTarget ? <span className="text-gray-600">—</span> : ""}
+      </td>
+      <td className="px-4 py-3">
+        {m.machineStatus?.Speed ? (
+          <>{m.machineStatus.Speed.toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
+        ) : null}
+      </td>
+      <td className="px-4 py-3">
+        {m.machineStatus?.Swaps ? m.machineStatus.Swaps.toLocaleString() : ""}
+      </td>
+      <td className="px-4 py-3">
+        {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
       </td>
       <td className="px-4 py-3 text-gray-400">
         {m.lastSyncStatus
@@ -224,8 +224,8 @@ function CellSection({
     : "Output";
 
   const colHeaders = [
-    "Machine", "Status", "Speed", `Total Swabs`, `Total ${outputLabel}`,
-    "Efficiency", "Scrap Rate", "BU Run Rate", "Last Sync",
+    "Machine", "Status", "Efficiency", "Scrap Rate", "BU Run Rate",
+    "Speed", `Total Swabs`, `Total ${outputLabel}`, "Last Sync",
   ];
 
   return (
