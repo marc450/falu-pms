@@ -277,16 +277,11 @@ function ParkSummaryTiles({
   const total = all.length;
 
   let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
-  // Accumulate output totals per packing format
-  const formatTotals = new Map<PackingFormat | "unknown", number>();
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
-    const isOnline = s && s !== "offline" && s !== "error";
-    if (isOnline) running++;
+    if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
-    const fmt: PackingFormat | "unknown" = m.packingFormat ?? "unknown";
-    formatTotals.set(fmt, (formatTotals.get(fmt) ?? 0) + (m.machineStatus?.Boxes ?? 0));
   }
 
   const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
@@ -297,22 +292,10 @@ function ParkSummaryTiles({
   const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
   const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
 
-  // Build output tiles: one per known format + one "Unformatted" if unknown exists
-  // Cap at 3 format tiles to keep layout manageable (rare edge case)
-  const knownFormats = (Object.keys(PACKING_FORMATS) as PackingFormat[]).filter(f => formatTotals.has(f));
-  const unknownTotal = formatTotals.get("unknown") ?? 0;
-  const showUnknown  = unknownTotal > 0 && knownFormats.length === 0; // only if no formats configured at all
-  const outputTileCount = knownFormats.length + (showUnknown ? 1 : 0);
-  const gridCols = outputTileCount <= 1
-    ? "grid-cols-2 lg:grid-cols-4"
-    : outputTileCount === 2
-    ? "grid-cols-2 lg:grid-cols-5"
-    : "grid-cols-2 lg:grid-cols-3 lg:grid-rows-2";
-
   if (total === 0) return null;
 
   return (
-    <div className={`grid ${gridCols} gap-3 mb-6`}>
+    <div className="grid grid-cols-3 gap-3 mb-6">
       <SummaryTile
         icon="bi-activity"
         label="Machines Online"
@@ -343,29 +326,6 @@ function ParkSummaryTiles({
         colorClass={sc.text}
         borderClass={sc.border}
       />
-      {/* One tile per configured packing format present in the park */}
-      {knownFormats.map((fmt) => (
-        <SummaryTile
-          key={fmt}
-          icon="bi-box-seam"
-          label={`Total ${PACKING_FORMATS[fmt]}`}
-          value={(formatTotals.get(fmt) ?? 0).toLocaleString()}
-          sub="this shift, all machines"
-          colorClass="text-white"
-          borderClass="border-gray-600"
-        />
-      ))}
-      {/* Fallback: show combined output tile when no formats are configured yet */}
-      {showUnknown && (
-        <SummaryTile
-          icon="bi-box-seam"
-          label="Total Output"
-          value={unknownTotal.toLocaleString()}
-          sub="set machine formats in Settings"
-          colorClass="text-white"
-          borderClass="border-gray-600"
-        />
-      )}
     </div>
   );
 }
