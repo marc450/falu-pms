@@ -653,14 +653,14 @@ function ThresholdsTab() {
         <td className="px-4 py-2.5 font-bold text-cyan-400 text-sm whitespace-nowrap">{m.machine_code}</td>
         {/* Efficiency group — cyan tint */}
         <td className="px-3 py-2.5 bg-cyan-900/5">
-          <TargetInput value={tgt.efficiency_good} onChange={v => setTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 88" />
+          <TargetInput value={tgt.efficiency_good} onChange={v => setTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 82" />
         </td>
         <td className="px-3 py-2.5 bg-cyan-900/5 border-r border-gray-700/50">
           <TargetInput value={tgt.efficiency_mediocre} onChange={v => setTarget(m.machine_code, "efficiency_mediocre", v)} unit="%" placeholder="e.g. 72" />
         </td>
         {/* Scrap group — orange tint */}
         <td className="px-3 py-2.5 bg-orange-900/5">
-          <TargetInput value={tgt.scrap_good} onChange={v => setTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 2" />
+          <TargetInput value={tgt.scrap_good} onChange={v => setTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 4" />
         </td>
         <td className="px-3 py-2.5 bg-orange-900/5 border-r border-gray-700/50">
           <TargetInput value={tgt.scrap_mediocre} onChange={v => setTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
