@@ -494,6 +494,7 @@ function ThresholdRow({
           type="number"
           min={0} max={max ?? 100} step={0.5}
           value={display}
+          onWheel={(e) => e.currentTarget.blur()}
           onChange={(e) => {
             setDisplay(e.target.value);
             const n = parseFloat(e.target.value);
@@ -569,6 +570,7 @@ function TargetInput({
         min={0} step={0.5}
         value={display}
         placeholder={placeholder ?? "—"}
+        onWheel={(e) => e.currentTarget.blur()}
         onFocus={() => { focused.current = true; }}
         onChange={(e) => {
           setDisplay(e.target.value);
