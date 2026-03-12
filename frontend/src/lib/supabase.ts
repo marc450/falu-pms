@@ -102,6 +102,12 @@ export interface RegisteredMachine {
   last_sync_shift: string | null;
   cell_id: string | null;
   cell_position: number | null;
+  // Per-machine targets (null = not set)
+  efficiency_good: number | null;
+  efficiency_mediocre: number | null;
+  scrap_good: number | null;
+  scrap_mediocre: number | null;
+  bu_target: number | null;
 }
 
 export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
@@ -109,12 +115,32 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position"
+      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target"
     )
     .order("machine_code");
 
   if (error) throw new Error(error.message);
   return data ?? [];
+}
+
+export interface MachineTargets {
+  efficiency_good: number | null;
+  efficiency_mediocre: number | null;
+  scrap_good: number | null;
+  scrap_mediocre: number | null;
+  bu_target: number | null;
+}
+
+export async function updateMachineTargets(
+  machine_code: string,
+  targets: MachineTargets
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("machines")
+    .update(targets)
+    .eq("machine_code", machine_code);
+  if (error) throw new Error(error.message);
 }
 
 export async function updateMachinePackingFormat(
@@ -241,6 +267,29 @@ export function applyBuColor(val: number | null, t: Thresholds) {
   if (val >= t.bu.good)    return { text: "text-green-400",  border: "border-green-700",  bg: "bg-green-900/10"  };
   if (val >= t.bu.mediocre) return { text: "text-yellow-400", border: "border-yellow-700", bg: "bg-yellow-900/10" };
   return                           { text: "text-red-400",    border: "border-red-700",    bg: "bg-red-900/10"    };
+}
+
+// Per-machine threshold helpers (accept nullable thresholds — null means no target set)
+export function applyMachineEfficiencyColor(val: number | null, good: number | null, mediocre: number | null) {
+  if (val === null || good === null || mediocre === null) return { text: "text-gray-300" };
+  if (val >= good)    return { text: "text-green-400"  };
+  if (val >= mediocre) return { text: "text-yellow-400" };
+  return                     { text: "text-red-400"    };
+}
+
+export function applyMachineScrapColor(val: number | null, good: number | null, mediocre: number | null) {
+  if (val === null || good === null || mediocre === null) return { text: "text-gray-300" };
+  if (val <= good)    return { text: "text-green-400"  };
+  if (val <= mediocre) return { text: "text-yellow-400" };
+  return                     { text: "text-red-400"    };
+}
+
+// Run rate color: rate = projected ÷ target (e.g. 1.05 = 105 %)
+export function applyRunRateColor(rate: number | null): { text: string; border: string } {
+  if (rate === null) return { text: "text-gray-500", border: "border-gray-700" };
+  if (rate >= 0.95)  return { text: "text-green-400",  border: "border-green-600"  };
+  if (rate >= 0.80)  return { text: "text-yellow-400", border: "border-yellow-600" };
+  return                    { text: "text-red-400",    border: "border-red-600"    };
 }
 
 export async function updateCellOrder(

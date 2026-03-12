@@ -9,7 +9,9 @@ import {
   fetchThresholds,
   applyEfficiencyColor,
   applyScrapColor,
-  applyBuColor,
+  applyMachineEfficiencyColor,
+  applyMachineScrapColor,
+  applyRunRateColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
 import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
@@ -22,7 +24,29 @@ type DashboardMachine = MachineData & {
   cellId?: string | null;
   cellPosition?: number;
   packingFormat?: PackingFormat | null;
+  efficiencyGood?: number | null;
+  efficiencyMediocre?: number | null;
+  scrapGood?: number | null;
+  scrapMediocre?: number | null;
+  buTarget?: number | null;
 };
+
+// BU run rate: projected BUs at end of shift using user's formula
+// projected = currentBUs + (currentBUs/elapsed) * remaining
+function calcBuRunRate(
+  m: DashboardMachine,
+  shiftLen: number
+): { projected: number; target: number; rate: number } | null {
+  const target = m.buTarget;
+  if (!target || target <= 0) return null;
+  const elapsed = m.shift1?.ProductionTime ?? 0;
+  if (elapsed <= 0) return null;
+  const currentBUs = (m.machineStatus?.Swaps ?? 0) / 7200;
+  const buPerMin   = currentBUs / elapsed;
+  const remaining  = Math.max(0, shiftLen - elapsed);
+  const projected  = currentBUs + buPerMin * remaining;
+  return { projected, target, rate: projected / target };
+}
 
 function offlinePlaceholder(row: RegisteredMachine): MachineData {
   return {
@@ -102,8 +126,13 @@ function sortMachineList(
 // ─────────────────────────────────────────────────────────────
 // Machine row
 // ─────────────────────────────────────────────────────────────
-function MachineRow({ m, onClick }: { m: MachineData; onClick: () => void }) {
-  const status = getStatusColor(m.machineStatus?.Status);
+function MachineRow({ m, shiftLengthMinutes, onClick }: { m: DashboardMachine; shiftLengthMinutes: number; onClick: () => void }) {
+  const status   = getStatusColor(m.machineStatus?.Status);
+  const effColor = applyMachineEfficiencyColor(m.machineStatus?.Efficiency ?? null, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
+  const scpColor = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
+  const buRate   = calcBuRunRate(m, shiftLengthMinutes);
+  const buColor  = applyRunRateColor(buRate?.rate ?? null);
+
   return (
     <tr onClick={onClick} className="cursor-pointer hover:bg-white/5 transition-colors">
       <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>
@@ -124,11 +153,16 @@ function MachineRow({ m, onClick }: { m: MachineData; onClick: () => void }) {
       <td className="px-4 py-3">
         {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
       </td>
-      <td className="px-4 py-3">
+      <td className={`px-4 py-3 font-medium ${effColor.text}`}>
         {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
       </td>
-      <td className={`px-4 py-3 ${(m.machineStatus?.Reject || 0) > 5 ? "text-red-400" : ""}`}>
+      <td className={`px-4 py-3 font-medium ${scpColor.text}`}>
         {m.machineStatus?.Reject ? `${m.machineStatus.Reject.toFixed(1)}%` : ""}
+      </td>
+      <td className={`px-4 py-3 font-medium ${buColor.text}`}>
+        {buRate !== null
+          ? <>{Math.round(buRate.projected)} <span className="text-xs font-normal opacity-60">/ {buRate.target} BUs</span></>
+          : m.buTarget ? <span className="text-gray-600">—</span> : ""}
       </td>
       <td className="px-4 py-3 text-gray-400">
         {m.lastSyncStatus
@@ -149,6 +183,7 @@ function CellSection({
   machines,
   onMachineClick,
   thresholds,
+  shiftLengthMinutes,
   defaultOpen = true,
 }: {
   title: string;
@@ -157,37 +192,41 @@ function CellSection({
   machines: DashboardMachine[];
   onMachineClick: (code: string) => void;
   thresholds: Thresholds;
+  shiftLengthMinutes: number;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
 
   // Compute cell-level stats
   let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, outputTotal = 0;
+  let cellProjected = 0, cellTarget = 0;
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
     if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
+    const br = calcBuRunRate(m, shiftLengthMinutes);
+    if (br) { cellProjected += br.projected; cellTarget += br.target; }
   }
-  const avgEff   = machines.length > 0 ? (effCount   > 0 ? effSum   / effCount   : 0) : null;
-  const avgScrap = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
-  const ec = applyEfficiencyColor(avgEff,   thresholds);
-  const sc = applyScrapColor     (avgScrap, thresholds);
+  const avgEff    = machines.length > 0 ? (effCount   > 0 ? effSum   / effCount   : 0) : null;
+  const avgScrap  = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
+  const cellRate  = cellTarget > 0 ? cellProjected / cellTarget : null;
+  const ec   = applyEfficiencyColor(avgEff,   thresholds);
+  const sc   = applyScrapColor     (avgScrap, thresholds);
+  const buCc = applyRunRateColor   (cellRate);
 
   // Derive output label from machines' packing formats
   const formatSet = new Set(machines.map(m => m.packingFormat).filter((f): f is PackingFormat => !!f));
   const outputLabel = formatSet.size === 1
     ? PACKING_FORMATS[formatSet.values().next().value as PackingFormat]
-    : formatSet.size === 0 ? "Blisters"  // default when not yet configured
-    : "Output";                           // mixed formats within cell
+    : formatSet.size === 0 ? "Blisters"
+    : "Output";
 
-  // Column headers (Boxes label is dynamic)
-  const colLabels: Record<string, string> = {
-    Machine: "Machine", Status: "Status", Speed: "Speed",
-    Swabs: "Total Swabs", Boxes: `Total ${outputLabel}`,
-    Efficiency: "Efficiency", Reject: "Scrap Rate", LastSync: "Last Sync",
-  };
+  const colHeaders = [
+    "Machine", "Status", "Speed", `Total Swabs`, `Total ${outputLabel}`,
+    "Efficiency", "Scrap Rate", "BU Run Rate", "Last Sync",
+  ];
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
@@ -212,6 +251,13 @@ function CellSection({
           <span className="text-xs text-gray-400">
             <i className="bi bi-box-seam mr-1"></i>{outputTotal.toLocaleString()} {outputLabel.toLowerCase()}
           </span>
+          {cellTarget > 0 && (
+            <span className={`text-xs font-medium ${buCc.text}`}>
+              <i className="bi bi-bullseye mr-1"></i>
+              {Math.round(cellProjected)} / {Math.round(cellTarget)} BUs
+              {cellRate !== null && <span className="opacity-70 ml-1">({Math.round(cellRate * 100)}%)</span>}
+            </span>
+          )}
         </div>
         <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
       </button>
@@ -221,8 +267,8 @@ function CellSection({
           <table className="w-full text-sm">
             <thead className="bg-gray-800/70">
               <tr>
-                {Object.entries(colLabels).map(([key, label]) => (
-                  <th key={key} className="px-4 py-3 text-left text-sm font-medium text-gray-400">
+                {colHeaders.map((label) => (
+                  <th key={label} className="px-4 py-3 text-left text-sm font-medium text-gray-400">
                     {label}
                   </th>
                 ))}
@@ -230,11 +276,11 @@ function CellSection({
             </thead>
             <tbody className="divide-y divide-gray-700/50">
               {machines.map((m) => (
-                <MachineRow key={m.machine} m={m} onClick={() => onMachineClick(m.machine)} />
+                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} onClick={() => onMachineClick(m.machine)} />
               ))}
               {machines.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-4 py-6 text-center text-gray-600 text-xs">
+                  <td colSpan={9} className="px-4 py-6 text-center text-gray-600 text-xs">
                     No machines in this cell
                   </td>
                 </tr>
@@ -277,36 +323,35 @@ function ParkSummaryTiles({
   const all = Object.values(machines);
   const total = all.length;
 
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, swabsTotal = 0;
-  let prodTimeSum = 0, prodTimeCount = 0;
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
+  let floorProjected = 0, floorTarget = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
     if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
-    swabsTotal += m.machineStatus?.Swaps ?? 0;
-    if (m.shift1?.ProductionTime) { prodTimeSum += m.shift1.ProductionTime; prodTimeCount++; }
+    const br = calcBuRunRate(m, thresholds.bu.shiftLengthMinutes);
+    if (br) { floorProjected += br.projected; floorTarget += br.target; }
   }
 
-  const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
-  const avgScrap = scrapCount > 0 ? scrapSum / scrapCount : null;
-
-  // Project current BUs to a full shift based on elapsed production time
-  const shiftLen   = thresholds.bu.shiftLengthMinutes;
-  const currentBUs = swabsTotal / 7200;
-  const avgElapsed = prodTimeCount > 0 ? prodTimeSum / prodTimeCount : 0;
-  const projectedBUs: number | null = avgElapsed > 0
-    ? (currentBUs / avgElapsed) * shiftLen
-    : null;
-
-  const ec  = applyEfficiencyColor(avgEff,        thresholds);
-  const sc  = applyScrapColor     (avgScrap,       thresholds);
-  const buc = applyBuColor        (projectedBUs,   thresholds);
+  const avgEff      = effCount   > 0 ? effSum   / effCount   : null;
+  const avgScrap    = scrapCount > 0 ? scrapSum / scrapCount : null;
+  const floorRate   = floorTarget > 0 ? floorProjected / floorTarget : null;
+  const ec          = applyEfficiencyColor(avgEff,   thresholds);
+  const sc          = applyScrapColor     (avgScrap, thresholds);
+  const buc         = applyRunRateColor   (floorRate);
 
   const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
   const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
 
   if (total === 0) return null;
+
+  const buValue = floorTarget > 0
+    ? `${Math.round(floorProjected)} / ${Math.round(floorTarget)}`
+    : "—";
+  const buSub = floorRate !== null
+    ? `${Math.round(floorRate * 100)}% of target · BUs/shift`
+    : floorTarget > 0 ? "Awaiting shift data" : "No targets set";
 
   return (
     <div className="grid grid-cols-4 gap-3 mb-6">
@@ -341,14 +386,10 @@ function ParkSummaryTiles({
         borderClass={sc.border}
       />
       <SummaryTile
-        icon="bi-box-seam"
-        label="Business Units"
-        value={projectedBUs !== null ? `${Math.round(projectedBUs)} BUs/shift` : "—"}
-        sub={projectedBUs !== null
-          ? projectedBUs >= thresholds.bu.good ? "On target"
-          : projectedBUs >= thresholds.bu.mediocre ? "Below target"
-          : "Critical"
-          : "Awaiting shift data"}
+        icon="bi-bullseye"
+        label="Floor BU Run Rate"
+        value={buValue}
+        sub={buSub}
         colorClass={buc.text}
         borderClass={buc.border}
       />
@@ -395,9 +436,14 @@ export default function Dashboard() {
     for (const row of registered) {
       merged[row.machine_code] = {
         ...offlinePlaceholder(row),
-        cellId: row.cell_id,
-        cellPosition: row.cell_position ?? 0,
-        packingFormat: row.packing_format ?? null,
+        cellId:            row.cell_id,
+        cellPosition:      row.cell_position ?? 0,
+        packingFormat:     row.packing_format ?? null,
+        efficiencyGood:    row.efficiency_good ?? null,
+        efficiencyMediocre: row.efficiency_mediocre ?? null,
+        scrapGood:         row.scrap_good ?? null,
+        scrapMediocre:     row.scrap_mediocre ?? null,
+        buTarget:          row.bu_target ?? null,
       };
     }
 
@@ -408,9 +454,14 @@ export default function Dashboard() {
       for (const [code, live] of Object.entries(state.machines)) {
         merged[code] = {
           ...live,
-          cellId: merged[code]?.cellId ?? null,
-          cellPosition: merged[code]?.cellPosition ?? 0,
-          packingFormat: merged[code]?.packingFormat ?? null,
+          cellId:            merged[code]?.cellId ?? null,
+          cellPosition:      merged[code]?.cellPosition ?? 0,
+          packingFormat:     merged[code]?.packingFormat ?? null,
+          efficiencyGood:    merged[code]?.efficiencyGood ?? null,
+          efficiencyMediocre: merged[code]?.efficiencyMediocre ?? null,
+          scrapGood:         merged[code]?.scrapGood ?? null,
+          scrapMediocre:     merged[code]?.scrapMediocre ?? null,
+          buTarget:          merged[code]?.buTarget ?? null,
         };
       }
     } catch {
@@ -503,6 +554,7 @@ export default function Dashboard() {
               machines={machinesForCell(cell.id)}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
               thresholds={thresholds}
+              shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
             />
           ))}
           {unassigned.length > 0 && (
@@ -513,6 +565,7 @@ export default function Dashboard() {
               machines={unassigned}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
               thresholds={thresholds}
+              shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
             />
           )}
           {!hasData && (
@@ -544,7 +597,8 @@ export default function Dashboard() {
                 {sortMachineList(Object.values(machines), sortColumn, sortAsc).map((m) => (
                   <MachineRow
                     key={m.machine}
-                    m={m}
+                    m={m as DashboardMachine}
+                    shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
                     onClick={() => router.push(`/production?machine=${m.machine}`)}
                   />
                 ))}

@@ -11,12 +11,13 @@ import {
   assignMachineToCell,
   updateCellOrder,
   updateMachinePackingFormat,
+  updateMachineTargets,
   fetchThresholds,
   saveThresholds,
   DEFAULT_THRESHOLDS,
   PACKING_FORMATS,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets } from "@/lib/supabase";
 
 type DropTarget = {
   cellId: string | null;      // destination cell (null = unassigned)
@@ -485,25 +486,102 @@ function ThresholdPreview({ good, mediocre, inverted, unit = "%" }: { good: numb
   );
 }
 
+// Compact numeric input for the targets table
+function TargetInput({
+  value, onChange, unit, placeholder,
+}: {
+  value: number | null; onChange: (v: number | null) => void;
+  unit?: string; placeholder?: string;
+}) {
+  const [display, setDisplay] = useState(value !== null ? String(value) : "");
+  useEffect(() => { setDisplay(value !== null ? String(value) : ""); }, [value]);
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        type="number"
+        min={0} step={0.5}
+        value={display}
+        placeholder={placeholder ?? "—"}
+        onChange={(e) => {
+          setDisplay(e.target.value);
+          const n = parseFloat(e.target.value);
+          if (!isNaN(n)) onChange(n);
+        }}
+        onBlur={(e) => {
+          const n = parseFloat(e.target.value);
+          if (e.target.value === "" || isNaN(n)) { setDisplay(""); onChange(null); }
+          else { onChange(n); setDisplay(String(n)); }
+        }}
+        className="w-16 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white text-right focus:border-cyan-500 outline-none placeholder-gray-600"
+      />
+      {unit && <span className="text-gray-500 text-xs">{unit}</span>}
+    </div>
+  );
+}
+
 function ThresholdsTab() {
+  // ── Shift length (global) ──────────────────────────────────
   const [t, setT] = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  const [shiftSaving, setShiftSaving] = useState(false);
+  const [shiftSaved, setShiftSaved] = useState(false);
+
+  // ── Per-machine targets ────────────────────────────────────
+  const [machines, setMachines] = useState<RegisteredMachine[]>([]);
+  const [cells, setCells] = useState<ProductionCell[]>([]);
+  const [targets, setTargets] = useState<Record<string, MachineTargets>>({});
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [savedMsg, setSavedMsg] = useState(false);
 
   useEffect(() => {
-    fetchThresholds().then(setT).catch(console.error).finally(() => setLoading(false));
+    Promise.all([
+      fetchThresholds(),
+      fetchRegisteredMachines(),
+      fetchProductionCells(),
+    ]).then(([thresh, ms, cs]) => {
+      setT(thresh);
+      setMachines(ms);
+      setCells(cs);
+      // Initialise targets from DB values
+      const init: Record<string, MachineTargets> = {};
+      for (const m of ms) {
+        init[m.machine_code] = {
+          efficiency_good:     m.efficiency_good,
+          efficiency_mediocre: m.efficiency_mediocre,
+          scrap_good:          m.scrap_good,
+          scrap_mediocre:      m.scrap_mediocre,
+          bu_target:           m.bu_target,
+        };
+      }
+      setTargets(init);
+    }).catch(console.error).finally(() => setLoading(false));
   }, []);
 
-  const handleSave = async () => {
-    setSaving(true);
+  const setTarget = (code: string, field: keyof MachineTargets, val: number | null) => {
+    setTargets(prev => ({ ...prev, [code]: { ...prev[code], [field]: val } }));
+  };
+
+  const handleSaveShift = async () => {
+    setShiftSaving(true);
     try {
       await saveThresholds(t);
+      setShiftSaved(true);
+      setTimeout(() => setShiftSaved(false), 2500);
+    } finally { setShiftSaving(false); }
+  };
+
+  const handleSaveTargets = async () => {
+    setSaving(true);
+    try {
+      await Promise.all(
+        machines.map(m => updateMachineTargets(m.machine_code, targets[m.machine_code] ?? {
+          efficiency_good: null, efficiency_mediocre: null,
+          scrap_good: null, scrap_mediocre: null, bu_target: null,
+        }))
+      );
       setSavedMsg(true);
       setTimeout(() => setSavedMsg(false), 2500);
-    } finally {
-      setSaving(false);
-    }
+    } finally { setSaving(false); }
   };
 
   if (loading) return (
@@ -512,122 +590,139 @@ function ThresholdsTab() {
     </div>
   );
 
+  // Group machines by cell
+  const cellMachines = (cellId: string) => machines.filter(m => m.cell_id === cellId);
+  const unassigned   = machines.filter(m => !m.cell_id);
+
+  const MachineTargetRow = ({ m }: { m: RegisteredMachine }) => {
+    const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
+    return (
+      <tr className="border-t border-gray-700/50 hover:bg-gray-800/30">
+        <td className="px-4 py-2 font-bold text-cyan-400 text-sm">{m.machine_code}</td>
+        <td className="px-3 py-2">
+          <TargetInput value={tgt.efficiency_good} onChange={v => setTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 88" />
+        </td>
+        <td className="px-3 py-2">
+          <TargetInput value={tgt.efficiency_mediocre} onChange={v => setTarget(m.machine_code, "efficiency_mediocre", v)} unit="%" placeholder="e.g. 72" />
+        </td>
+        <td className="px-3 py-2">
+          <TargetInput value={tgt.scrap_good} onChange={v => setTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 2" />
+        </td>
+        <td className="px-3 py-2">
+          <TargetInput value={tgt.scrap_mediocre} onChange={v => setTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
+        </td>
+        <td className="px-3 py-2">
+          <TargetInput value={tgt.bu_target} onChange={v => setTarget(m.machine_code, "bu_target", v)} unit="BUs" placeholder="e.g. 180" />
+        </td>
+      </tr>
+    );
+  };
+
+  const CellGroup = ({ title, ms }: { title: string; ms: RegisteredMachine[] }) => {
+    if (ms.length === 0) return null;
+    return (
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-800 px-4 py-2.5 border-b border-gray-700">
+          <span className="text-white font-semibold text-sm">
+            <i className="bi bi-collection text-cyan-400 mr-2"></i>{title}
+          </span>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="bg-gray-800/40">
+                <th className="px-4 py-2 text-left text-xs text-gray-500 font-medium">Machine</th>
+                <th className="px-3 py-2 text-left text-xs text-gray-500 font-medium" colSpan={2}>
+                  <i className="bi bi-speedometer2 mr-1"></i>Efficiency (good / mediocre)
+                </th>
+                <th className="px-3 py-2 text-left text-xs text-gray-500 font-medium" colSpan={2}>
+                  <i className="bi bi-exclamation-triangle mr-1"></i>Scrap Rate (good / mediocre)
+                </th>
+                <th className="px-3 py-2 text-left text-xs text-gray-500 font-medium">
+                  <i className="bi bi-bullseye mr-1"></i>BU Target / shift
+                </th>
+              </tr>
+              <tr className="bg-gray-800/20">
+                <th className="px-4 py-1"></th>
+                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≥ good</th>
+                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≥ mediocre</th>
+                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≤ good</th>
+                <th className="px-3 py-1 text-xs text-gray-600 font-normal">≤ mediocre</th>
+                <th className="px-3 py-1 text-xs text-gray-600 font-normal">projected BUs</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ms.map(m => <MachineTargetRow key={m.machine_code} m={m} />)}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    );
+  };
+
   return (
-    <div className="space-y-4 max-w-lg">
-      <p className="text-sm text-gray-400">
-        Define cut-off values that determine when a metric is shown as{" "}
-        <span className="text-green-400 font-medium">Good</span>,{" "}
-        <span className="text-yellow-400 font-medium">Mediocre</span>, or{" "}
-        <span className="text-red-400 font-medium">Bad</span> on the dashboard.
-      </p>
-
-      {/* Efficiency */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+    <div className="space-y-5">
+      {/* ── Shift length ──────────────────────────────────────── */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-sm">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-speedometer2 text-cyan-400"></i>Efficiency
+            <i className="bi bi-clock text-cyan-400"></i>Shift Length
           </h4>
-          <p className="text-gray-500 text-xs mt-0.5">Higher is better</p>
+          <p className="text-gray-500 text-xs mt-0.5">Used to calculate BU run rates across all machines</p>
         </div>
-        <div className="px-5 py-3 divide-y divide-gray-700/50">
+        <div className="px-5 py-3">
           <ThresholdRow
-            label="Good threshold"
-            sublabel="≥ this value = green"
-            value={t.efficiency.good}
-            onChange={(v) => setT({ ...t, efficiency: { ...t.efficiency, good: v } })}
-            unit="%"
-          />
-          <ThresholdRow
-            label="Mediocre threshold"
-            sublabel="≥ this value = amber, below = red"
-            value={t.efficiency.mediocre}
-            onChange={(v) => setT({ ...t, efficiency: { ...t.efficiency, mediocre: v } })}
-            unit="%"
-          />
-        </div>
-        <div className="px-5 pb-4">
-          <ThresholdPreview good={t.efficiency.good} mediocre={t.efficiency.mediocre} />
-        </div>
-      </div>
-
-      {/* Scrap Rate */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
-          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-exclamation-triangle text-yellow-400"></i>Scrap Rate
-          </h4>
-          <p className="text-gray-500 text-xs mt-0.5">Lower is better</p>
-        </div>
-        <div className="px-5 py-3 divide-y divide-gray-700/50">
-          <ThresholdRow
-            label="Good threshold"
-            sublabel="≤ this value = green"
-            value={t.scrap.good}
-            onChange={(v) => setT({ ...t, scrap: { ...t.scrap, good: v } })}
-            unit="%"
-            inverted
-          />
-          <ThresholdRow
-            label="Mediocre threshold"
-            sublabel="≤ this value = amber, above = red"
-            value={t.scrap.mediocre}
-            onChange={(v) => setT({ ...t, scrap: { ...t.scrap, mediocre: v } })}
-            unit="%"
-            inverted
-          />
-        </div>
-        <div className="px-5 pb-4">
-          <ThresholdPreview good={t.scrap.good} mediocre={t.scrap.mediocre} inverted />
-        </div>
-      </div>
-
-      {/* Business Units */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
-          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-box-seam text-cyan-400"></i>Business Units (BUs)
-          </h4>
-          <p className="text-gray-500 text-xs mt-0.5">Higher is better · projected swabs ÷ 7200 for the full shift</p>
-        </div>
-        <div className="px-5 py-3 divide-y divide-gray-700/50">
-          <ThresholdRow
-            label="Shift length"
-            sublabel="Duration of one full shift"
+            label="Duration"
+            sublabel="Hours per shift"
             value={t.bu.shiftLengthMinutes / 60}
             onChange={(v) => setT({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(v * 60) } })}
             unit="hrs"
             max={24}
           />
-          <ThresholdRow
-            label="On target threshold"
-            sublabel="≥ this value = green"
-            value={t.bu.good}
-            onChange={(v) => setT({ ...t, bu: { ...t.bu, good: v } })}
-            unit="BUs"
-            max={99999}
-          />
-          <ThresholdRow
-            label="Mediocre threshold"
-            sublabel="≥ this value = amber, below = red"
-            value={t.bu.mediocre}
-            onChange={(v) => setT({ ...t, bu: { ...t.bu, mediocre: v } })}
-            unit="BUs"
-            max={99999}
-          />
         </div>
         <div className="px-5 pb-4">
-          <ThresholdPreview good={t.bu.good} mediocre={t.bu.mediocre} unit=" BUs" />
+          <button
+            onClick={handleSaveShift}
+            disabled={shiftSaving}
+            className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-xs px-4 py-1.5 rounded-lg transition-colors"
+          >
+            {shiftSaving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
+            {shiftSaved ? "Saved!" : shiftSaving ? "Saving…" : "Save"}
+          </button>
         </div>
       </div>
 
-      <button
-        onClick={handleSave}
-        disabled={saving}
-        className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors"
-      >
-        {saving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
-        {savedMsg ? "Saved!" : saving ? "Saving…" : "Save Thresholds"}
-      </button>
+      {/* ── Per-machine targets ───────────────────────────────── */}
+      <div>
+        <p className="text-sm text-gray-400 mb-3">
+          Set thresholds and BU targets per machine. Leave a field empty to disable that metric for the machine.
+          Efficiency and scrap use a two-tier traffic light:{" "}
+          <span className="text-green-400">good</span> / <span className="text-yellow-400">mediocre</span> / <span className="text-red-400">below</span>.
+        </p>
+        {machines.length === 0 ? (
+          <p className="text-gray-500 text-sm">No machines registered yet.</p>
+        ) : (
+          <div className="space-y-4">
+            {cells.map(cell => (
+              <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} />
+            ))}
+            {unassigned.length > 0 && (
+              <CellGroup title="Unassigned" ms={unassigned} />
+            )}
+          </div>
+        )}
+      </div>
+
+      {machines.length > 0 && (
+        <button
+          onClick={handleSaveTargets}
+          disabled={saving}
+          className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors"
+        >
+          {saving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
+          {savedMsg ? "Saved!" : saving ? "Saving…" : "Save All Targets"}
+        </button>
+      )}
     </div>
   );
 }
@@ -653,7 +748,7 @@ export default function SettingsPage() {
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "users",       label: "Users",       icon: "bi-people-fill"    },
     { id: "machines",    label: "Machines",    icon: "bi-cpu-fill"       },
-    { id: "thresholds",  label: "Thresholds",  icon: "bi-sliders"        },
+    { id: "thresholds",  label: "Thresholds & Targets",  icon: "bi-sliders"  },
     { id: "mqtt",        label: "MQTT",        icon: "bi-router-fill"    },
   ];
 
