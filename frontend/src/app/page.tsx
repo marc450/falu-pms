@@ -9,6 +9,7 @@ import {
   fetchThresholds,
   applyEfficiencyColor,
   applyScrapColor,
+  applyBuColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
 import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
@@ -276,18 +277,21 @@ function ParkSummaryTiles({
   const all = Object.values(machines);
   const total = all.length;
 
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, swabsTotal = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
     if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
+    swabsTotal += m.machineStatus?.Swaps ?? 0;
   }
 
   const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
   const avgScrap = scrapCount > 0 ? scrapSum / scrapCount : null;
-  const ec = applyEfficiencyColor(avgEff,   thresholds);
-  const sc = applyScrapColor     (avgScrap, thresholds);
+  const bu       = swabsTotal / 7200;
+  const ec  = applyEfficiencyColor(avgEff,   thresholds);
+  const sc  = applyScrapColor     (avgScrap, thresholds);
+  const buc = applyBuColor        (bu,       thresholds);
 
   const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
   const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
@@ -295,7 +299,7 @@ function ParkSummaryTiles({
   if (total === 0) return null;
 
   return (
-    <div className="grid grid-cols-3 gap-3 mb-6">
+    <div className="grid grid-cols-4 gap-3 mb-6">
       <SummaryTile
         icon="bi-activity"
         label="Machines Online"
@@ -325,6 +329,16 @@ function ParkSummaryTiles({
           : "No live data"}
         colorClass={sc.text}
         borderClass={sc.border}
+      />
+      <SummaryTile
+        icon="bi-box-seam"
+        label="Business Units"
+        value={`${bu.toFixed(1)} BUs`}
+        sub={bu >= thresholds.bu.good ? "On target"
+          : bu >= thresholds.bu.mediocre ? "Below target"
+          : "Critical"}
+        colorClass={buc.text}
+        borderClass={buc.border}
       />
     </div>
   );

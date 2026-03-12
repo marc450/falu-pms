@@ -411,10 +411,10 @@ function MachineChip({
 // Thresholds tab
 // ─────────────────────────────────────────────────────────────
 function ThresholdRow({
-  label, sublabel, value, onChange, unit, inverted,
+  label, sublabel, value, onChange, unit, inverted, max,
 }: {
   label: string; sublabel: string; value: number;
-  onChange: (v: number) => void; unit: string; inverted?: boolean;
+  onChange: (v: number) => void; unit: string; inverted?: boolean; max?: number;
 }) {
   return (
     <div className="flex items-center justify-between py-2">
@@ -425,28 +425,28 @@ function ThresholdRow({
       <div className="flex items-center gap-2">
         <input
           type="number"
-          min={0} max={100} step={0.5}
+          min={0} max={max ?? 100} step={0.5}
           value={value}
           onChange={(e) => onChange(parseFloat(e.target.value) || 0)}
           className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
         />
-        <span className="text-gray-400 text-sm w-4">{unit}</span>
+        <span className="text-gray-400 text-sm w-8">{unit}</span>
       </div>
     </div>
   );
 }
 
-function ThresholdPreview({ good, mediocre, inverted }: { good: number; mediocre: number; inverted?: boolean }) {
+function ThresholdPreview({ good, mediocre, inverted, unit = "%" }: { good: number; mediocre: number; inverted?: boolean; unit?: string }) {
   const zones = inverted
     ? [
-        { label: `≤ ${good}%`,              pct: good,                       color: "bg-green-500"  },
-        { label: `${good}–${mediocre}%`,    pct: mediocre - good,            color: "bg-yellow-500" },
-        { label: `> ${mediocre}%`,          pct: Math.max(5, 100 - mediocre), color: "bg-red-500"   },
+        { label: `≤ ${good}${unit}`,              pct: good,                       color: "bg-green-500"  },
+        { label: `${good}–${mediocre}${unit}`,    pct: mediocre - good,            color: "bg-yellow-500" },
+        { label: `> ${mediocre}${unit}`,          pct: Math.max(5, 100 - mediocre), color: "bg-red-500"   },
       ]
     : [
-        { label: `≥ ${good}%`,              pct: Math.max(5, 100 - good),    color: "bg-green-500"  },
-        { label: `${mediocre}–${good}%`,    pct: good - mediocre,            color: "bg-yellow-500" },
-        { label: `< ${mediocre}%`,          pct: mediocre,                   color: "bg-red-500"    },
+        { label: `≥ ${good}${unit}`,              pct: Math.max(5, 100 - good),    color: "bg-green-500"  },
+        { label: `${mediocre}–${good}${unit}`,    pct: good - mediocre,            color: "bg-yellow-500" },
+        { label: `< ${mediocre}${unit}`,          pct: mediocre,                   color: "bg-red-500"    },
       ];
   const total = zones.reduce((s, z) => s + z.pct, 0);
   return (
@@ -558,6 +558,37 @@ function ThresholdsTab() {
         </div>
         <div className="px-5 pb-4">
           <ThresholdPreview good={t.scrap.good} mediocre={t.scrap.mediocre} inverted />
+        </div>
+      </div>
+
+      {/* Business Units */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-box-seam text-cyan-400"></i>Business Units (BUs)
+          </h4>
+          <p className="text-gray-500 text-xs mt-0.5">Higher is better · total swabs ÷ 7200</p>
+        </div>
+        <div className="px-5 py-3 divide-y divide-gray-700/50">
+          <ThresholdRow
+            label="On target threshold"
+            sublabel="≥ this value = green"
+            value={t.bu.good}
+            onChange={(v) => setT({ ...t, bu: { ...t.bu, good: v } })}
+            unit="BUs"
+            max={99999}
+          />
+          <ThresholdRow
+            label="Mediocre threshold"
+            sublabel="≥ this value = amber, below = red"
+            value={t.bu.mediocre}
+            onChange={(v) => setT({ ...t, bu: { ...t.bu, mediocre: v } })}
+            unit="BUs"
+            max={99999}
+          />
+        </div>
+        <div className="px-5 pb-4">
+          <ThresholdPreview good={t.bu.good} mediocre={t.bu.mediocre} unit=" BUs" />
         </div>
       </div>
 
