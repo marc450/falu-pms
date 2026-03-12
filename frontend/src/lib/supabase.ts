@@ -74,9 +74,23 @@ export interface BridgeState {
 // SUPABASE DIRECT QUERIES
 // ============================================
 
+// ============================================
+// PACKING FORMATS
+// ============================================
+
+export const PACKING_FORMATS = {
+  blister: "Blisters",
+  box:     "Boxes",
+  bag:     "Bags",
+  bulk:    "Bulk",
+} as const;
+
+export type PackingFormat = keyof typeof PACKING_FORMATS;
+
 export interface RegisteredMachine {
   machine_code: string;
   display_name: string | null;
+  packing_format: PackingFormat | null;
   status: string | null;
   error_message: string | null;
   active_shift: number | null;
@@ -96,7 +110,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, display_name, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position"
+      "machine_code, display_name, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position"
     )
     .order("machine_code");
 
@@ -112,6 +126,18 @@ export async function updateMachineDisplayName(
   const { error } = await sb
     .from("machines")
     .update({ display_name: display_name || null })
+    .eq("machine_code", machine_code);
+  if (error) throw new Error(error.message);
+}
+
+export async function updateMachinePackingFormat(
+  machine_code: string,
+  packing_format: PackingFormat | null
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("machines")
+    .update({ packing_format: packing_format || null })
     .eq("machine_code", machine_code);
   if (error) throw new Error(error.message);
 }

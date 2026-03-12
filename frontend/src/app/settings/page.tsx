@@ -11,11 +11,13 @@ import {
   assignMachineToCell,
   updateCellOrder,
   updateMachineDisplayName,
+  updateMachinePackingFormat,
   fetchThresholds,
   saveThresholds,
   DEFAULT_THRESHOLDS,
+  PACKING_FORMATS,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
 
 type DropTarget = {
   cellId: string | null;      // destination cell (null = unassigned)
@@ -161,7 +163,6 @@ function MachinesTab() {
   const commitMachineRename = async (code: string) => {
     await updateMachineDisplayName(code, machineRenameValue.trim() || null);
     setRenamingMachine(null);
-    // Optimistically update local state
     setMachines((prev) =>
       prev.map((m) =>
         m.machine_code === code
@@ -169,6 +170,16 @@ function MachinesTab() {
           : m
       )
     );
+  };
+
+  const handleFormatChange = async (code: string, format: PackingFormat | null) => {
+    // Optimistic update
+    setMachines((prev) =>
+      prev.map((m) =>
+        m.machine_code === code ? { ...m, packing_format: format } : m
+      )
+    );
+    await updateMachinePackingFormat(code, format);
   };
 
   // Render chips with insertion-line indicators
@@ -183,6 +194,7 @@ function MachinesTab() {
           <MachineChip
             code={m.machine_code}
             displayName={m.display_name}
+            packingFormat={m.packing_format}
             isDragging={dragging === m.machine_code}
             isRenaming={renamingMachine === m.machine_code}
             renameValue={machineRenameValue}
@@ -191,6 +203,7 @@ function MachinesTab() {
             onRenameCommit={() => commitMachineRename(m.machine_code)}
             onRenameCancel={() => setRenamingMachine(null)}
             onRenameStart={() => startMachineRename(m)}
+            onFormatChange={(fmt) => handleFormatChange(m.machine_code, fmt)}
             onDragStart={() => setDragging(m.machine_code)}
             onDragEnd={() => { setDragging(null); setDropTarget(null); }}
             onChipDragOver={(e) => {
@@ -378,6 +391,7 @@ function MachinesTab() {
 function MachineChip({
   code,
   displayName,
+  packingFormat,
   isDragging,
   isRenaming,
   renameValue,
@@ -386,12 +400,14 @@ function MachineChip({
   onRenameCommit,
   onRenameCancel,
   onRenameStart,
+  onFormatChange,
   onDragStart,
   onDragEnd,
   onChipDragOver,
 }: {
   code: string;
   displayName?: string | null;
+  packingFormat?: PackingFormat | null;
   isDragging?: boolean;
   isRenaming?: boolean;
   renameValue?: string;
@@ -400,6 +416,7 @@ function MachineChip({
   onRenameCommit?: () => void;
   onRenameCancel?: () => void;
   onRenameStart?: () => void;
+  onFormatChange?: (fmt: PackingFormat | null) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onChipDragOver?: (e: React.DragEvent) => void;
@@ -445,9 +462,22 @@ function MachineChip({
           : <span>{code}</span>
         }
       </span>
+      {/* Packing format selector — stopPropagation prevents drag starting on click */}
+      <select
+        value={packingFormat ?? ""}
+        onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
+        onPointerDown={(e) => e.stopPropagation()}
+        className="ml-1 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
+        title="Packing format"
+      >
+        <option value="">— format</option>
+        {(Object.entries(PACKING_FORMATS) as [PackingFormat, string][]).map(([key, label]) => (
+          <option key={key} value={key}>{label}</option>
+        ))}
+      </select>
       <button
         onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onRenameStart?.(); }}
-        className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-cyan-400"
+        className="opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-cyan-400"
         title="Rename machine"
       >
         <i className="bi bi-pencil text-xs"></i>

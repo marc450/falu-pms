@@ -11,10 +11,18 @@ import {
   applyScrapColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { MachineData, RegisteredMachine, ProductionCell, Thresholds } from "@/lib/supabase";
+import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
+import { PACKING_FORMATS } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 
 type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
+
+type DashboardMachine = MachineData & {
+  cellId?: string | null;
+  cellPosition?: number;
+  displayName?: string | null;
+  packingFormat?: PackingFormat | null;
+};
 
 function offlinePlaceholder(row: RegisteredMachine): MachineData {
   return {
@@ -143,12 +151,6 @@ function MachineRow({ m, onClick }: { m: MachineData & { displayName?: string | 
 // ─────────────────────────────────────────────────────────────
 // Cell group section
 // ─────────────────────────────────────────────────────────────
-const COL_LABELS: Record<string, string> = {
-  Machine: "Machine", Status: "Status", Speed: "Speed",
-  Swaps: "Total Swabs", Boxes: "Total Blisters",
-  Efficiency: "Efficiency", Reject: "Scrap Rate", LastSync: "Last Sync",
-};
-
 function CellSection({
   title,
   icon,
@@ -161,7 +163,7 @@ function CellSection({
   title: string;
   icon: string;
   color: string;
-  machines: MachineData[];
+  machines: DashboardMachine[];
   onMachineClick: (code: string) => void;
   thresholds: Thresholds;
   defaultOpen?: boolean;
@@ -169,19 +171,32 @@ function CellSection({
   const [open, setOpen] = useState(defaultOpen);
 
   // Compute cell-level stats
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, blisters = 0;
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, outputTotal = 0;
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
     if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
-    if (m.machineStatus?.Boxes)      blisters += m.machineStatus.Boxes;
+    if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
   }
-  // Always show 0 when machines are present but offline, rather than hiding the stats
   const avgEff   = machines.length > 0 ? (effCount   > 0 ? effSum   / effCount   : 0) : null;
   const avgScrap = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
   const ec = applyEfficiencyColor(avgEff,   thresholds);
   const sc = applyScrapColor     (avgScrap, thresholds);
+
+  // Derive output label from machines' packing formats
+  const formatSet = new Set(machines.map(m => m.packingFormat).filter((f): f is PackingFormat => !!f));
+  const outputLabel = formatSet.size === 1
+    ? PACKING_FORMATS[formatSet.values().next().value as PackingFormat]
+    : formatSet.size === 0 ? "Blisters"  // default when not yet configured
+    : "Output";                           // mixed formats within cell
+
+  // Column headers (Boxes label is dynamic)
+  const colLabels: Record<string, string> = {
+    Machine: "Machine", Status: "Status", Speed: "Speed",
+    Swabs: "Total Swabs", Boxes: `Total ${outputLabel}`,
+    Efficiency: "Efficiency", Reject: "Scrap Rate", LastSync: "Last Sync",
+  };
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
@@ -204,7 +219,7 @@ function CellSection({
             </span>
           )}
           <span className="text-xs text-gray-400">
-            <i className="bi bi-box-seam mr-1"></i>{blisters.toLocaleString()} blisters
+            <i className="bi bi-box-seam mr-1"></i>{outputTotal.toLocaleString()} {outputLabel.toLowerCase()}
           </span>
         </div>
         <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
@@ -215,7 +230,7 @@ function CellSection({
           <table className="w-full text-sm">
             <thead className="bg-gray-800/70">
               <tr>
-                {Object.entries(COL_LABELS).map(([key, label]) => (
+                {Object.entries(colLabels).map(([key, label]) => (
                   <th key={key} className="px-4 py-3 text-left text-sm font-medium text-gray-400">
                     {label}
                   </th>
@@ -265,40 +280,49 @@ function SummaryTile({
 function ParkSummaryTiles({
   machines, thresholds,
 }: {
-  machines: Record<string, MachineData>;
+  machines: Record<string, DashboardMachine>;
   thresholds: Thresholds;
 }) {
   const all = Object.values(machines);
   const total = all.length;
 
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, blistersTotal = 0;
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
+  // Accumulate output totals per packing format
+  const formatTotals = new Map<PackingFormat | "unknown", number>();
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
     const isOnline = s && s !== "offline" && s !== "error";
     if (isOnline) running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
-    if (m.machineStatus?.Boxes)      blistersTotal += m.machineStatus.Boxes;
+    const fmt: PackingFormat | "unknown" = m.packingFormat ?? "unknown";
+    formatTotals.set(fmt, (formatTotals.get(fmt) ?? 0) + (m.machineStatus?.Boxes ?? 0));
   }
 
   const avgEff   = effCount   > 0 ? effSum   / effCount   : null;
   const avgScrap = scrapCount > 0 ? scrapSum / scrapCount : null;
-
   const ec = applyEfficiencyColor(avgEff,   thresholds);
   const sc = applyScrapColor     (avgScrap, thresholds);
 
-  // Machines online: green if all running, amber if some, red if none
-  const onlineColor  = running === 0 ? "text-red-400"
-                     : running < total ? "text-yellow-400"
-                     : "text-green-400";
-  const onlineBorder = running === 0 ? "border-red-600"
-                     : running < total ? "border-yellow-600"
-                     : "border-green-600";
+  const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
+  const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
+
+  // Build output tiles: one per known format + one "Unformatted" if unknown exists
+  // Cap at 3 format tiles to keep layout manageable (rare edge case)
+  const knownFormats = (Object.keys(PACKING_FORMATS) as PackingFormat[]).filter(f => formatTotals.has(f));
+  const unknownTotal = formatTotals.get("unknown") ?? 0;
+  const showUnknown  = unknownTotal > 0 && knownFormats.length === 0; // only if no formats configured at all
+  const outputTileCount = knownFormats.length + (showUnknown ? 1 : 0);
+  const gridCols = outputTileCount <= 1
+    ? "grid-cols-2 lg:grid-cols-4"
+    : outputTileCount === 2
+    ? "grid-cols-2 lg:grid-cols-5"
+    : "grid-cols-2 lg:grid-cols-3 lg:grid-rows-2";
 
   if (total === 0) return null;
 
   return (
-    <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-6">
+    <div className={`grid ${gridCols} gap-3 mb-6`}>
       <SummaryTile
         icon="bi-activity"
         label="Machines Online"
@@ -329,14 +353,29 @@ function ParkSummaryTiles({
         colorClass={sc.text}
         borderClass={sc.border}
       />
-      <SummaryTile
-        icon="bi-box-seam"
-        label="Total Blisters"
-        value={blistersTotal > 0 ? blistersTotal.toLocaleString() : "—"}
-        sub="this shift, all machines"
-        colorClass="text-white"
-        borderClass="border-gray-600"
-      />
+      {/* One tile per configured packing format present in the park */}
+      {knownFormats.map((fmt) => (
+        <SummaryTile
+          key={fmt}
+          icon="bi-box-seam"
+          label={`Total ${PACKING_FORMATS[fmt]}`}
+          value={(formatTotals.get(fmt) ?? 0).toLocaleString()}
+          sub="this shift, all machines"
+          colorClass="text-white"
+          borderClass="border-gray-600"
+        />
+      ))}
+      {/* Fallback: show combined output tile when no formats are configured yet */}
+      {showUnknown && (
+        <SummaryTile
+          icon="bi-box-seam"
+          label="Total Output"
+          value={unknownTotal.toLocaleString()}
+          sub="set machine formats in Settings"
+          colorClass="text-white"
+          borderClass="border-gray-600"
+        />
+      )}
     </div>
   );
 }
@@ -345,7 +384,7 @@ function ParkSummaryTiles({
 // Dashboard
 // ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  const [machines, setMachines] = useState<Record<string, MachineData & { cellId?: string | null }>>({});
+  const [machines, setMachines] = useState<Record<string, DashboardMachine>>({});
   const [cells, setCells] = useState<ProductionCell[]>([]);
   const [mqttConnected, setMqttConnected] = useState(false);
   const [currentShift, setCurrentShift] = useState<number>(0);
@@ -376,13 +415,14 @@ export default function Dashboard() {
       setInitialLoading(false);
     }
 
-    const merged: Record<string, MachineData & { cellId?: string | null; cellPosition?: number; displayName?: string | null }> = {};
+    const merged: Record<string, DashboardMachine> = {};
     for (const row of registered) {
       merged[row.machine_code] = {
         ...offlinePlaceholder(row),
         cellId: row.cell_id,
         cellPosition: row.cell_position ?? 0,
         displayName: row.display_name ?? null,
+        packingFormat: row.packing_format ?? null,
       };
     }
 
@@ -396,6 +436,7 @@ export default function Dashboard() {
           cellId: merged[code]?.cellId ?? null,
           cellPosition: merged[code]?.cellPosition ?? 0,
           displayName: merged[code]?.displayName ?? null,
+          packingFormat: merged[code]?.packingFormat ?? null,
         };
       }
     } catch {
