@@ -27,6 +27,48 @@ type DropTarget = {
 type Tab = "users" | "machines" | "thresholds" | "mqtt";
 
 // ─────────────────────────────────────────────────────────────
+// Reusable confirmation modal
+// ─────────────────────────────────────────────────────────────
+function ConfirmModal({
+  message, confirmLabel = "Delete", onConfirm, onCancel, danger = true,
+}: {
+  message: string;
+  confirmLabel?: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+  danger?: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-sm mx-4 p-6">
+        <div className="flex items-start gap-3 mb-5">
+          <div className={`shrink-0 w-9 h-9 rounded-full flex items-center justify-center ${danger ? "bg-red-500/15" : "bg-yellow-500/15"}`}>
+            <i className={`bi ${danger ? "bi-trash3 text-red-400" : "bi-exclamation-triangle text-yellow-400"}`}></i>
+          </div>
+          <p className="text-sm text-gray-200 leading-relaxed pt-1">{message}</p>
+        </div>
+        <div className="flex justify-end gap-2">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className={`px-4 py-2 text-sm text-white rounded-lg transition-colors ${
+              danger ? "bg-red-600 hover:bg-red-700" : "bg-cyan-600 hover:bg-cyan-700"
+            }`}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Machines tab — production cell management with drag-and-drop
 // ─────────────────────────────────────────────────────────────
 function MachinesTab() {
@@ -39,6 +81,7 @@ function MachinesTab() {
   const [renameValue, setRenameValue] = useState("");
   const [newCellName, setNewCellName] = useState("");
   const [addingCell, setAddingCell] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState<{ cellId: string; cellName: string } | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newCellInputRef = useRef<HTMLInputElement>(null);
 
@@ -135,8 +178,14 @@ function MachinesTab() {
   };
 
   const handleDeleteCell = async (id: string) => {
-    if (!confirm("Delete this cell? Machines inside will become unassigned.")) return;
-    await deleteProductionCell(id);
+    const cell = cells.find(c => c.id === id);
+    setConfirmDelete({ cellId: id, cellName: cell?.name ?? "this cell" });
+  };
+
+  const confirmDeleteCell = async () => {
+    if (!confirmDelete) return;
+    await deleteProductionCell(confirmDelete.cellId);
+    setConfirmDelete(null);
     await reload();
   };
 
@@ -203,6 +252,16 @@ function MachinesTab() {
 
   return (
     <div className="space-y-4">
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <ConfirmModal
+          message={`Delete "${confirmDelete.cellName}"? All machines inside will become unassigned.`}
+          confirmLabel="Delete Cell"
+          onConfirm={confirmDeleteCell}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
       {/* Toolbar */}
       <div className="flex items-center justify-between">
         <p className="text-sm text-gray-400">
