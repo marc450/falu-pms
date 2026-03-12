@@ -10,6 +10,7 @@ import {
   deleteProductionCell,
   assignMachineToCell,
   updateCellOrder,
+  updateMachineDisplayName,
   fetchThresholds,
   saveThresholds,
   DEFAULT_THRESHOLDS,
@@ -36,8 +37,11 @@ function MachinesTab() {
   const [renameValue, setRenameValue] = useState("");
   const [newCellName, setNewCellName] = useState("");
   const [addingCell, setAddingCell] = useState(false);
+  const [renamingMachine, setRenamingMachine] = useState<string | null>(null);
+  const [machineRenameValue, setMachineRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newCellInputRef = useRef<HTMLInputElement>(null);
+  const machineRenameInputRef = useRef<HTMLInputElement>(null);
 
   const reload = async (silent = false) => {
     const [m, c] = await Promise.all([fetchRegisteredMachines(), fetchProductionCells()]);
@@ -48,6 +52,7 @@ function MachinesTab() {
 
   useEffect(() => { reload(); }, []);
   useEffect(() => { if (renamingCell) renameInputRef.current?.focus(); }, [renamingCell]);
+  useEffect(() => { if (renamingMachine) machineRenameInputRef.current?.focus(); }, [renamingMachine]);
   useEffect(() => { if (addingCell) newCellInputRef.current?.focus(); }, [addingCell]);
 
   const machinesInCell = (cellId: string) =>
@@ -148,6 +153,24 @@ function MachinesTab() {
     await reload();
   };
 
+  const startMachineRename = (m: RegisteredMachine) => {
+    setRenamingMachine(m.machine_code);
+    setMachineRenameValue(m.display_name ?? "");
+  };
+
+  const commitMachineRename = async (code: string) => {
+    await updateMachineDisplayName(code, machineRenameValue.trim() || null);
+    setRenamingMachine(null);
+    // Optimistically update local state
+    setMachines((prev) =>
+      prev.map((m) =>
+        m.machine_code === code
+          ? { ...m, display_name: machineRenameValue.trim() || null }
+          : m
+      )
+    );
+  };
+
   // Render chips with insertion-line indicators
   const renderChips = (chipList: RegisteredMachine[], cellId: string | null) => (
     <>
@@ -159,12 +182,20 @@ function MachinesTab() {
           )}
           <MachineChip
             code={m.machine_code}
+            displayName={m.display_name}
             isDragging={dragging === m.machine_code}
+            isRenaming={renamingMachine === m.machine_code}
+            renameValue={machineRenameValue}
+            renameInputRef={renamingMachine === m.machine_code ? machineRenameInputRef : undefined}
+            onRenameChange={setMachineRenameValue}
+            onRenameCommit={() => commitMachineRename(m.machine_code)}
+            onRenameCancel={() => setRenamingMachine(null)}
+            onRenameStart={() => startMachineRename(m)}
             onDragStart={() => setDragging(m.machine_code)}
             onDragEnd={() => { setDragging(null); setDropTarget(null); }}
             onChipDragOver={(e) => {
               e.preventDefault();
-              e.stopPropagation(); // prevent cell container from overriding
+              e.stopPropagation();
               setDropTarget({ cellId, beforeCode: m.machine_code });
             }}
           />
@@ -346,24 +377,61 @@ function MachinesTab() {
 // ─────────────────────────────────────────────────────────────
 function MachineChip({
   code,
+  displayName,
   isDragging,
+  isRenaming,
+  renameValue,
+  renameInputRef,
+  onRenameChange,
+  onRenameCommit,
+  onRenameCancel,
+  onRenameStart,
   onDragStart,
   onDragEnd,
   onChipDragOver,
 }: {
   code: string;
+  displayName?: string | null;
   isDragging?: boolean;
+  isRenaming?: boolean;
+  renameValue?: string;
+  renameInputRef?: React.RefObject<HTMLInputElement | null>;
+  onRenameChange?: (v: string) => void;
+  onRenameCommit?: () => void;
+  onRenameCancel?: () => void;
+  onRenameStart?: () => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onChipDragOver?: (e: React.DragEvent) => void;
 }) {
+  if (isRenaming) {
+    return (
+      <div className="flex items-center gap-1.5 px-2 py-1 rounded-md bg-gray-700 border border-cyan-500 min-w-[140px]">
+        <i className="bi bi-cpu text-cyan-400 text-xs shrink-0"></i>
+        <input
+          ref={renameInputRef}
+          value={renameValue ?? ""}
+          onChange={(e) => onRenameChange?.(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") onRenameCommit?.();
+            if (e.key === "Escape") onRenameCancel?.();
+          }}
+          onBlur={onRenameCommit}
+          placeholder={code}
+          className="bg-transparent text-white text-sm outline-none w-full min-w-0"
+        />
+        <span className="text-gray-500 text-xs font-mono shrink-0">{code}</span>
+      </div>
+    );
+  }
+
   return (
     <div
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onChipDragOver}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium select-none transition-all ${
+      className={`group flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium select-none transition-all ${
         isDragging
           ? "opacity-30 cursor-grabbing bg-gray-600 text-gray-400 border border-gray-500"
           : "bg-gray-700 text-white border border-gray-600 cursor-grab hover:border-cyan-500 hover:bg-gray-600 active:cursor-grabbing"
@@ -371,7 +439,19 @@ function MachineChip({
     >
       <i className="bi bi-grip-vertical text-gray-400 text-xs"></i>
       <i className="bi bi-cpu text-cyan-400 text-xs"></i>
-      {code}
+      <span className="flex flex-col leading-tight">
+        {displayName
+          ? <><span>{displayName}</span><span className="text-gray-500 text-xs font-mono">{code}</span></>
+          : <span>{code}</span>
+        }
+      </span>
+      <button
+        onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); onRenameStart?.(); }}
+        className="ml-1 opacity-0 group-hover:opacity-100 transition-opacity text-gray-400 hover:text-cyan-400"
+        title="Rename machine"
+      >
+        <i className="bi bi-pencil text-xs"></i>
+      </button>
     </div>
   );
 }

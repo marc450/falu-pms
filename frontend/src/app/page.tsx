@@ -94,11 +94,20 @@ function sortMachineList(
 // ─────────────────────────────────────────────────────────────
 // Machine row
 // ─────────────────────────────────────────────────────────────
-function MachineRow({ m, onClick }: { m: MachineData; onClick: () => void }) {
+function MachineRow({ m, onClick }: { m: MachineData & { displayName?: string | null }; onClick: () => void }) {
   const status = getStatusColor(m.machineStatus?.Status);
   return (
     <tr onClick={onClick} className="cursor-pointer hover:bg-white/5 transition-colors">
-      <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>
+      <td className="px-4 py-3">
+        {m.displayName ? (
+          <div className="flex flex-col leading-tight">
+            <span className="font-bold text-white">{m.displayName}</span>
+            <span className="text-xs font-mono text-gray-500">{m.machine}</span>
+          </div>
+        ) : (
+          <span className="font-bold text-cyan-400">{m.machine}</span>
+        )}
+      </td>
       <td className="px-4 py-3">
         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
           <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
@@ -367,12 +376,13 @@ export default function Dashboard() {
       setInitialLoading(false);
     }
 
-    const merged: Record<string, MachineData & { cellId?: string | null; cellPosition?: number }> = {};
+    const merged: Record<string, MachineData & { cellId?: string | null; cellPosition?: number; displayName?: string | null }> = {};
     for (const row of registered) {
       merged[row.machine_code] = {
         ...offlinePlaceholder(row),
         cellId: row.cell_id,
         cellPosition: row.cell_position ?? 0,
+        displayName: row.display_name ?? null,
       };
     }
 
@@ -385,6 +395,7 @@ export default function Dashboard() {
           ...live,
           cellId: merged[code]?.cellId ?? null,
           cellPosition: merged[code]?.cellPosition ?? 0,
+          displayName: merged[code]?.displayName ?? null,
         };
       }
     } catch {
