@@ -735,7 +735,7 @@ function ThresholdsTab() {
           efficiency_mediocre: m.efficiency_mediocre,
           scrap_good:          m.scrap_good,
           scrap_mediocre:      m.scrap_mediocre,
-          bu_target:           m.bu_target,
+          bu_target:           m.bu_target || null,
         };
       }
       setTargets(init);
