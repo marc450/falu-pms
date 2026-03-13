@@ -354,7 +354,7 @@ function CellSection({
                 {avgEff !== null && (
                   <div className="flex flex-col gap-0.5">
                     <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
-                    <span className="text-[10px] text-gray-500">Uptime</span>
+                    {!open && <span className="text-[10px] text-gray-500">Uptime</span>}
                   </div>
                 )}
               </td>
@@ -363,7 +363,7 @@ function CellSection({
                 {avgScrap !== null && (
                   <div className="flex flex-col gap-0.5">
                     <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
-                    <span className="text-[10px] text-gray-500">Scrap</span>
+                    {!open && <span className="text-[10px] text-gray-500">Scrap</span>}
                   </div>
                 )}
               </td>
@@ -374,11 +374,11 @@ function CellSection({
                     <span className={`text-sm font-semibold ${buCc.text}`}>
                       {Math.round(cellProjected)}{" "}
                       <span className="text-xs font-normal opacity-60">/ {Math.round(cellTarget)} BUs</span>
-                      {cellRate !== null && (
-                        <span className="opacity-70 ml-1 text-xs">({Math.round(cellRate * 100)}%)</span>
-                      )}
                     </span>
-                    <span className="text-[10px] text-gray-500">Output</span>
+                    {cellRate !== null && (
+                      <span className={`text-xs font-medium opacity-70 ${buCc.text}`}>{Math.round(cellRate * 100)}%</span>
+                    )}
+                    {!open && <span className="text-[10px] text-gray-500">Output</span>}
                   </div>
                 ) : null}
               </td>
@@ -390,7 +390,7 @@ function CellSection({
                       {Math.round(avgSpeed).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-60">pcs/min</span>
                     </span>
-                    <span className="text-[10px] text-gray-500">Avg Speed</span>
+                    {!open && <span className="text-[10px] text-gray-500">Avg Speed</span>}
                   </div>
                 )}
               </td>
@@ -402,7 +402,7 @@ function CellSection({
                       {swabsTotal.toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-50">swabs</span>
                     </span>
-                    <span className="text-[10px] text-gray-500">Total Swabs</span>
+                    {!open && <span className="text-[10px] text-gray-500">Total Swabs</span>}
                   </div>
                 )}
               </td>
@@ -414,7 +414,7 @@ function CellSection({
                       {outputTotal.toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-50">{outputLabel.toLowerCase()}</span>
                     </span>
-                    <span className="text-[10px] text-gray-500">Total Output</span>
+                    {!open && <span className="text-[10px] text-gray-500">Total Output</span>}
                   </div>
                 )}
               </td>
