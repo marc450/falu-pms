@@ -73,6 +73,27 @@ const allMachines = {};
 
 let mqttConnected = false;
 let currentShiftNumber = 1;
+let shiftStartedAt = Date.now(); // wall-clock ms when current shift began
+
+// Persist/restore shift state so a bridge restart doesn't lose the start time
+const SHIFT_STATE_FILE = path.join(__dirname, "..", "shift-state.json");
+
+function saveShiftState() {
+  try {
+    fs.writeFileSync(SHIFT_STATE_FILE, JSON.stringify({ currentShiftNumber, shiftStartedAt }));
+  } catch (e) { /* non-fatal */ }
+}
+
+function loadShiftState() {
+  try {
+    const raw = fs.readFileSync(SHIFT_STATE_FILE, "utf8");
+    const s = JSON.parse(raw);
+    if (s.currentShiftNumber) currentShiftNumber = s.currentShiftNumber;
+    if (s.shiftStartedAt)    shiftStartedAt    = s.shiftStartedAt;
+  } catch (e) { /* file doesn't exist yet — use defaults */ }
+}
+
+loadShiftState();
 
 // Machine cache: machine_code -> UUID
 const machineIdCache = {};
@@ -188,7 +209,13 @@ async function handleStatusMessage(payload) {
   }
   allMachines[machineCode].machineStatus = data;
   allMachines[machineCode].lastSyncStatus = new Date();
-  currentShiftNumber = data.ActShift || currentShiftNumber;
+  const incomingShift = data.ActShift || currentShiftNumber;
+  if (incomingShift !== currentShiftNumber) {
+    currentShiftNumber = incomingShift;
+    shiftStartedAt = Date.now();
+    saveShiftState();
+    logger.info(`Shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
+  }
 
   // Update Supabase
   const machineId = await getMachineId(machineCode);
@@ -452,6 +479,7 @@ app.get("/api/machines", (req, res) => {
     machines: allMachines,
     mqttConnected,
     currentShiftNumber,
+    shiftStartedAt,
   });
 });
 

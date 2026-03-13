@@ -68,6 +68,7 @@ export interface BridgeState {
   machines: Record<string, MachineData>;
   mqttConnected: boolean;
   currentShiftNumber: number;
+  shiftStartedAt: number; // Unix ms timestamp when current shift began
 }
 
 // ============================================
