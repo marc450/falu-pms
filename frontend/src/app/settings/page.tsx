@@ -473,7 +473,7 @@ function MachineChip({
 function ThresholdRow({
   label, sublabel, value, onChange, onSave, unit, inverted, max,
 }: {
-  label: string; sublabel: string; value: number;
+  label: string; sublabel?: string; value: number;
   onChange: (v: number) => void; onSave?: (v: number) => void;
   unit: string; inverted?: boolean; max?: number;
 }) {
@@ -490,7 +490,7 @@ function ThresholdRow({
     <div className="flex items-center justify-between py-2">
       <div>
         <span className="text-sm text-white">{label}</span>
-        <span className="text-xs text-gray-500 ml-2">{sublabel}</span>
+        {sublabel && <span className="text-xs text-gray-500 ml-2">{sublabel}</span>}
       </div>
       <div className="flex items-center gap-2">
         <input
@@ -804,7 +804,6 @@ function ThresholdsTab() {
         <div className="px-5 py-3 divide-y divide-gray-700/50">
           <ThresholdRow
             label="Duration"
-            sublabel="Total hours per shift"
             value={t.bu.shiftLengthMinutes / 60}
             onChange={(v) => setT({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(v * 60) } })}
             onSave={saveShiftLength}
@@ -813,7 +812,6 @@ function ThresholdsTab() {
           />
           <ThresholdRow
             label="Planned Downtime"
-            sublabel="Scheduled breaks, changeovers, cleaning"
             value={t.bu.plannedDowntimeMinutes}
             onChange={(v) => setT({ ...t, bu: { ...t.bu, plannedDowntimeMinutes: Math.round(v) } })}
             onSave={savePlannedDowntime}
@@ -821,10 +819,13 @@ function ThresholdsTab() {
             max={t.bu.shiftLengthMinutes}
           />
           <div className="flex items-center justify-between py-2">
-            <span className="text-xs text-gray-500">Effective production time</span>
-            <span className="text-xs text-cyan-400 font-medium">
-              {((t.bu.shiftLengthMinutes - t.bu.plannedDowntimeMinutes) / 60).toFixed(1)} hrs
-            </span>
+            <span className="text-sm text-white">Effective production time</span>
+            <div className="flex items-center gap-2">
+              <span className="w-20 text-sm text-cyan-400 text-right">
+                {((t.bu.shiftLengthMinutes - t.bu.plannedDowntimeMinutes) / 60).toFixed(1)}
+              </span>
+              <span className="text-gray-400 text-sm w-8">hrs</span>
+            </div>
           </div>
         </div>
       </div>
