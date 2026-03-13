@@ -119,6 +119,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
     .select(
       "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, speed_target"
     )
+    .eq("hidden", false)
     .order("machine_code");
 
   if (error) throw new Error(error.message);
@@ -363,8 +364,14 @@ export async function requestShiftData(machineCode: string, shift: number): Prom
 }
 
 export async function deleteMachine(machineCode: string): Promise<void> {
+  // Soft-delete: set hidden = true instead of hard-deleting.
+  // Hard-deleting would cascade into shift_readings and saved_shift_logs
+  // and permanently destroy production history.
   const sb = getSupabase();
-  const { error } = await sb.from("machines").delete().eq("machine_code", machineCode);
+  const { error } = await sb
+    .from("machines")
+    .update({ hidden: true })
+    .eq("machine_code", machineCode);
   if (error) throw new Error(error.message);
 }
 

@@ -277,7 +277,7 @@ function MachinesTab() {
       {/* Machine delete confirmation modal */}
       {confirmDeleteMachine && (
         <ConfirmModal
-          message={`Remove machine "${confirmDeleteMachine}" from the system? If it sends data again it will be re-registered automatically.`}
+          message={`Remove "${confirmDeleteMachine}" from the dashboard? All production history for this machine will remain in the database. If the machine sends data again it will be re-registered automatically.`}
           confirmLabel="Remove Machine"
           onConfirm={handleDeleteMachine}
           onCancel={() => setConfirmDeleteMachine(null)}

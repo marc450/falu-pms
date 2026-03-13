@@ -126,6 +126,7 @@ async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
     .select("id, machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift")
+    .eq("hidden", false)
     .order("machine_code");
 
   if (error) {
@@ -246,6 +247,7 @@ async function handleStatusMessage(payload) {
       current_efficiency: data.Efficiency || 0,
       current_reject: data.Reject || 0,
       last_sync_status: new Date().toISOString(),
+      hidden: false,  // un-hide automatically when machine sends data again
     })
     .eq("id", machineId);
 
