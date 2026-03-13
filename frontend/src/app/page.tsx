@@ -340,14 +340,17 @@ function CellSection({
               </td>
               {/* Status col → running count, traffic-light colored */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[1].minW}px` }}>
-                <span className={`text-xs font-semibold ${
-                  machines.length === 0 ? "text-gray-500"
-                  : running === machines.length ? "text-green-400"
-                  : running > 0            ? "text-yellow-400"
-                  :                          "text-red-400"
-                }`}>
-                  {running}/{machines.length} running
-                </span>
+                <div className="flex flex-col gap-0.5">
+                  <span className={`text-xs font-semibold ${
+                    machines.length === 0 ? "text-gray-500"
+                    : running === machines.length ? "text-green-400"
+                    : running > 0            ? "text-yellow-400"
+                    :                          "text-red-400"
+                  }`}>
+                    {running}/{machines.length} running
+                  </span>
+                  {!open && <span className="text-[10px] text-gray-500">{colDefs[1].label}</span>}
+                </div>
               </td>
               {/* Uptime col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[2].minW}px` }}>
