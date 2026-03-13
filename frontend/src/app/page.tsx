@@ -352,7 +352,7 @@ function ParkSummaryTiles({
     if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
-    const br = calcBuRunRate(m, thresholds.bu.shiftLengthMinutes);
+    const br = calcBuRunRate(m, Math.max(1, thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0)));
     if (br) { floorProjected += br.projected; floorTarget += br.target; }
   }
 
@@ -518,6 +518,12 @@ export default function Dashboard() {
 
   const useCells = cells.length > 0;
 
+  // Net production time available per shift (shift length minus planned downtime)
+  const effectiveShiftMins = Math.max(
+    1,
+    thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0)
+  );
+
   return (
     <div>
       {/* Header */}
@@ -576,7 +582,7 @@ export default function Dashboard() {
               machines={machinesForCell(cell.id)}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
               thresholds={thresholds}
-              shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
+              shiftLengthMinutes={effectiveShiftMins}
             />
           ))}
           {unassigned.length > 0 && (
@@ -587,7 +593,7 @@ export default function Dashboard() {
               machines={unassigned}
               onMachineClick={(code) => router.push(`/production?machine=${code}`)}
               thresholds={thresholds}
-              shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
+              shiftLengthMinutes={effectiveShiftMins}
             />
           )}
           {!hasData && (
@@ -620,7 +626,7 @@ export default function Dashboard() {
                   <MachineRow
                     key={m.machine}
                     m={m as DashboardMachine}
-                    shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
+                    shiftLengthMinutes={effectiveShiftMins}
                     onClick={() => router.push(`/production?machine=${m.machine}`)}
                   />
                 ))}

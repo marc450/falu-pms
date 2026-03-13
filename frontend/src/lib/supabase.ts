@@ -215,13 +215,13 @@ export async function assignMachineToCell(machineCode: string, cellId: string | 
 export interface Thresholds {
   efficiency: { good: number; mediocre: number }; // good ≥ good, mediocre ≥ mediocre, bad < mediocre
   scrap:      { good: number; mediocre: number }; // good ≤ good, mediocre ≤ mediocre, bad > mediocre
-  bu:         { good: number; mediocre: number; shiftLengthMinutes: number }; // good ≥ good, mediocre ≥ mediocre, bad < mediocre
+  bu:         { good: number; mediocre: number; shiftLengthMinutes: number; plannedDowntimeMinutes: number }; // good ≥ good, mediocre ≥ mediocre, bad < mediocre
 }
 
 export const DEFAULT_THRESHOLDS: Thresholds = {
   efficiency: { good: 85,  mediocre: 70 },
   scrap:      { good: 2,   mediocre: 5  },
-  bu:         { good: 1400, mediocre: 800, shiftLengthMinutes: 480 },
+  bu:         { good: 1400, mediocre: 800, shiftLengthMinutes: 480, plannedDowntimeMinutes: 0 },
 };
 
 export async function fetchThresholds(): Promise<Thresholds> {
@@ -232,10 +232,13 @@ export async function fetchThresholds(): Promise<Thresholds> {
     .in("key", ["threshold_efficiency", "threshold_scrap", "threshold_bu"]);
   if (error) throw new Error(error.message);
   const map = Object.fromEntries((data ?? []).map((r) => [r.key, r.value]));
+  const buRaw = map["threshold_bu"] ?? {};
   return {
     efficiency: map["threshold_efficiency"] ?? DEFAULT_THRESHOLDS.efficiency,
     scrap:      map["threshold_scrap"]      ?? DEFAULT_THRESHOLDS.scrap,
-    bu:         map["threshold_bu"]         ?? DEFAULT_THRESHOLDS.bu,
+    // Merge with defaults so new fields (e.g. plannedDowntimeMinutes) appear
+    // on existing DB rows that pre-date the field being added.
+    bu: { ...DEFAULT_THRESHOLDS.bu, ...buRaw },
   };
 }
 

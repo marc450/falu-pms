@@ -478,10 +478,12 @@ function ThresholdRow({
   unit: string; inverted?: boolean; max?: number;
 }) {
   const [display, setDisplay] = useState(String(value));
+  const focused = useRef(false);
 
   // Keep display in sync when parent value changes externally (e.g. on load)
+  // but never while the user is actively editing the field
   useEffect(() => {
-    setDisplay(String(value));
+    if (!focused.current) setDisplay(String(value));
   }, [value]);
 
   return (
@@ -496,12 +498,14 @@ function ThresholdRow({
           min={0} max={max ?? 100} step={0.5}
           value={display}
           onWheel={(e) => e.currentTarget.blur()}
+          onFocus={() => { focused.current = true; }}
           onChange={(e) => {
             setDisplay(e.target.value);
             const n = parseFloat(e.target.value);
             if (!isNaN(n)) onChange(n);
           }}
           onBlur={(e) => {
+            focused.current = false;
             const n = parseFloat(e.target.value);
             if (isNaN(n) || e.target.value === "") {
               setDisplay(String(value)); // revert to last valid value
@@ -762,6 +766,11 @@ function ThresholdsTab() {
     saveThresholds({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(hours * 60) } }).catch(console.error);
   };
 
+  // Auto-save planned downtime on blur
+  const savePlannedDowntime = (mins: number) => {
+    saveThresholds({ ...t, bu: { ...t.bu, plannedDowntimeMinutes: Math.round(mins) } }).catch(console.error);
+  };
+
   if (loading) return (
     <div className="flex items-center gap-2 text-gray-400 py-8">
       <span className="animate-spin text-lg">⟳</span> Loading…
@@ -784,24 +793,39 @@ function ThresholdsTab() {
         <span className="text-green-400">good</span> / <span className="text-yellow-400">mediocre</span> / <span className="text-red-400">below</span>.
       </p>
 
-      {/* ── Shift length ──────────────────────────────────────── */}
+      {/* ── Shift settings ────────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-sm">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-clock text-cyan-400"></i>Shift Length
+            <i className="bi bi-clock text-cyan-400"></i>Shift Settings
           </h4>
           <p className="text-gray-500 text-xs mt-0.5">Used to calculate BU run rates across all machines</p>
         </div>
-        <div className="px-5 py-3">
+        <div className="px-5 py-3 divide-y divide-gray-700/50">
           <ThresholdRow
             label="Duration"
-            sublabel="Hours per shift"
+            sublabel="Total hours per shift"
             value={t.bu.shiftLengthMinutes / 60}
             onChange={(v) => setT({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(v * 60) } })}
             onSave={saveShiftLength}
             unit="hrs"
             max={24}
           />
+          <ThresholdRow
+            label="Planned Downtime"
+            sublabel="Scheduled breaks, changeovers, cleaning"
+            value={t.bu.plannedDowntimeMinutes}
+            onChange={(v) => setT({ ...t, bu: { ...t.bu, plannedDowntimeMinutes: Math.round(v) } })}
+            onSave={savePlannedDowntime}
+            unit="min"
+            max={t.bu.shiftLengthMinutes}
+          />
+          <div className="flex items-center justify-between py-2">
+            <span className="text-xs text-gray-500">Effective production time</span>
+            <span className="text-xs text-cyan-400 font-medium">
+              {((t.bu.shiftLengthMinutes - t.bu.plannedDowntimeMinutes) / 60).toFixed(1)} hrs
+            </span>
+          </div>
         </div>
       </div>
 
