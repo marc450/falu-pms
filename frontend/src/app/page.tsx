@@ -267,7 +267,7 @@ function CellSection({
   const sortedMachines = sortCellMachines(machines, sortCol, sortAsc, shiftLengthMinutes, shiftStartedAt);
 
   // Compute cell-level stats
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
+  let running = 0, effSum = 0, scrapSum = 0, scrapCount = 0;
   let swabsTotal = 0, outputTotal = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
   let cellProjected = 0, cellTarget = 0;
@@ -275,21 +275,27 @@ function CellSection({
   let scrapGoodSum = 0, scrapGoodCount = 0, scrapMedSum = 0, scrapMedCount = 0;
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
-    if (s === "run" || s === "running") running++;
-    if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
-    if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
+    const isRunning = s === "run" || s === "running";
+    if (isRunning) running++;
+    // Uptime: all machines count — non-running contribute 0
+    effSum += m.machineStatus?.Efficiency ?? 0;
+    // Scrap: running machines only
+    if (isRunning && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
     if (m.machineStatus?.Swaps)      swabsTotal  += m.machineStatus.Swaps;
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
-    if (m.machineStatus?.Speed)      { speedSum += m.machineStatus.Speed; speedCount++; }
+    // Speed: running machines only
+    if (isRunning && m.machineStatus?.Speed) { speedSum += m.machineStatus.Speed; speedCount++; }
     if (m.speedTarget)               { speedTargetSum += m.speedTarget; speedTargetCount++; }
+    // BU Run Rate: running machines get full calc; non-running still add their target (0 projected)
     const br = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
     if (br) { cellProjected += br.projected; cellTarget += br.target; }
+    else if (m.buTarget && m.buTarget > 0) { cellTarget += m.buTarget; }
     if (m.efficiencyGood)     { effGoodSum   += m.efficiencyGood;     effGoodCount++; }
     if (m.efficiencyMediocre) { effMedSum    += m.efficiencyMediocre; effMedCount++;  }
     if (m.scrapGood)          { scrapGoodSum += m.scrapGood;          scrapGoodCount++; }
     if (m.scrapMediocre)      { scrapMedSum  += m.scrapMediocre;      scrapMedCount++;  }
   }
-  const avgEff    = machines.length > 0 ? (effCount   > 0 ? effSum   / effCount   : 0) : null;
+  const avgEff    = machines.length > 0 ? effSum / machines.length : null;
   const avgScrap  = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
   const avgSpeed  = speedCount > 0 ? speedSum / speedCount : null;
   const avgSpeedTarget = speedTargetCount > 0 ? speedTargetSum / speedTargetCount : null;
