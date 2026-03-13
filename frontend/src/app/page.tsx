@@ -153,15 +153,13 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
     <tr onClick={onClick} className="cursor-pointer hover:bg-white/5 transition-colors">
       <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>
       <td className="px-4 py-3">
-        <div className="flex flex-col gap-1 items-start">
-          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
-            <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
-            {formatStatus(m.machineStatus?.Status)}
-          </span>
+        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
+          {formatStatus(m.machineStatus?.Status)}
           {m.machineStatus?.Error && (
-            <span className="text-xs text-yellow-400/80 pl-1">{m.machineStatus.Error}</span>
+            <span className="opacity-80">· {m.machineStatus.Error}</span>
           )}
-        </div>
+        </span>
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
         {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}

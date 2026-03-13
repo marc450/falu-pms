@@ -919,9 +919,6 @@ export default function SettingsPage() {
       {/* Page header */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-bold text-white">Settings</h2>
-        <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full">
-          Configuration
-        </span>
       </div>
 
       {/* Tab bar */}
