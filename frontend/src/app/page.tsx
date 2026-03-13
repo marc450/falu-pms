@@ -153,13 +153,21 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
     <tr onClick={onClick} className="cursor-pointer hover:bg-white/5 transition-colors">
       <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>
       <td className="px-4 py-3">
-        <span
-          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text} ${m.machineStatus?.Error ? "cursor-help" : ""}`}
-          title={m.machineStatus?.Error || undefined}
-        >
-          <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
-          {formatStatus(m.machineStatus?.Status)}
-        </span>
+        <div className="relative inline-block group">
+          <span
+            className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.bg} ${status.text} ${m.machineStatus?.Error ? "cursor-help" : ""}`}
+          >
+            <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
+            {formatStatus(m.machineStatus?.Status)}
+          </span>
+          {m.machineStatus?.Error && (
+            <div className="absolute left-0 top-full mt-1.5 z-50 hidden group-hover:block">
+              <div className="bg-gray-900 border border-gray-600 text-gray-200 text-xs rounded-lg px-3 py-2 whitespace-nowrap shadow-xl">
+                <span className="text-yellow-400 mr-1.5">⚠</span>{m.machineStatus.Error}
+              </div>
+            </div>
+          )}
+        </div>
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
         {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
