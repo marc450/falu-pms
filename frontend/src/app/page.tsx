@@ -271,6 +271,8 @@ function CellSection({
   let swabsTotal = 0, outputTotal = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
   let cellProjected = 0, cellTarget = 0;
+  let effGoodSum = 0, effGoodCount = 0, effMedSum = 0, effMedCount = 0;
+  let scrapGoodSum = 0, scrapGoodCount = 0, scrapMedSum = 0, scrapMedCount = 0;
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
     if (s === "run" || s === "running") running++;
@@ -282,15 +284,24 @@ function CellSection({
     if (m.speedTarget)               { speedTargetSum += m.speedTarget; speedTargetCount++; }
     const br = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
     if (br) { cellProjected += br.projected; cellTarget += br.target; }
+    if (m.efficiencyGood)     { effGoodSum   += m.efficiencyGood;     effGoodCount++; }
+    if (m.efficiencyMediocre) { effMedSum    += m.efficiencyMediocre; effMedCount++;  }
+    if (m.scrapGood)          { scrapGoodSum += m.scrapGood;          scrapGoodCount++; }
+    if (m.scrapMediocre)      { scrapMedSum  += m.scrapMediocre;      scrapMedCount++;  }
   }
   const avgEff    = machines.length > 0 ? (effCount   > 0 ? effSum   / effCount   : 0) : null;
   const avgScrap  = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
   const avgSpeed  = speedCount > 0 ? speedSum / speedCount : null;
   const avgSpeedTarget = speedTargetCount > 0 ? speedTargetSum / speedTargetCount : null;
   const cellRate  = cellTarget > 0 ? cellProjected / cellTarget : null;
-  const ec   = applyEfficiencyColor(avgEff,   thresholds);
-  const sc   = applyScrapColor     (avgScrap, thresholds);
-  const buCc = applyRunRateColor   (cellRate);
+  // Use averaged per-machine targets for coloring (falls back to gray when no targets set)
+  const avgEffGood   = effGoodCount   > 0 ? effGoodSum   / effGoodCount   : null;
+  const avgEffMed    = effMedCount    > 0 ? effMedSum    / effMedCount    : null;
+  const avgScrapGood = scrapGoodCount > 0 ? scrapGoodSum / scrapGoodCount : null;
+  const avgScrapMed  = scrapMedCount  > 0 ? scrapMedSum  / scrapMedCount  : null;
+  const ec   = applyMachineEfficiencyColor(avgEff,   avgEffGood,   avgEffMed);
+  const sc   = applyMachineScrapColor     (avgScrap, avgScrapGood, avgScrapMed);
+  const buCc = applyRunRateColor          (cellRate);
   const spCc = applySpeedHeaderColor(avgSpeed, avgSpeedTarget);
 
   // Derive output label from machines' packing formats
