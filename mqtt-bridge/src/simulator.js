@@ -14,7 +14,8 @@ const BROKER_PORT = parseInt(process.env.MQTT_PORT || "8883");
 const BROKER_USER = process.env.MQTT_USERNAME || "USCotton";
 const BROKER_PASS = process.env.MQTT_PASSWORD || "Admin123";
 const IS_LOCAL = process.env.MQTT_IS_LOCAL === "true";
-const SEND_FREQUENCY = parseInt(process.env.SIM_FREQUENCY_MS || "2000");
+const SEND_FREQUENCY = parseInt(process.env.SIM_FREQUENCY_MS || "5000");
+const SHIFT_DURATION_MS = parseInt(process.env.SIM_SHIFT_DURATION_MS || String(12 * 60 * 60 * 1000)); // default 12 hours
 const MACHINE_NAMES = (process.env.SIM_MACHINES || "CB-30,CB-31,CB-32,CB-33,CB-34,CB-35,CB-36,CB-37").split(",");
 
 // Per-machine speed ranges (min/max pcs/m)
@@ -180,6 +181,7 @@ console.log(`\n=== FALU PMS Machine Simulator ===`);
 console.log(`Broker: ${url}`);
 console.log(`Machines: ${MACHINE_NAMES.join(", ")}`);
 console.log(`Send frequency: ${SEND_FREQUENCY}ms`);
+console.log(`Shift duration: ${SHIFT_DURATION_MS / 3600000}h`);
 console.log(`Topic prefix: ${topicPrefix}`);
 console.log(`=================================\n`);
 
@@ -201,7 +203,7 @@ client.on("connect", () => {
   // Subscribe to machine-specific RequestShift topics
   client.subscribe(`${topicPrefix}/RequestShift/+`, { qos: 1 });
 
-  // Start simulation loop
+  // Start simulation loop — Status message every SEND_FREQUENCY ms (default 5 s)
   setInterval(() => {
     for (const name of Object.keys(machines)) {
       const m = machines[name];
@@ -210,22 +212,30 @@ client.on("connect", () => {
     }
   }, SEND_FREQUENCY);
 
-  // Publish shift data every 10 seconds
+  // Shift-end event every SHIFT_DURATION_MS (default 12 h)
+  // Mirrors what the real PLC does at the end of each shift:
+  //   1. Publish final Shift message with Save: true
+  //   2. Reset accumulated shift data for the completed shift
+  //   3. Advance activeShift (1→2→3→1) so the next Status message
+  //      carries the new ActShift value — the bridge detects the
+  //      change and resets shiftStartedAt automatically.
   setInterval(() => {
     for (const name of Object.keys(machines)) {
       const m = machines[name];
-      publishShiftData(client, m, m.activeShift);
-    }
-  }, 10000);
+      const completedShift = m.activeShift;
 
-  // Simulate a Save event every 60 seconds
-  setInterval(() => {
-    for (const name of Object.keys(machines)) {
-      const m = machines[name];
-      publishShiftData(client, m, m.activeShift, true);
-      console.log(`[SAVE] ${m.name} Shift ${m.activeShift}`);
+      // 1. Publish final save
+      publishShiftData(client, m, completedShift, true);
+      console.log(`[SHIFT END] ${m.name} Shift ${completedShift} saved`);
+
+      // 2. Reset the completed shift's accumulated data
+      m.shifts[completedShift] = createShiftData();
+
+      // 3. Advance shift number (1→2→3→1)
+      m.activeShift = (completedShift % 3) + 1;
+      console.log(`[SHIFT START] ${m.name} now on Shift ${m.activeShift}`);
     }
-  }, 60000);
+  }, SHIFT_DURATION_MS);
 
   console.log("Simulation started. Press Ctrl+C to stop.\n");
 });
