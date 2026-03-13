@@ -120,7 +120,8 @@ function simulateTick(machine) {
   const swabsThisTick = Math.floor(machine.speed / 60 * (SEND_FREQUENCY / 1000)) + Math.floor(Math.random() * 5);
   shift.producedSwabs += swabsThisTick;
 
-  const discarded = Math.random() < 0.1 ? Math.floor(Math.random() * 3) : 0;
+  // Discard 3–5 % of each tick's production → cumulative reject rate stays in 3–5 % band
+  const discarded = Math.floor(swabsThisTick * (0.03 + Math.random() * 0.02));
   shift.discardedSwabs += discarded;
   shift.packagedSwabs += (swabsThisTick - discarded);
 
