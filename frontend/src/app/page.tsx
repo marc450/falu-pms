@@ -307,7 +307,7 @@ function CellSection({
     { label: "Status",              col: "Status",  minW: 130 },
     { label: "Uptime",              col: "Uptime",  minW: 110 },
     { label: "Scrap Rate",          col: "Scrap",   minW: 110 },
-    { label: "BU Run Rate",         col: "BU",      minW: 175 },
+    { label: "BU Run Rate",         col: "BU",      minW: 215 },
     { label: "Speed",               col: "Speed",   minW: 145 },
     { label: "Total Swabs",         col: "Swabs",   minW: 125 },
     { label: `Total ${outputLabel}`,col: "Output",  minW: 125 },
@@ -374,10 +374,10 @@ function CellSection({
                     <span className={`text-sm font-semibold ${buCc.text}`}>
                       {Math.round(cellProjected)}{" "}
                       <span className="text-xs font-normal opacity-60">/ {Math.round(cellTarget)} BUs</span>
+                      {cellRate !== null && (
+                        <span className="opacity-70 ml-1 text-xs">({Math.round(cellRate * 100)}%)</span>
+                      )}
                     </span>
-                    {cellRate !== null && (
-                      <span className={`text-xs font-medium opacity-70 ${buCc.text}`}>{Math.round(cellRate * 100)}%</span>
-                    )}
                     {!open && <span className="text-[10px] text-gray-500">Output</span>}
                   </div>
                 ) : null}
