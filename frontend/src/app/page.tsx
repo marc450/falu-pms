@@ -152,44 +152,54 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
   return (
     <tr onClick={onClick} className="cursor-pointer hover:bg-white/5 transition-colors">
       <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>
-      <td className="px-4 py-3">
-        <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${m.machineStatus?.Error ? 'w-full' : ''} ${status.bg} ${status.text}`}>
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
-          <span>
-            {formatStatus(m.machineStatus?.Status)}
-            {m.machineStatus?.Error && (
+      {m.machineStatus?.Error ? (
+        /* Error state: badge spans all remaining 8 columns */
+        <td colSpan={8} className="px-4 py-2">
+          <span className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium w-full ${status.bg} ${status.text}`}>
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
+            <span>
+              {formatStatus(m.machineStatus?.Status)}
               <span className="opacity-80"> · {m.machineStatus.Error}</span>
-            )}
+            </span>
           </span>
-        </span>
-      </td>
-      <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
-        {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
-      </td>
-      <td className={`px-4 py-3 font-medium ${toRowColor(scpColor.text)}`}>
-        {m.machineStatus?.Reject ? `${m.machineStatus.Reject.toFixed(1)}%` : ""}
-      </td>
-      <td className={`px-4 py-3 font-medium ${toRowColor(buColor.text)}`}>
-        {buRate !== null
-          ? <>{Math.round(buRate.projected)} <span className="text-xs font-normal opacity-60">/ {buRate.target} BUs</span></>
-          : ""}
-      </td>
-      <td className={`px-4 py-3 font-medium ${spdColor.text}`}>
-        {m.machineStatus?.Speed ? (
-          <>{m.machineStatus.Speed.toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
-        ) : null}
-      </td>
-      <td className="px-4 py-3">
-        {m.machineStatus?.Swaps ? m.machineStatus.Swaps.toLocaleString() : ""}
-      </td>
-      <td className="px-4 py-3">
-        {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
-      </td>
-      <td className="px-4 py-3 text-gray-400">
-        {m.lastSyncStatus
-          ? new Date(m.lastSyncStatus).toLocaleTimeString("de-DE")
-          : <span className="text-gray-600">---</span>}
-      </td>
+        </td>
+      ) : (
+        <>
+          <td className="px-4 py-3">
+            <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}>
+              <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
+              <span>{formatStatus(m.machineStatus?.Status)}</span>
+            </span>
+          </td>
+          <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
+            {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
+          </td>
+          <td className={`px-4 py-3 font-medium ${toRowColor(scpColor.text)}`}>
+            {m.machineStatus?.Reject ? `${m.machineStatus.Reject.toFixed(1)}%` : ""}
+          </td>
+          <td className={`px-4 py-3 font-medium ${toRowColor(buColor.text)}`}>
+            {buRate !== null
+              ? <>{Math.round(buRate.projected)} <span className="text-xs font-normal opacity-60">/ {buRate.target} BUs</span></>
+              : ""}
+          </td>
+          <td className={`px-4 py-3 font-medium ${spdColor.text}`}>
+            {m.machineStatus?.Speed ? (
+              <>{m.machineStatus.Speed.toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
+            ) : null}
+          </td>
+          <td className="px-4 py-3">
+            {m.machineStatus?.Swaps ? m.machineStatus.Swaps.toLocaleString() : ""}
+          </td>
+          <td className="px-4 py-3">
+            {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
+          </td>
+          <td className="px-4 py-3 text-gray-400">
+            {m.lastSyncStatus
+              ? new Date(m.lastSyncStatus).toLocaleTimeString("de-DE")
+              : <span className="text-gray-600">---</span>}
+          </td>
+        </>
+      )}
     </tr>
   );
 }

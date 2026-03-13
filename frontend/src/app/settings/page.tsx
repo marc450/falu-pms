@@ -684,15 +684,17 @@ function CellGroup({
   onSetTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
   onSaveTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
 }) {
+  const [open, setOpen] = useState(false);
   if (ms.length === 0) return null;
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-      <div className="bg-gray-800 px-4 py-2.5 border-b border-gray-700">
+      <div className="bg-gray-800 px-4 py-2.5 border-b border-gray-700 cursor-pointer hover:bg-gray-750 transition-colors flex items-center justify-between" onClick={() => setOpen(!open)}>
         <span className="text-white font-semibold text-sm">
           <i className="bi bi-collection text-cyan-400 mr-2"></i>{title}
         </span>
+        <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
       </div>
-      <div className="overflow-x-auto">
+      {open && <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr>
@@ -759,7 +761,7 @@ function CellGroup({
             ))}
           </tbody>
         </table>
-      </div>
+      </div>}
     </div>
   );
 }
