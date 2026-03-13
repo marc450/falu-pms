@@ -230,50 +230,72 @@ function CellSection({
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
-      <button
-        onClick={() => setOpen(!open)}
-        className="w-full flex items-center justify-between px-4 py-3 bg-gray-800 hover:bg-gray-750 transition-colors"
-      >
-        <div className="flex items-center gap-3 flex-wrap">
-          <i className={`bi ${icon} ${color}`}></i>
-          <span className="text-white font-semibold text-sm">{title}</span>
-          <span className="text-gray-500 text-xs">{running}/{machines.length} running</span>
-          {avgEff !== null && (
-            <span className={`text-xs font-medium ${ec.text}`}>
-              <i className="bi bi-speedometer2 mr-1"></i>{avgEff.toFixed(1)}%
-            </span>
-          )}
-          {avgScrap !== null && (
-            <span className={`text-xs font-medium ${sc.text}`}>
-              <i className="bi bi-exclamation-triangle mr-1"></i>{avgScrap.toFixed(1)}%
-            </span>
-          )}
-          <span className="text-xs text-gray-400">
-            <i className="bi bi-box-seam mr-1"></i>{outputTotal.toLocaleString()} {outputLabel.toLowerCase()}
-          </span>
-          {cellTarget > 0 && (
-            <span className={`text-xs font-medium ${buCc.text}`}>
-              <i className="bi bi-bullseye mr-1"></i>
-              {Math.round(cellProjected)} / {Math.round(cellTarget)} BUs
-              {cellRate !== null && <span className="opacity-70 ml-1">({Math.round(cellRate * 100)}%)</span>}
-            </span>
-          )}
-        </div>
-        <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
-      </button>
+      <div className="overflow-x-auto">
+        <table className="w-full text-sm">
+          <thead>
+            {/* ── Cell summary row — each KPI sits above its column ── */}
+            <tr
+              onClick={() => setOpen(!open)}
+              className="bg-gray-800 border-b border-gray-700 cursor-pointer hover:bg-gray-750 transition-colors"
+            >
+              {/* Machine col → cell name */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                <div className="flex items-center gap-2">
+                  <i className={`bi ${icon} ${color}`}></i>
+                  <span className="text-white font-semibold text-sm">{title}</span>
+                </div>
+              </td>
+              {/* Status col → running count */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                <span className="text-xs text-gray-400">{running}/{machines.length} running</span>
+              </td>
+              {/* Efficiency col */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                {avgEff !== null && (
+                  <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
+                )}
+              </td>
+              {/* Scrap Rate col */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                {avgScrap !== null && (
+                  <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
+                )}
+              </td>
+              {/* BU Run Rate col */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                {cellTarget > 0 ? (
+                  <span className={`text-sm font-semibold ${buCc.text}`}>
+                    {Math.round(cellProjected)}{" "}
+                    <span className="text-xs font-normal opacity-60">/ {Math.round(cellTarget)} BUs</span>
+                    {cellRate !== null && (
+                      <span className="opacity-70 ml-1 text-xs">({Math.round(cellRate * 100)}%)</span>
+                    )}
+                  </span>
+                ) : null}
+              </td>
+              {/* Speed, Swabs, Output — empty */}
+              <td className="px-4 py-3" />
+              <td className="px-4 py-3" />
+              <td className="px-4 py-3" />
+              {/* Last Sync col → collapse chevron */}
+              <td className="px-4 py-3 text-right">
+                <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
+              </td>
+            </tr>
 
-      {open && (
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead className="bg-gray-800/70">
-              <tr>
+            {/* ── Column headers ── */}
+            {open && (
+              <tr className="bg-gray-800/70 border-b border-gray-700/50">
                 {colHeaders.map((label) => (
-                  <th key={label} className="px-4 py-3 text-left text-sm font-medium text-gray-400">
+                  <th key={label} className="px-4 py-2 text-left text-xs font-medium text-gray-500">
                     {label}
                   </th>
                 ))}
               </tr>
-            </thead>
+            )}
+          </thead>
+
+          {open && (
             <tbody className="divide-y divide-gray-700/50">
               {machines.map((m) => (
                 <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} onClick={() => onMachineClick(m.machine)} />
@@ -286,9 +308,9 @@ function CellSection({
                 </tr>
               )}
             </tbody>
-          </table>
-        </div>
-      )}
+          )}
+        </table>
+      </div>
     </div>
   );
 }
