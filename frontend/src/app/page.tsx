@@ -214,7 +214,8 @@ function CellSection({
   const [open, setOpen] = useState(defaultOpen);
 
   // Compute cell-level stats
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, outputTotal = 0;
+  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
+  let swabsTotal = 0, outputTotal = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
   let cellProjected = 0, cellTarget = 0;
   for (const m of machines) {
@@ -222,6 +223,7 @@ function CellSection({
     if (s && s !== "offline" && s !== "error") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
+    if (m.machineStatus?.Swaps)      swabsTotal  += m.machineStatus.Swaps;
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
     if (m.machineStatus?.Speed)      { speedSum += m.machineStatus.Speed; speedCount++; }
     if (m.speedTarget)               { speedTargetSum += m.speedTarget; speedTargetCount++; }
@@ -267,9 +269,16 @@ function CellSection({
                   <span className="text-white font-semibold text-sm">{title}</span>
                 </div>
               </td>
-              {/* Status col → running count */}
+              {/* Status col → running count, traffic-light colored */}
               <td className="px-4 py-3 whitespace-nowrap">
-                <span className="text-xs text-gray-400">{running}/{machines.length} running</span>
+                <span className={`text-xs font-semibold ${
+                  machines.length === 0 ? "text-gray-500"
+                  : running === machines.length ? "text-green-400"
+                  : running > 0            ? "text-yellow-400"
+                  :                          "text-red-400"
+                }`}>
+                  {running}/{machines.length} running
+                </span>
               </td>
               {/* Efficiency col */}
               <td className="px-4 py-3 whitespace-nowrap">
@@ -304,9 +313,24 @@ function CellSection({
                   </span>
                 )}
               </td>
-              {/* Swabs, Output — empty */}
-              <td className="px-4 py-3" />
-              <td className="px-4 py-3" />
+              {/* Total Swabs col */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                {swabsTotal > 0 && (
+                  <span className="text-sm font-semibold text-white">
+                    {swabsTotal.toLocaleString()}{" "}
+                    <span className="text-xs font-normal opacity-50">swabs</span>
+                  </span>
+                )}
+              </td>
+              {/* Total Output col */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                {outputTotal > 0 && (
+                  <span className="text-sm font-semibold text-white">
+                    {outputTotal.toLocaleString()}{" "}
+                    <span className="text-xs font-normal opacity-50">{outputLabel.toLowerCase()}</span>
+                  </span>
+                )}
+              </td>
               {/* Last Sync col → collapse chevron */}
               <td className="px-4 py-3 text-right">
                 <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
