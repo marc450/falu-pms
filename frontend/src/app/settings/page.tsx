@@ -610,11 +610,11 @@ function MachineTargetRow({
   onSetTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
   onSaveTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
 }) {
-  const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
+  const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null, speed_target: null };
   return (
     <tr className="border-t border-gray-700/50 hover:bg-gray-800/30">
       <td className="px-4 py-2.5 font-bold text-cyan-400 text-sm whitespace-nowrap">{m.machine_code}</td>
-      {/* Efficiency group — cyan tint */}
+      {/* Uptime group — cyan tint */}
       <td className="px-3 py-2.5 bg-cyan-900/5">
         <TargetInput value={tgt.efficiency_good} onChange={v => onSetTarget(m.machine_code, "efficiency_good", v)} onSave={v => onSaveTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 82" />
       </td>
@@ -629,8 +629,12 @@ function MachineTargetRow({
         <TargetInput value={tgt.scrap_mediocre} onChange={v => onSetTarget(m.machine_code, "scrap_mediocre", v)} onSave={v => onSaveTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
       </td>
       {/* BU target — purple tint */}
-      <td className="px-3 py-2.5 bg-purple-900/5">
+      <td className="px-3 py-2.5 bg-purple-900/5 border-r border-gray-700/50">
         <TargetInput value={tgt.bu_target} onChange={v => onSetTarget(m.machine_code, "bu_target", v)} onSave={v => onSaveTarget(m.machine_code, "bu_target", v)} unit="BUs" placeholder="e.g. 180" />
+      </td>
+      {/* Speed target — teal tint */}
+      <td className="px-3 py-2.5 bg-teal-900/5">
+        <TargetInput value={tgt.speed_target} onChange={v => onSetTarget(m.machine_code, "speed_target", v)} onSave={v => onSaveTarget(m.machine_code, "speed_target", v)} unit="p/m" placeholder="e.g. 2800" />
       </td>
     </tr>
   );
@@ -662,7 +666,7 @@ function CellGroup({
               </th>
               <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-cyan-500 bg-cyan-900/20">
                 <span className="text-xs font-semibold text-cyan-300 tracking-wide uppercase">
-                  <i className="bi bi-speedometer2 mr-1.5"></i>Efficiency Thresholds
+                  <i className="bi bi-speedometer2 mr-1.5"></i>Uptime Thresholds
                 </span>
               </th>
               <th colSpan={2} className="px-3 pt-2.5 pb-1 text-center border-b-2 border-orange-500 bg-orange-900/20">
@@ -673,6 +677,11 @@ function CellGroup({
               <th className="px-3 pt-2.5 pb-1 text-center border-b-2 border-purple-500 bg-purple-900/20">
                 <span className="text-xs font-semibold text-purple-300 tracking-wide uppercase">
                   <i className="bi bi-bullseye mr-1.5"></i>Output Target
+                </span>
+              </th>
+              <th className="px-3 pt-2.5 pb-1 text-center border-b-2 border-teal-500 bg-teal-900/20">
+                <span className="text-xs font-semibold text-teal-300 tracking-wide uppercase">
+                  <i className="bi bi-speedometer mr-1.5"></i>Speed Target
                 </span>
               </th>
             </tr>
@@ -701,8 +710,11 @@ function CellGroup({
                   Mediocre <span className="text-gray-500 font-normal">(≤)</span>
                 </span>
               </th>
-              <th className="px-3 py-1.5 text-center bg-purple-900/10 border-l border-gray-700/50">
+              <th className="px-3 py-1.5 text-center bg-purple-900/10 border-l border-gray-700/50 border-r border-gray-700/50">
                 <span className="text-xs font-medium text-purple-300">BUs / shift</span>
+              </th>
+              <th className="px-3 py-1.5 text-center bg-teal-900/10 border-l border-gray-700/50">
+                <span className="text-xs font-medium text-teal-300">pcs/min</span>
               </th>
             </tr>
           </thead>
@@ -745,6 +757,7 @@ function ThresholdsTab() {
           scrap_good:          m.scrap_good,
           scrap_mediocre:      m.scrap_mediocre,
           bu_target:           m.bu_target || null,
+          speed_target:        m.speed_target || null,
         };
       }
       setTargets(init);
@@ -757,7 +770,7 @@ function ThresholdsTab() {
 
   // Auto-save individual machine target field on blur
   const saveTargetField = (code: string, field: keyof MachineTargets, val: number | null) => {
-    const current = targets[code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
+    const current = targets[code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null, speed_target: null };
     updateMachineTargets(code, { ...current, [field]: val }).catch(console.error);
   };
 

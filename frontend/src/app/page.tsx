@@ -11,6 +11,8 @@ import {
   applyScrapColor,
   applyMachineEfficiencyColor,
   applyMachineScrapColor,
+  applyMachineSpeedColor,
+  applySpeedHeaderColor,
   applyRunRateColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
@@ -29,6 +31,7 @@ type DashboardMachine = MachineData & {
   scrapGood?: number | null;
   scrapMediocre?: number | null;
   buTarget?: number | null;
+  speedTarget?: number | null;
 };
 
 // BU run rate: projected BUs at end of shift using user's formula
@@ -43,6 +46,8 @@ function calcBuRunRate(
 ): { projected: number; target: number; rate: number } | null {
   const target = m.buTarget;
   if (!target || target <= 0) return null;
+  // Don't project for offline machines — they skew the floor aggregate to 0 %
+  if (!m.machineStatus || m.machineStatus.Status === "offline") return null;
   const elapsedMs  = Date.now() - shiftStartedAt;
   const elapsed    = elapsedMs / 60000;               // ms → minutes
   if (elapsed <= 0) return null;
@@ -135,8 +140,12 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
   const status   = getStatusColor(m.machineStatus?.Status);
   const effColor = applyMachineEfficiencyColor(m.machineStatus?.Efficiency ?? null, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
   const scpColor = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
+  const spdColor = applyMachineSpeedColor(m.machineStatus?.Speed ?? null, m.speedTarget ?? null);
   const buRate   = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
   const buColor  = applyRunRateColor(buRate?.rate ?? null);
+
+  // In rows: suppress green — only yellow and red signal problems; good = plain white
+  const toRowColor = (c: string) => c === "text-green-400" ? "text-white" : c;
 
   return (
     <tr onClick={onClick} className="cursor-pointer hover:bg-white/5 transition-colors">
@@ -147,18 +156,18 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
           {formatStatus(m.machineStatus?.Status)}
         </span>
       </td>
-      <td className={`px-4 py-3 font-medium ${effColor.text}`}>
+      <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
         {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
       </td>
-      <td className={`px-4 py-3 font-medium ${scpColor.text}`}>
+      <td className={`px-4 py-3 font-medium ${toRowColor(scpColor.text)}`}>
         {m.machineStatus?.Reject ? `${m.machineStatus.Reject.toFixed(1)}%` : ""}
       </td>
-      <td className={`px-4 py-3 font-medium ${buColor.text}`}>
+      <td className={`px-4 py-3 font-medium ${toRowColor(buColor.text)}`}>
         {buRate !== null
           ? <>{Math.round(buRate.projected)} <span className="text-xs font-normal opacity-60">/ {buRate.target} BUs</span></>
           : m.buTarget ? <span className="text-gray-600">—</span> : ""}
       </td>
-      <td className="px-4 py-3">
+      <td className={`px-4 py-3 font-medium ${spdColor.text}`}>
         {m.machineStatus?.Speed ? (
           <>{m.machineStatus.Speed.toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
         ) : null}
@@ -206,6 +215,7 @@ function CellSection({
 
   // Compute cell-level stats
   let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0, outputTotal = 0;
+  let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
   let cellProjected = 0, cellTarget = 0;
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
@@ -213,15 +223,20 @@ function CellSection({
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
+    if (m.machineStatus?.Speed)      { speedSum += m.machineStatus.Speed; speedCount++; }
+    if (m.speedTarget)               { speedTargetSum += m.speedTarget; speedTargetCount++; }
     const br = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
     if (br) { cellProjected += br.projected; cellTarget += br.target; }
   }
   const avgEff    = machines.length > 0 ? (effCount   > 0 ? effSum   / effCount   : 0) : null;
   const avgScrap  = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
+  const avgSpeed  = speedCount > 0 ? speedSum / speedCount : null;
+  const avgSpeedTarget = speedTargetCount > 0 ? speedTargetSum / speedTargetCount : null;
   const cellRate  = cellTarget > 0 ? cellProjected / cellTarget : null;
   const ec   = applyEfficiencyColor(avgEff,   thresholds);
   const sc   = applyScrapColor     (avgScrap, thresholds);
   const buCc = applyRunRateColor   (cellRate);
+  const spCc = applySpeedHeaderColor(avgSpeed, avgSpeedTarget);
 
   // Derive output label from machines' packing formats
   const formatSet = new Set(machines.map(m => m.packingFormat).filter((f): f is PackingFormat => !!f));
@@ -231,7 +246,7 @@ function CellSection({
     : "Output";
 
   const colHeaders = [
-    "Machine", "Status", "Efficiency", "Scrap Rate", "BU Run Rate",
+    "Machine", "Status", "Uptime", "Scrap Rate", "BU Run Rate",
     "Speed", `Total Swabs`, `Total ${outputLabel}`, "Last Sync",
   ];
 
@@ -280,8 +295,16 @@ function CellSection({
                   </span>
                 ) : null}
               </td>
-              {/* Speed, Swabs, Output — empty */}
-              <td className="px-4 py-3" />
+              {/* Speed col → avg speed with color if targets configured */}
+              <td className="px-4 py-3 whitespace-nowrap">
+                {avgSpeed !== null && (
+                  <span className={`text-sm font-semibold ${spCc.text}`}>
+                    {Math.round(avgSpeed).toLocaleString()}{" "}
+                    <span className="text-xs font-normal opacity-60">pcs/min</span>
+                  </span>
+                )}
+              </td>
+              {/* Swabs, Output — empty */}
               <td className="px-4 py-3" />
               <td className="px-4 py-3" />
               {/* Last Sync col → collapse chevron */}
@@ -377,12 +400,15 @@ function ParkSummaryTiles({
 
   if (total === 0) return null;
 
+  // Whether any machine has a BU target configured (regardless of online status)
+  const hasAnyBuTarget = all.some(m => m.buTarget && m.buTarget > 0);
+
   const buValue = floorTarget > 0
     ? `${Math.round(floorProjected)} / ${Math.round(floorTarget)}`
     : "—";
   const buSub = floorRate !== null
     ? `${Math.round(floorRate * 100)}% of target · BUs/shift`
-    : floorTarget > 0 ? "Awaiting shift data" : "No targets set";
+    : hasAnyBuTarget ? "No live data" : "No targets set";
 
   return (
     <div className="grid grid-cols-4 gap-3 mb-6">
@@ -396,7 +422,7 @@ function ParkSummaryTiles({
       />
       <SummaryTile
         icon="bi-speedometer2"
-        label="Avg Efficiency"
+        label="Avg Uptime"
         value={avgEff !== null ? `${avgEff.toFixed(1)}%` : "—"}
         sub={avgEff !== null
           ? avgEff >= thresholds.efficiency.good ? "Good"
@@ -476,6 +502,7 @@ export default function Dashboard() {
         scrapGood:         row.scrap_good ?? null,
         scrapMediocre:     row.scrap_mediocre ?? null,
         buTarget:          row.bu_target ?? null,
+        speedTarget:       row.speed_target ?? null,
       };
     }
 
@@ -495,6 +522,7 @@ export default function Dashboard() {
           scrapGood:         merged[code]?.scrapGood ?? null,
           scrapMediocre:     merged[code]?.scrapMediocre ?? null,
           buTarget:          merged[code]?.buTarget ?? null,
+          speedTarget:       merged[code]?.speedTarget ?? null,
         };
       }
     } catch {
@@ -626,7 +654,7 @@ export default function Dashboard() {
                     <SortHeader
                       key={col}
                       col={col}
-                      label={col === "Swaps" ? "Total Swabs" : col === "Boxes" ? "Total Blisters" : col === "LastSync" ? "Last Sync" : col}
+                      label={col === "Swaps" ? "Total Swabs" : col === "Boxes" ? "Total Blisters" : col === "LastSync" ? "Last Sync" : col === "Efficiency" ? "Uptime" : col}
                       sortColumn={sortColumn}
                       sortAsc={sortAsc}
                       onSort={handleSort}

@@ -109,6 +109,7 @@ export interface RegisteredMachine {
   scrap_good: number | null;
   scrap_mediocre: number | null;
   bu_target: number | null;
+  speed_target: number | null;
 }
 
 export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
@@ -116,7 +117,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target"
+      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, speed_target"
     )
     .order("machine_code");
 
@@ -130,6 +131,7 @@ export interface MachineTargets {
   scrap_good: number | null;
   scrap_mediocre: number | null;
   bu_target: number | null;
+  speed_target: number | null;
 }
 
 export async function updateMachineTargets(
@@ -295,6 +297,23 @@ export function applyRunRateColor(rate: number | null): { text: string; border: 
   if (rate >= 0.95)  return { text: "text-green-400",  border: "border-green-600"  };
   if (rate >= 0.80)  return { text: "text-yellow-400", border: "border-yellow-600" };
   return                    { text: "text-red-400",    border: "border-red-600"    };
+}
+
+// Speed color for individual machine rows — on target shows plain white (row rule: no green in rows)
+export function applyMachineSpeedColor(val: number | null, target: number | null): { text: string } {
+  if (val === null || !target || target <= 0) return { text: "text-gray-300" };
+  if (val >= target)           return { text: "text-white"       };  // at/above target → white
+  if (val >= target * 0.9)     return { text: "text-yellow-400"  };  // within 10% → yellow
+  return                              { text: "text-red-400"     };   // >10% below → red
+}
+
+// Speed color for cell header — on target shows green (headers keep traffic-light coloring)
+export function applySpeedHeaderColor(avgSpeed: number | null, avgTarget: number | null): { text: string } {
+  if (avgSpeed === null || !avgTarget || avgTarget <= 0) return { text: "text-gray-500" };
+  const ratio = avgSpeed / avgTarget;
+  if (ratio >= 1.0)  return { text: "text-green-400"  };
+  if (ratio >= 0.9)  return { text: "text-yellow-400" };
+  return                    { text: "text-red-400"    };
 }
 
 export async function updateCellOrder(
