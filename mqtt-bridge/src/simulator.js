@@ -82,12 +82,13 @@ function simulateTick(machine) {
   const shift = machine.shifts[machine.activeShift];
   if (!shift) return;
 
-  // Increment time (in minutes, ticking proportionally)
-  shift.productionTime += 1;
+  // Increment time in minutes: each tick = SEND_FREQUENCY ms
+  const tickMinutes = SEND_FREQUENCY / 60000;
+  shift.productionTime += tickMinutes;
 
   // Random idle moments
   if (Math.random() < 0.05) {
-    shift.idleTime += 1;
+    shift.idleTime += tickMinutes;
   }
 
   // Production
