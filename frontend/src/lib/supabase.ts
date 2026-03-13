@@ -244,10 +244,11 @@ export async function fetchThresholds(): Promise<Thresholds> {
 
 export async function saveThresholds(t: Thresholds): Promise<void> {
   const sb = getSupabase();
+  const opts = { onConflict: "key" } as const;
   await Promise.all([
-    sb.from("app_settings").upsert({ key: "threshold_efficiency", value: t.efficiency, updated_at: new Date().toISOString() }),
-    sb.from("app_settings").upsert({ key: "threshold_scrap",      value: t.scrap,      updated_at: new Date().toISOString() }),
-    sb.from("app_settings").upsert({ key: "threshold_bu",         value: t.bu,         updated_at: new Date().toISOString() }),
+    sb.from("app_settings").upsert({ key: "threshold_efficiency", value: t.efficiency, updated_at: new Date().toISOString() }, opts),
+    sb.from("app_settings").upsert({ key: "threshold_scrap",      value: t.scrap,      updated_at: new Date().toISOString() }, opts),
+    sb.from("app_settings").upsert({ key: "threshold_bu",         value: t.bu,         updated_at: new Date().toISOString() }, opts),
   ]);
 }
 
