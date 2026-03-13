@@ -341,6 +341,7 @@ function CellSection({
               {/* Status col → running count, traffic-light colored */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[1].minW}px` }}>
                 <div className="flex flex-col gap-0.5">
+                  {!open && <span className="text-[10px] text-gray-500">{colDefs[1].label}</span>}
                   <span className={`text-xs font-semibold ${
                     machines.length === 0 ? "text-gray-500"
                     : running === machines.length ? "text-green-400"
@@ -349,15 +350,14 @@ function CellSection({
                   }`}>
                     {running}/{machines.length} running
                   </span>
-                  {!open && <span className="text-[10px] text-gray-500">{colDefs[1].label}</span>}
                 </div>
               </td>
               {/* Uptime col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[2].minW}px` }}>
                 {avgEff !== null && (
                   <div className="flex flex-col gap-0.5">
-                    <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[2].label}</span>}
+                    <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
                   </div>
                 )}
               </td>
@@ -365,8 +365,8 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[3].minW}px` }}>
                 {avgScrap !== null && (
                   <div className="flex flex-col gap-0.5">
-                    <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[3].label}</span>}
+                    <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
                   </div>
                 )}
               </td>
@@ -374,6 +374,7 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[4].minW}px` }}>
                 {cellTarget > 0 ? (
                   <div className="flex flex-col gap-0.5">
+                    {!open && <span className="text-[10px] text-gray-500">{colDefs[4].label}</span>}
                     <span className={`text-sm font-semibold ${buCc.text}`}>
                       {Math.round(cellProjected)}{" "}
                       <span className="text-xs font-normal opacity-60">/ {Math.round(cellTarget)} BUs</span>
@@ -381,7 +382,6 @@ function CellSection({
                         <span className="opacity-70 ml-1 text-xs">({Math.round(cellRate * 100)}%)</span>
                       )}
                     </span>
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[4].label}</span>}
                   </div>
                 ) : null}
               </td>
@@ -389,11 +389,11 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[5].minW}px` }}>
                 {avgSpeed !== null && (
                   <div className="flex flex-col gap-0.5">
+                    {!open && <span className="text-[10px] text-gray-500">{colDefs[5].label}</span>}
                     <span className={`text-sm font-semibold ${spCc.text}`}>
                       {Math.round(avgSpeed).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-60">pcs/min</span>
                     </span>
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[5].label}</span>}
                   </div>
                 )}
               </td>
@@ -401,11 +401,11 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[6].minW}px` }}>
                 {swabsTotal > 0 && (
                   <div className="flex flex-col gap-0.5">
+                    {!open && <span className="text-[10px] text-gray-500">{colDefs[6].label}</span>}
                     <span className="text-sm font-semibold text-white">
                       {swabsTotal.toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-50">swabs</span>
                     </span>
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[6].label}</span>}
                   </div>
                 )}
               </td>
@@ -413,11 +413,11 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[7].minW}px` }}>
                 {outputTotal > 0 && (
                   <div className="flex flex-col gap-0.5">
+                    {!open && <span className="text-[10px] text-gray-500">{colDefs[7].label}</span>}
                     <span className="text-sm font-semibold text-white">
                       {outputTotal.toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-50">{outputLabel.toLowerCase()}</span>
                     </span>
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[7].label}</span>}
                   </div>
                 )}
               </td>
