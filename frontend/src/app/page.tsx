@@ -47,8 +47,9 @@ function calcBuRunRate(
 ): { projected: number; target: number; rate: number } | null {
   const target = m.buTarget;
   if (!target || target <= 0) return null;
-  // Don't project for offline machines — they skew the floor aggregate to 0 %
-  if (!m.machineStatus || m.machineStatus.Status === "offline") return null;
+  // Only project for actively running machines
+  const s = m.machineStatus?.Status?.toLowerCase();
+  if (!s || s === "offline" || s === "idle" || s === "error") return null;
   const elapsedMs  = Date.now() - shiftStartedAt;
   const elapsed    = elapsedMs / 60000;               // ms → minutes
   if (elapsed <= 0) return null;
