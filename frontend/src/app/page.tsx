@@ -387,7 +387,7 @@ function ParkSummaryTiles({
       />
       <SummaryTile
         icon="bi-bullseye"
-        label="Floor BU Run Rate"
+        label="Total BU Run Rate"
         value={buValue}
         sub={buSub}
         colorClass={buc.text}
