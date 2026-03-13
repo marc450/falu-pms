@@ -352,52 +352,70 @@ function CellSection({
               {/* Uptime col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[2].minW}px` }}>
                 {avgEff !== null && (
-                  <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
+                    <span className="text-[10px] text-gray-500">Uptime</span>
+                  </div>
                 )}
               </td>
               {/* Scrap Rate col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[3].minW}px` }}>
                 {avgScrap !== null && (
-                  <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
+                    <span className="text-[10px] text-gray-500">Scrap</span>
+                  </div>
                 )}
               </td>
               {/* BU Run Rate col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[4].minW}px` }}>
                 {cellTarget > 0 ? (
-                  <span className={`text-sm font-semibold ${buCc.text}`}>
-                    {Math.round(cellProjected)}{" "}
-                    <span className="text-xs font-normal opacity-60">/ {Math.round(cellTarget)} BUs</span>
-                    {cellRate !== null && (
-                      <span className="opacity-70 ml-1 text-xs">({Math.round(cellRate * 100)}%)</span>
-                    )}
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className={`text-sm font-semibold ${buCc.text}`}>
+                      {Math.round(cellProjected)}{" "}
+                      <span className="text-xs font-normal opacity-60">/ {Math.round(cellTarget)} BUs</span>
+                      {cellRate !== null && (
+                        <span className="opacity-70 ml-1 text-xs">({Math.round(cellRate * 100)}%)</span>
+                      )}
+                    </span>
+                    <span className="text-[10px] text-gray-500">Output</span>
+                  </div>
                 ) : null}
               </td>
               {/* Speed col → avg speed with color if targets configured */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[5].minW}px` }}>
                 {avgSpeed !== null && (
-                  <span className={`text-sm font-semibold ${spCc.text}`}>
-                    {Math.round(avgSpeed).toLocaleString()}{" "}
-                    <span className="text-xs font-normal opacity-60">pcs/min</span>
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className={`text-sm font-semibold ${spCc.text}`}>
+                      {Math.round(avgSpeed).toLocaleString()}{" "}
+                      <span className="text-xs font-normal opacity-60">pcs/min</span>
+                    </span>
+                    <span className="text-[10px] text-gray-500">Avg Speed</span>
+                  </div>
                 )}
               </td>
               {/* Total Swabs col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[6].minW}px` }}>
                 {swabsTotal > 0 && (
-                  <span className="text-sm font-semibold text-white">
-                    {swabsTotal.toLocaleString()}{" "}
-                    <span className="text-xs font-normal opacity-50">swabs</span>
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-semibold text-white">
+                      {swabsTotal.toLocaleString()}{" "}
+                      <span className="text-xs font-normal opacity-50">swabs</span>
+                    </span>
+                    <span className="text-[10px] text-gray-500">Total Swabs</span>
+                  </div>
                 )}
               </td>
               {/* Total Output col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[7].minW}px` }}>
                 {outputTotal > 0 && (
-                  <span className="text-sm font-semibold text-white">
-                    {outputTotal.toLocaleString()}{" "}
-                    <span className="text-xs font-normal opacity-50">{outputLabel.toLowerCase()}</span>
-                  </span>
+                  <div className="flex flex-col gap-0.5">
+                    <span className="text-sm font-semibold text-white">
+                      {outputTotal.toLocaleString()}{" "}
+                      <span className="text-xs font-normal opacity-50">{outputLabel.toLowerCase()}</span>
+                    </span>
+                    <span className="text-[10px] text-gray-500">Total Output</span>
+                  </div>
                 )}
               </td>
               {/* Last Sync col → collapse chevron */}
