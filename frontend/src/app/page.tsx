@@ -271,7 +271,7 @@ function CellSection({
   let cellProjected = 0, cellTarget = 0;
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
-    if (s && s !== "offline" && s !== "error") running++;
+    if (s === "run" || s === "running") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
     if (m.machineStatus?.Swaps)      swabsTotal  += m.machineStatus.Swaps;
@@ -479,7 +479,7 @@ function ParkSummaryTiles({
   let floorProjected = 0, floorTarget = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
-    if (s && s !== "offline" && s !== "error") running++;
+    if (s === "run" || s === "running") running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
     if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
     const br = calcBuRunRate(m, effectiveShiftMins, shiftStartedAt);
