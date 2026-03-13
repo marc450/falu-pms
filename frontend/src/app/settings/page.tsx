@@ -471,10 +471,11 @@ function MachineChip({
 // Thresholds tab
 // ─────────────────────────────────────────────────────────────
 function ThresholdRow({
-  label, sublabel, value, onChange, unit, inverted, max,
+  label, sublabel, value, onChange, onSave, unit, inverted, max,
 }: {
   label: string; sublabel: string; value: number;
-  onChange: (v: number) => void; unit: string; inverted?: boolean; max?: number;
+  onChange: (v: number) => void; onSave?: (v: number) => void;
+  unit: string; inverted?: boolean; max?: number;
 }) {
   const [display, setDisplay] = useState(String(value));
 
@@ -507,6 +508,7 @@ function ThresholdRow({
             } else {
               onChange(n);
               setDisplay(String(n));
+              onSave?.(n);
             }
           }}
           className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
@@ -548,9 +550,10 @@ function ThresholdPreview({ good, mediocre, inverted, unit = "%" }: { good: numb
 
 // Compact numeric input for the targets table
 function TargetInput({
-  value, onChange, unit, placeholder,
+  value, onChange, onSave, unit, placeholder,
 }: {
   value: number | null; onChange: (v: number | null) => void;
+  onSave?: (val: number | null) => void;
   unit?: string; placeholder?: string;
 }) {
   const [display, setDisplay] = useState(value !== null ? String(value) : "");
@@ -580,8 +583,10 @@ function TargetInput({
         onBlur={(e) => {
           focused.current = false;
           const n = parseFloat(e.target.value);
-          if (e.target.value === "" || isNaN(n)) { setDisplay(""); onChange(null); }
-          else { onChange(n); setDisplay(String(n)); }
+          const final = (e.target.value === "" || isNaN(n)) ? null : n;
+          if (final === null) { setDisplay(""); onChange(null); }
+          else { onChange(final); setDisplay(String(final)); }
+          onSave?.(final);
         }}
         className="w-16 bg-gray-900 border border-gray-700 rounded px-2 py-1 text-xs text-white text-right focus:border-cyan-500 outline-none placeholder-gray-600"
       />
@@ -594,11 +599,12 @@ function TargetInput({
 // Module-level so React never re-mounts them on parent re-render
 // ─────────────────────────────────────────────────────────────
 function MachineTargetRow({
-  m, targets, onSetTarget,
+  m, targets, onSetTarget, onSaveTarget,
 }: {
   m: RegisteredMachine;
   targets: Record<string, MachineTargets>;
   onSetTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
+  onSaveTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
 }) {
   const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
   return (
@@ -606,33 +612,34 @@ function MachineTargetRow({
       <td className="px-4 py-2.5 font-bold text-cyan-400 text-sm whitespace-nowrap">{m.machine_code}</td>
       {/* Efficiency group — cyan tint */}
       <td className="px-3 py-2.5 bg-cyan-900/5">
-        <TargetInput value={tgt.efficiency_good} onChange={v => onSetTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 82" />
+        <TargetInput value={tgt.efficiency_good} onChange={v => onSetTarget(m.machine_code, "efficiency_good", v)} onSave={v => onSaveTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 82" />
       </td>
       <td className="px-3 py-2.5 bg-cyan-900/5 border-r border-gray-700/50">
-        <TargetInput value={tgt.efficiency_mediocre} onChange={v => onSetTarget(m.machine_code, "efficiency_mediocre", v)} unit="%" placeholder="e.g. 72" />
+        <TargetInput value={tgt.efficiency_mediocre} onChange={v => onSetTarget(m.machine_code, "efficiency_mediocre", v)} onSave={v => onSaveTarget(m.machine_code, "efficiency_mediocre", v)} unit="%" placeholder="e.g. 72" />
       </td>
       {/* Scrap group — orange tint */}
       <td className="px-3 py-2.5 bg-orange-900/5">
-        <TargetInput value={tgt.scrap_good} onChange={v => onSetTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 4" />
+        <TargetInput value={tgt.scrap_good} onChange={v => onSetTarget(m.machine_code, "scrap_good", v)} onSave={v => onSaveTarget(m.machine_code, "scrap_good", v)} unit="%" placeholder="e.g. 4" />
       </td>
       <td className="px-3 py-2.5 bg-orange-900/5 border-r border-gray-700/50">
-        <TargetInput value={tgt.scrap_mediocre} onChange={v => onSetTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
+        <TargetInput value={tgt.scrap_mediocre} onChange={v => onSetTarget(m.machine_code, "scrap_mediocre", v)} onSave={v => onSaveTarget(m.machine_code, "scrap_mediocre", v)} unit="%" placeholder="e.g. 5" />
       </td>
       {/* BU target — purple tint */}
       <td className="px-3 py-2.5 bg-purple-900/5">
-        <TargetInput value={tgt.bu_target} onChange={v => onSetTarget(m.machine_code, "bu_target", v)} unit="BUs" placeholder="e.g. 180" />
+        <TargetInput value={tgt.bu_target} onChange={v => onSetTarget(m.machine_code, "bu_target", v)} onSave={v => onSaveTarget(m.machine_code, "bu_target", v)} unit="BUs" placeholder="e.g. 180" />
       </td>
     </tr>
   );
 }
 
 function CellGroup({
-  title, ms, targets, onSetTarget,
+  title, ms, targets, onSetTarget, onSaveTarget,
 }: {
   title: string;
   ms: RegisteredMachine[];
   targets: Record<string, MachineTargets>;
   onSetTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
+  onSaveTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
 }) {
   if (ms.length === 0) return null;
   return (
@@ -697,7 +704,7 @@ function CellGroup({
           </thead>
           <tbody>
             {ms.map(m => (
-              <MachineTargetRow key={m.machine_code} m={m} targets={targets} onSetTarget={onSetTarget} />
+              <MachineTargetRow key={m.machine_code} m={m} targets={targets} onSetTarget={onSetTarget} onSaveTarget={onSaveTarget} />
             ))}
           </tbody>
         </table>
@@ -715,8 +722,6 @@ function ThresholdsTab() {
   const [cells, setCells] = useState<ProductionCell[]>([]);
   const [targets, setTargets] = useState<Record<string, MachineTargets>>({});
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saved, setSaved] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -746,19 +751,15 @@ function ThresholdsTab() {
     setTargets(prev => ({ ...prev, [code]: { ...prev[code], [field]: val } }));
   };
 
-  const handleSaveAll = async () => {
-    setSaving(true);
-    try {
-      await Promise.all([
-        saveThresholds(t),
-        ...machines.map(m => updateMachineTargets(m.machine_code, targets[m.machine_code] ?? {
-          efficiency_good: null, efficiency_mediocre: null,
-          scrap_good: null, scrap_mediocre: null, bu_target: null,
-        })),
-      ]);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    } finally { setSaving(false); }
+  // Auto-save individual machine target field on blur
+  const saveTargetField = (code: string, field: keyof MachineTargets, val: number | null) => {
+    const current = targets[code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null };
+    updateMachineTargets(code, { ...current, [field]: val }).catch(console.error);
+  };
+
+  // Auto-save shift length on blur — receives the new value directly to avoid stale closure
+  const saveShiftLength = (hours: number) => {
+    saveThresholds({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(hours * 60) } }).catch(console.error);
   };
 
   if (loading) return (
@@ -776,22 +777,12 @@ function ThresholdsTab() {
 
   return (
     <div className="space-y-5">
-      {/* ── Top toolbar ───────────────────────────────────────── */}
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-gray-400">
-          Set thresholds and BU targets per machine. Leave a field empty to disable that metric.
-          Traffic light:{" "}
-          <span className="text-green-400">good</span> / <span className="text-yellow-400">mediocre</span> / <span className="text-red-400">below</span>.
-        </p>
-        <button
-          onClick={handleSaveAll}
-          disabled={saving}
-          className="flex items-center gap-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white text-sm px-5 py-2 rounded-lg transition-colors shrink-0 ml-6"
-        >
-          {saving ? <span className="animate-spin text-xs">⟳</span> : <i className="bi bi-check-lg"></i>}
-          {saved ? "Saved!" : saving ? "Saving…" : "Save Settings"}
-        </button>
-      </div>
+      {/* ── Description ───────────────────────────────────────── */}
+      <p className="text-sm text-gray-400">
+        Set thresholds and BU targets per machine. Changes save automatically when you leave a field.
+        Traffic light:{" "}
+        <span className="text-green-400">good</span> / <span className="text-yellow-400">mediocre</span> / <span className="text-red-400">below</span>.
+      </p>
 
       {/* ── Shift length ──────────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-sm">
@@ -807,6 +798,7 @@ function ThresholdsTab() {
             sublabel="Hours per shift"
             value={t.bu.shiftLengthMinutes / 60}
             onChange={(v) => setT({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(v * 60) } })}
+            onSave={saveShiftLength}
             unit="hrs"
             max={24}
           />
@@ -819,10 +811,10 @@ function ThresholdsTab() {
       ) : (
         <div className="space-y-4">
           {cells.map(cell => (
-            <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} targets={targets} onSetTarget={setTarget} />
+            <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} targets={targets} onSetTarget={setTarget} onSaveTarget={saveTargetField} />
           ))}
           {unassigned.length > 0 && (
-            <CellGroup title="Unassigned" ms={unassigned} targets={targets} onSetTarget={setTarget} />
+            <CellGroup title="Unassigned" ms={unassigned} targets={targets} onSetTarget={setTarget} onSaveTarget={saveTargetField} />
           )}
         </div>
       )}
