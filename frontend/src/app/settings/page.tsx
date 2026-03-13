@@ -786,12 +786,6 @@ function ThresholdsTab() {
 
   return (
     <div className="space-y-5">
-      {/* ── Description ───────────────────────────────────────── */}
-      <p className="text-sm text-gray-400">
-        Set thresholds and BU targets per machine. Changes save automatically when you leave a field.
-        Traffic light:{" "}
-        <span className="text-green-400">good</span> / <span className="text-yellow-400">mediocre</span> / <span className="text-red-400">below</span>.
-      </p>
 
       {/* ── Shift settings ────────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-sm">
