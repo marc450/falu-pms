@@ -33,21 +33,24 @@ type DashboardMachine = MachineData & {
 
 // BU run rate: projected BUs at end of shift using user's formula
 // projected = currentBUs + (currentSpeed / 7200) * remaining
-// Uses live speed for the forward projection so warmup / idle time at
-// shift start doesn't drag the estimate down. currentBUs comes from the
-// PLC's confirmed shift production count (ProducedSwaps), falling back
-// to the live Swaps counter if shift data hasn't arrived yet.
+// Total elapsed = ProductionTime + IdleTime (true time since shift start).
+// Using only ProductionTime caused all idle minutes to be invisible,
+// making the machine appear earlier in its shift than reality and
+// collapsing remaining to 0 once ProductionTime alone exceeded shiftLen.
+// Forward rate uses live speed, not historical average.
 function calcBuRunRate(
   m: DashboardMachine,
   shiftLen: number
 ): { projected: number; target: number; rate: number } | null {
   const target = m.buTarget;
   if (!target || target <= 0) return null;
-  const elapsed   = m.shift1?.ProductionTime ?? 0;
-  if (elapsed <= 0) return null;
+  const productionTime = m.shift1?.ProductionTime ?? 0;
+  const idleTime       = m.shift1?.IdleTime       ?? 0;
+  const totalElapsed   = productionTime + idleTime;   // true time since shift start
+  if (totalElapsed <= 0) return null;
   const currentBUs = (m.shift1?.ProducedSwaps ?? m.machineStatus?.Swaps ?? 0) / 7200;
   const buPerMin   = (m.machineStatus?.Speed ?? 0) / 7200;
-  const remaining  = Math.max(0, shiftLen - elapsed);
+  const remaining  = Math.max(0, shiftLen - totalElapsed);
   const projected  = currentBUs + buPerMin * remaining;
   return { projected, target, rate: projected / target };
 }
