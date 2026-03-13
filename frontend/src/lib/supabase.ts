@@ -362,6 +362,20 @@ export async function requestShiftData(machineCode: string, shift: number): Prom
   });
 }
 
+export async function deleteMachine(machineCode: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.from("machines").delete().eq("machine_code", machineCode);
+  if (error) throw new Error(error.message);
+}
+
+export async function deleteMachineFromBridge(machineCode: string): Promise<void> {
+  // Non-fatal — bridge might be offline or not yet restarted
+  await fetch(`${API_BASE}/api/machines/${machineCode}`, {
+    method: "DELETE",
+    headers: API_HEADERS,
+  }).catch(() => {});
+}
+
 export async function fetchBrokerSettings() {
   const res = await fetch(`${API_BASE}/api/settings/broker`, { headers: API_HEADERS });
   return res.json();

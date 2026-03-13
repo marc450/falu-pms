@@ -12,6 +12,8 @@ import {
   updateCellOrder,
   updateMachinePackingFormat,
   updateMachineTargets,
+  deleteMachine,
+  deleteMachineFromBridge,
   fetchThresholds,
   saveThresholds,
   DEFAULT_THRESHOLDS,
@@ -82,6 +84,7 @@ function MachinesTab() {
   const [newCellName, setNewCellName] = useState("");
   const [addingCell, setAddingCell] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ cellId: string; cellName: string } | null>(null);
+  const [confirmDeleteMachine, setConfirmDeleteMachine] = useState<string | null>(null);
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newCellInputRef = useRef<HTMLInputElement>(null);
 
@@ -189,6 +192,14 @@ function MachinesTab() {
     await reload();
   };
 
+  const handleDeleteMachine = async () => {
+    if (!confirmDeleteMachine) return;
+    await deleteMachine(confirmDeleteMachine);
+    await deleteMachineFromBridge(confirmDeleteMachine);
+    setConfirmDeleteMachine(null);
+    await reload();
+  };
+
   const startRename = (cell: ProductionCell) => {
     setRenamingCell(cell.id);
     setRenameValue(cell.name);
@@ -231,6 +242,7 @@ function MachinesTab() {
               e.stopPropagation();
               setDropTarget({ cellId, beforeCode: m.machine_code });
             }}
+            onDelete={() => setConfirmDeleteMachine(m.machine_code)}
           />
         </div>
       ))}
@@ -252,13 +264,23 @@ function MachinesTab() {
 
   return (
     <div className="space-y-4">
-      {/* Delete confirmation modal */}
+      {/* Cell delete confirmation modal */}
       {confirmDelete && (
         <ConfirmModal
           message={`Delete "${confirmDelete.cellName}"? All machines inside will become unassigned.`}
           confirmLabel="Delete Cell"
           onConfirm={confirmDeleteCell}
           onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+
+      {/* Machine delete confirmation modal */}
+      {confirmDeleteMachine && (
+        <ConfirmModal
+          message={`Remove machine "${confirmDeleteMachine}" from the system? If it sends data again it will be re-registered automatically.`}
+          confirmLabel="Remove Machine"
+          onConfirm={handleDeleteMachine}
+          onCancel={() => setConfirmDeleteMachine(null)}
         />
       )}
 
@@ -426,6 +448,7 @@ function MachineChip({
   onDragStart,
   onDragEnd,
   onChipDragOver,
+  onDelete,
 }: {
   code: string;
   packingFormat?: PackingFormat | null;
@@ -434,6 +457,7 @@ function MachineChip({
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onChipDragOver?: (e: React.DragEvent) => void;
+  onDelete?: () => void;
 }) {
   return (
     <div
@@ -463,6 +487,17 @@ function MachineChip({
           <option key={key} value={key}>{label}</option>
         ))}
       </select>
+      {/* Delete button */}
+      {onDelete && (
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          className="ml-1 text-gray-500 hover:text-red-400 transition-colors"
+          title="Remove machine"
+        >
+          <i className="bi bi-x-lg text-xs"></i>
+        </button>
+      )}
     </div>
   );
 }

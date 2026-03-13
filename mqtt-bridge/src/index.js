@@ -207,14 +207,27 @@ async function handleStatusMessage(payload) {
   if (!allMachines[machineCode]) {
     allMachines[machineCode] = { machine: machineCode };
   }
+
+  // Per-machine shift change detection — reset Swaps/Boxes immediately
+  // so the dashboard shows 0 for the new shift, not stale values from the old one.
+  const prevActShift = allMachines[machineCode].machineStatus?.ActShift;
+  const incomingActShift = data.ActShift;
+  if (prevActShift !== undefined && incomingActShift && prevActShift !== incomingActShift) {
+    data.Swaps = 0;
+    data.Boxes = 0;
+    logger.info(`Machine ${machineCode} shift ${prevActShift}→${incomingActShift}: reset Swaps/Boxes`);
+  }
+
   allMachines[machineCode].machineStatus = data;
   allMachines[machineCode].lastSyncStatus = new Date();
+
+  // Global shift tracking (used for shiftStartedAt / BU run rate)
   const incomingShift = data.ActShift || currentShiftNumber;
   if (incomingShift !== currentShiftNumber) {
     currentShiftNumber = incomingShift;
     shiftStartedAt = Date.now();
     saveShiftState();
-    logger.info(`Shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
+    logger.info(`Global shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
   }
 
   // Update Supabase
@@ -458,7 +471,7 @@ function publishRequestShift(machine, shift) {
 const app = express();
 app.use(cors({
   origin: "*",
-  methods: ["GET", "POST"],
+  methods: ["GET", "POST", "DELETE"],
   allowedHeaders: ["Content-Type", "ngrok-skip-browser-warning"],
 }));
 app.use(express.json());
@@ -490,6 +503,20 @@ app.get("/api/machines/:code", (req, res) => {
     return res.status(404).json({ error: "Machine not found" });
   }
   res.json(machine);
+});
+
+// Delete a machine from bridge memory (Supabase deletion is handled by the frontend)
+// When the machine sends MQTT again, it will be auto-registered.
+app.delete("/api/machines/:code", (req, res) => {
+  const code = req.params.code;
+  if (allMachines[code]) {
+    delete allMachines[code];
+    logger.info(`Machine ${code} removed from bridge memory`);
+  }
+  if (machineIdCache[code]) {
+    delete machineIdCache[code];
+  }
+  res.json({ success: true });
 });
 
 // Request shift data from a machine

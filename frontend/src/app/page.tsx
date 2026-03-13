@@ -20,7 +20,8 @@ import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, Packin
 import { PACKING_FORMATS } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 
-type SortColumn = "Machine" | "Status" | "Speed" | "Swaps" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
+type SortColumn  = "Machine" | "Status" | "Speed" | "Swabs" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
+type CellSortCol = "Machine" | "Status" | "Uptime" | "Scrap" | "BU" | "Speed" | "Swabs" | "Output" | "Sync";
 
 type DashboardMachine = MachineData & {
   cellId?: string | null;
@@ -119,7 +120,7 @@ function sortMachineList(
       case "Machine":    aVal = a.machine; bVal = b.machine; break;
       case "Status":     aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
       case "Speed":      aVal = a.machineStatus?.Speed || 0; bVal = b.machineStatus?.Speed || 0; break;
-      case "Swaps":      aVal = a.machineStatus?.Swaps || 0; bVal = b.machineStatus?.Swaps || 0; break;
+      case "Swabs":      aVal = a.machineStatus?.Swaps || 0; bVal = b.machineStatus?.Swaps || 0; break;
       case "Boxes":      aVal = a.machineStatus?.Boxes || 0; bVal = b.machineStatus?.Boxes || 0; break;
       case "Efficiency": aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
       case "Reject":     aVal = a.machineStatus?.Reject || 0; bVal = b.machineStatus?.Reject || 0; break;
@@ -188,6 +189,43 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
 }
 
 // ─────────────────────────────────────────────────────────────
+// Cell sort helper
+// ─────────────────────────────────────────────────────────────
+function sortCellMachines(
+  ms: DashboardMachine[],
+  col: CellSortCol,
+  asc: boolean,
+  shiftLen: number,
+  shiftStartedAt: number,
+): DashboardMachine[] {
+  return [...ms].sort((a, b) => {
+    let aVal: string | number = 0;
+    let bVal: string | number = 0;
+    switch (col) {
+      case "Machine": aVal = a.machine; bVal = b.machine; break;
+      case "Status":  aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
+      case "Uptime":  aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
+      case "Scrap":   aVal = a.machineStatus?.Reject     || 0; bVal = b.machineStatus?.Reject     || 0; break;
+      case "Speed":   aVal = a.machineStatus?.Speed      || 0; bVal = b.machineStatus?.Speed      || 0; break;
+      case "Swabs":   aVal = a.machineStatus?.Swaps      || 0; bVal = b.machineStatus?.Swaps      || 0; break;
+      case "Output":  aVal = a.machineStatus?.Boxes      || 0; bVal = b.machineStatus?.Boxes      || 0; break;
+      case "Sync":
+        aVal = a.lastSyncStatus ? new Date(a.lastSyncStatus).getTime() : 0;
+        bVal = b.lastSyncStatus ? new Date(b.lastSyncStatus).getTime() : 0;
+        break;
+      case "BU": {
+        const ar = calcBuRunRate(a, shiftLen, shiftStartedAt);
+        const br = calcBuRunRate(b, shiftLen, shiftStartedAt);
+        aVal = ar?.rate ?? 0; bVal = br?.rate ?? 0; break;
+      }
+    }
+    if (typeof aVal === "string")
+      return asc ? aVal.localeCompare(bVal as string) : (bVal as string).localeCompare(aVal);
+    return asc ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
 // Cell group section
 // ─────────────────────────────────────────────────────────────
 function CellSection({
@@ -212,6 +250,15 @@ function CellSection({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
+  const [sortCol, setSortCol]   = useState<CellSortCol>("Machine");
+  const [sortAsc, setSortAsc]   = useState(true);
+
+  function handleSort(col: CellSortCol) {
+    if (sortCol === col) setSortAsc(!sortAsc);
+    else { setSortCol(col); setSortAsc(true); }
+  }
+
+  const sortedMachines = sortCellMachines(machines, sortCol, sortAsc, shiftLengthMinutes, shiftStartedAt);
 
   // Compute cell-level stats
   let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
@@ -247,15 +294,31 @@ function CellSection({
     : formatSet.size === 0 ? "Blisters"
     : "Output";
 
-  const colHeaders = [
-    "Machine", "Status", "Uptime", "Scrap Rate", "BU Run Rate",
-    "Speed", `Total Swabs`, `Total ${outputLabel}`, "Last Sync",
+  // Column definitions: label, sort key, min-width
+  type ColDef = { label: string; col: CellSortCol; minW: number };
+  const colDefs: ColDef[] = [
+    { label: "Machine",             col: "Machine", minW: 140 },
+    { label: "Status",              col: "Status",  minW: 130 },
+    { label: "Uptime",              col: "Uptime",  minW: 110 },
+    { label: "Scrap Rate",          col: "Scrap",   minW: 110 },
+    { label: "BU Run Rate",         col: "BU",      minW: 175 },
+    { label: "Speed",               col: "Speed",   minW: 145 },
+    { label: "Total Swabs",         col: "Swabs",   minW: 125 },
+    { label: `Total ${outputLabel}`,col: "Output",  minW: 125 },
+    { label: "Last Sync",           col: "Sync",    minW: 115 },
   ];
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+          {/* ── colgroup pins every column to a stable min-width ── */}
+          <colgroup>
+            {colDefs.map((cd) => (
+              <col key={cd.col} style={{ minWidth: `${cd.minW}px` }} />
+            ))}
+          </colgroup>
+
           <thead>
             {/* ── Cell summary row — each KPI sits above its column ── */}
             <tr
@@ -263,14 +326,14 @@ function CellSection({
               className="bg-gray-800 border-b border-gray-700 cursor-pointer hover:bg-gray-750 transition-colors"
             >
               {/* Machine col → cell name */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[0].minW}px` }}>
                 <div className="flex items-center gap-2">
                   <i className={`bi ${icon} ${color}`}></i>
                   <span className="text-white font-semibold text-sm">{title}</span>
                 </div>
               </td>
               {/* Status col → running count, traffic-light colored */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[1].minW}px` }}>
                 <span className={`text-xs font-semibold ${
                   machines.length === 0 ? "text-gray-500"
                   : running === machines.length ? "text-green-400"
@@ -280,20 +343,20 @@ function CellSection({
                   {running}/{machines.length} running
                 </span>
               </td>
-              {/* Efficiency col */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              {/* Uptime col */}
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[2].minW}px` }}>
                 {avgEff !== null && (
                   <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
                 )}
               </td>
               {/* Scrap Rate col */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[3].minW}px` }}>
                 {avgScrap !== null && (
                   <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
                 )}
               </td>
               {/* BU Run Rate col */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[4].minW}px` }}>
                 {cellTarget > 0 ? (
                   <span className={`text-sm font-semibold ${buCc.text}`}>
                     {Math.round(cellProjected)}{" "}
@@ -305,7 +368,7 @@ function CellSection({
                 ) : null}
               </td>
               {/* Speed col → avg speed with color if targets configured */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[5].minW}px` }}>
                 {avgSpeed !== null && (
                   <span className={`text-sm font-semibold ${spCc.text}`}>
                     {Math.round(avgSpeed).toLocaleString()}{" "}
@@ -314,7 +377,7 @@ function CellSection({
                 )}
               </td>
               {/* Total Swabs col */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[6].minW}px` }}>
                 {swabsTotal > 0 && (
                   <span className="text-sm font-semibold text-white">
                     {swabsTotal.toLocaleString()}{" "}
@@ -323,7 +386,7 @@ function CellSection({
                 )}
               </td>
               {/* Total Output col */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[7].minW}px` }}>
                 {outputTotal > 0 && (
                   <span className="text-sm font-semibold text-white">
                     {outputTotal.toLocaleString()}{" "}
@@ -332,17 +395,24 @@ function CellSection({
                 )}
               </td>
               {/* Last Sync col → collapse chevron */}
-              <td className="px-4 py-3 text-right">
+              <td className="px-4 py-3 text-right" style={{ minWidth: `${colDefs[8].minW}px` }}>
                 <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
               </td>
             </tr>
 
-            {/* ── Column headers ── */}
+            {/* ── Sortable column headers ── */}
             {open && (
               <tr className="bg-gray-800/70 border-b border-gray-700/50">
-                {colHeaders.map((label) => (
-                  <th key={label} className="px-4 py-2 text-left text-xs font-medium text-gray-500">
-                    {label}
+                {colDefs.map((cd) => (
+                  <th
+                    key={cd.col}
+                    onClick={(e) => { e.stopPropagation(); handleSort(cd.col); }}
+                    style={{ minWidth: `${cd.minW}px` }}
+                    className={`px-4 py-2 text-left text-xs font-medium cursor-pointer select-none transition-colors
+                      hover:text-cyan-400 hover:bg-cyan-900/10
+                      ${sortCol === cd.col ? "text-white" : "text-gray-500"}`}
+                  >
+                    {cd.label}{sortCol === cd.col ? (sortAsc ? " ▲" : " ▼") : ""}
                   </th>
                 ))}
               </tr>
@@ -351,7 +421,7 @@ function CellSection({
 
           {open && (
             <tbody className="divide-y divide-gray-700/50">
-              {machines.map((m) => (
+              {sortedMachines.map((m) => (
                 <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} shiftStartedAt={shiftStartedAt} onClick={() => onMachineClick(m.machine)} />
               ))}
               {machines.length === 0 && (
@@ -549,11 +619,14 @@ export default function Dashboard() {
           speedTarget:       merged[code]?.speedTarget ?? null,
         };
       }
+      // Only update machine state when bridge succeeds — avoids a flash where all
+      // machines briefly show as offline during a transient network hiccup.
+      setMachines(merged);
     } catch {
+      // Bridge temporarily unreachable: keep showing last known machine state,
+      // just update the connectivity badge.
       setMqttConnected(false);
     }
-
-    setMachines(merged);
   }, []);
 
   useEffect(() => {
@@ -674,11 +747,11 @@ export default function Dashboard() {
             <table className="w-full text-sm">
               <thead className="bg-gray-800">
                 <tr>
-                  {(["Machine","Status","Speed","Swaps","Boxes","Efficiency","Reject","LastSync"] as SortColumn[]).map((col) => (
+                  {(["Machine","Status","Speed","Swabs","Boxes","Efficiency","Reject","LastSync"] as SortColumn[]).map((col) => (
                     <SortHeader
                       key={col}
                       col={col}
-                      label={col === "Swaps" ? "Total Swabs" : col === "Boxes" ? "Total Blisters" : col === "LastSync" ? "Last Sync" : col === "Efficiency" ? "Uptime" : col}
+                      label={col === "Swabs" ? "Total Swabs" : col === "Boxes" ? "Total Blisters" : col === "LastSync" ? "Last Sync" : col === "Efficiency" ? "Uptime" : col}
                       sortColumn={sortColumn}
                       sortAsc={sortAsc}
                       onSort={handleSort}
