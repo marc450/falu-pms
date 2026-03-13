@@ -16,9 +16,12 @@ const BROKER_PASS = process.env.MQTT_PASSWORD || "Admin123";
 const IS_LOCAL = process.env.MQTT_IS_LOCAL === "true";
 const SEND_FREQUENCY = parseInt(process.env.SIM_FREQUENCY_MS || "5000");
 const SHIFT_DURATION_MS = parseInt(process.env.SIM_SHIFT_DURATION_MS || String(12 * 60 * 60 * 1000)); // default 12 hours
-const MACHINE_NAMES = (process.env.SIM_MACHINES || "CB-30,CB-31,CB-32,CB-33,CB-34,CB-35,CB-36,CB-37").split(",");
+const MACHINE_NAMES = (process.env.SIM_MACHINES ||
+  "CB-30,CB-31,CB-32,CB-33,CB-34,CB-35,CB-36,CB-37," +
+  "CT-1,CT-2,CT-3,CT-4,CT-5,CT-6,CT-7,CT-8,CT-9,CT-10"
+).split(",");
 
-// Per-machine speed ranges (min/max pcs/m)
+// Per-machine speed ranges (min/max pcs/min)
 const MACHINE_SPEED_RANGES = {
   "CB-30": [2821, 2943],
   "CB-31": [1589, 1802],
@@ -28,6 +31,23 @@ const MACHINE_SPEED_RANGES = {
   "CB-35": [2821, 2943],
   "CB-36": [2785, 2897],
   "CB-37": [2844, 2937],
+  // CT series — same production profile as CB-30/CB-34/CB-37, but lower speed band
+  "CT-1":  [2100, 2500],
+  "CT-2":  [2100, 2500],
+  "CT-3":  [2100, 2500],
+  "CT-4":  [2100, 2500],
+  "CT-5":  [2100, 2500],
+  "CT-6":  [2100, 2500],
+  "CT-7":  [2100, 2500],
+  "CT-8":  [2100, 2500],
+  "CT-9":  [2100, 2500],
+  "CT-10": [2100, 2500],
+};
+
+// Machines with a fixed non-running status (won't accumulate production data)
+const MACHINE_OVERRIDES = {
+  "CB-36": { status: "idle" },
+  "CB-32": { status: "error", errorMessage: "Cotton Tear" },
 };
 
 const topicPrefix = IS_LOCAL ? "local" : "cloud";
@@ -39,15 +59,19 @@ const machines = {};
 
 function initMachine(name) {
   const [minSpeed, maxSpeed] = MACHINE_SPEED_RANGES[name] || [400, 500];
+  const overrides = MACHINE_OVERRIDES[name] || {};
+  const status = overrides.status || "run";
   machines[name] = {
     name,
-    status: "run",       // run, idle, error
+    status,
+    errorMessage: overrides.errorMessage || "",
     activeShift: 1,
-    speed: minSpeed + Math.floor(Math.random() * (maxSpeed - minSpeed)),
+    // Non-running machines start at 0 and never produce
+    speed: status === "run" ? minSpeed + Math.floor(Math.random() * (maxSpeed - minSpeed)) : 0,
     minSpeed,
     maxSpeed,
-    efficiency: 90 + Math.random() * 8,
-    reject: 1 + Math.random() * 4,
+    efficiency: status === "run" ? 90 + Math.random() * 8 : 0,
+    reject: status === "run" ? 1 + Math.random() * 4 : 0,
     shifts: {
       1: createShiftData(),
       2: createShiftData(),
@@ -131,16 +155,18 @@ function simulateTick(machine) {
 // PUBLISH MESSAGES
 // ============================================
 function publishStatus(client, machine) {
+  const isRunning = machine.status === "run";
   const msg = {
     Machine: machine.name,
     Status: machine.status,
-    Error: machine.status === "error" ? "Simulated error" : "",
+    Error: machine.status === "error" ? (machine.errorMessage || "Error") : "",
     ActShift: machine.activeShift,
-    Speed: machine.speed,
-    Swaps: machine.shifts[machine.activeShift]?.producedSwabs || 0,
-    Boxes: machine.shifts[machine.activeShift]?.producedBoxes || 0,
-    Efficiency: parseFloat(machine.efficiency.toFixed(1)),
-    Reject: parseFloat(machine.reject.toFixed(1)),
+    // Non-running machines report all production metrics as 0
+    Speed:      isRunning ? machine.speed : 0,
+    Swaps:      isRunning ? (machine.shifts[machine.activeShift]?.producedSwabs || 0) : 0,
+    Boxes:      isRunning ? (machine.shifts[machine.activeShift]?.producedBoxes || 0) : 0,
+    Efficiency: isRunning ? parseFloat(machine.efficiency.toFixed(1)) : 0,
+    Reject:     isRunning ? parseFloat(machine.reject.toFixed(1))     : 0,
   };
 
   client.publish(`${topicPrefix}/Status`, JSON.stringify(msg), { qos: 1 });
