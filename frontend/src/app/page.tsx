@@ -129,7 +129,7 @@ function sortMachineList(
         bVal = b.lastSyncStatus ? new Date(b.lastSyncStatus).getTime() : 0;
         break;
     }
-    if (typeof aVal === "string") return asc ? aVal.localeCompare(bVal as string) : (bVal as string).localeCompare(aVal);
+    if (typeof aVal === "string") return asc ? aVal.localeCompare(bVal as string, undefined, { numeric: true }) : (bVal as string).localeCompare(aVal, undefined, { numeric: true });
     return asc ? (aVal as number) - (bVal as number) : (bVal as number) - (aVal as number);
   });
 }
