@@ -678,13 +678,13 @@ export default function Dashboard() {
           speedTarget:       merged[code]?.speedTarget ?? null,
         };
       }
-      // Only update machine state when bridge succeeds — avoids a flash where all
-      // machines briefly show as offline during a transient network hiccup.
       setMachines(merged);
     } catch {
-      // Bridge temporarily unreachable: keep showing last known machine state,
-      // just update the connectivity badge.
+      // Bridge unreachable: show registered machines as offline rather than blank.
+      // During subsequent polls this preserves last known live state via the
+      // existing machines state, but on first load merged only has placeholders.
       setMqttConnected(false);
+      setMachines(prev => Object.keys(prev).length > 0 ? prev : merged);
     }
   }, []);
 
