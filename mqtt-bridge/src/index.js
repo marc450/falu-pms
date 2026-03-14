@@ -251,6 +251,33 @@ async function handleStatusMessage(payload) {
     })
     .eq("id", machineId);
 
+  // For non-running machines, insert a status-only row into shift_readings
+  // so downtime periods are captured in the historical log.
+  const statusLower = (data.Status || "offline").toLowerCase();
+  const isRunning = statusLower === "run" || statusLower === "running";
+  if (!isRunning) {
+    await supabase.from("shift_readings").insert({
+      machine_id: machineId,
+      shift_number: data.ActShift || 1,
+      status: statusLower,
+      speed: 0,
+      production_time: 0,
+      idle_time: 0,
+      cotton_tears: 0,
+      missing_sticks: 0,
+      faulty_pickups: 0,
+      other_errors: 0,
+      produced_swabs: 0,
+      packaged_swabs: 0,
+      produced_boxes: 0,
+      produced_boxes_layer_plus: 0,
+      discarded_swabs: 0,
+      efficiency: 0,
+      reject_rate: 0,
+      save_flag: false,
+    });
+  }
+
   logger.debug(`Status updated: ${machineCode} - ${data.Status} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
 }
 
@@ -293,6 +320,8 @@ async function handleShiftMessage(payload) {
     await supabase.from("shift_readings").insert({
       machine_id: machineId,
       shift_number: data.Shift,
+      status: (allMachines[machineCode]?.machineStatus?.Status || "run").toLowerCase(),
+      speed: allMachines[machineCode]?.machineStatus?.Speed || 0,
       production_time: data.ProductionTime || 0,
       idle_time: data.IdleTime || 0,
       cotton_tears: data.CottonTears || 0,
