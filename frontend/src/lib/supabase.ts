@@ -297,7 +297,7 @@ export function applyMachineScrapColor(val: number | null, good: number | null, 
 // Run rate color: rate = projected ÷ target (e.g. 1.05 = 105 %)
 export function applyRunRateColor(rate: number | null): { text: string; border: string } {
   if (rate === null) return { text: "text-gray-500", border: "border-gray-700" };
-  if (rate >= 0.95)  return { text: "text-green-400",  border: "border-green-600"  };
+  if (rate >= 1.0)   return { text: "text-green-400",  border: "border-green-600"  };
   if (rate >= 0.80)  return { text: "text-yellow-400", border: "border-yellow-600" };
   return                    { text: "text-red-400",    border: "border-red-600"    };
 }
@@ -326,7 +326,7 @@ export function applyBuRunRateColor(
   if (projected === null || target === null || target <= 0)
     return { text: "text-gray-500", border: "border-gray-700" };
   const rate = projected / target;
-  if (rate >= 0.95)
+  if (rate >= 1.0)
     return { text: "text-green-400", border: "border-green-600" };
   if (mediocreTarget !== null && mediocreTarget > 0) {
     // Use absolute mediocre BU threshold when configured
