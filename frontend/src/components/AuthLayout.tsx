@@ -64,7 +64,6 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <NavLink href="/" icon="speedometer2" label="Dashboard" current={pathname} />
           <NavLink href="/analytics" icon="bar-chart-line" label="Analytics" current={pathname} />
           <NavLink href="/settings" icon="gear" label="Settings" current={pathname} />
-          <NavLink href="/debug" icon="bug" label="Debug" current={pathname} />
         </nav>
 
         {/* User + logout */}

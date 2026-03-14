@@ -54,7 +54,7 @@ function calcBuRunRate(
   const elapsedMs  = Date.now() - shiftStartedAt;
   const elapsed    = elapsedMs / 60000;               // ms → minutes
   if (elapsed <= 0) return null;
-  const currentBUs = (m.shift1?.ProducedSwaps ?? m.machineStatus?.Swaps ?? 0) / 7200;
+  const currentBUs = (m.shift1?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
   const buPerMin   = (m.machineStatus?.Speed ?? 0) / 7200;
   const remaining  = Math.max(0, shiftLen - elapsed);
   const projected  = currentBUs + buPerMin * remaining;
@@ -70,7 +70,7 @@ function offlinePlaceholder(row: RegisteredMachine): MachineData {
       Error: "",
       ActShift: 0,
       Speed: 0,
-      Swaps: 0,
+      Swabs: 0,
       Boxes: 0,
       Efficiency: 0,
       Reject: 0,
@@ -122,7 +122,7 @@ function sortMachineList(
       case "Machine":    aVal = a.machine; bVal = b.machine; break;
       case "Status":     aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
       case "Speed":      aVal = a.machineStatus?.Speed || 0; bVal = b.machineStatus?.Speed || 0; break;
-      case "Swabs":      aVal = a.machineStatus?.Swaps || 0; bVal = b.machineStatus?.Swaps || 0; break;
+      case "Swabs":      aVal = a.machineStatus?.Swabs || 0; bVal = b.machineStatus?.Swabs || 0; break;
       case "Boxes":      aVal = a.machineStatus?.Boxes || 0; bVal = b.machineStatus?.Boxes || 0; break;
       case "Efficiency": aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
       case "Reject":     aVal = a.machineStatus?.Reject || 0; bVal = b.machineStatus?.Reject || 0; break;
@@ -181,7 +181,7 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
         ) : null}
       </td>
       <td className="px-4 py-3">
-        {m.machineStatus?.Swaps ? m.machineStatus.Swaps.toLocaleString() : ""}
+        {m.machineStatus?.Swabs ? m.machineStatus.Swaps.toLocaleString() : ""}
       </td>
       <td className="px-4 py-3">
         {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
@@ -214,7 +214,7 @@ function sortCellMachines(
       case "Uptime":  aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
       case "Scrap":   aVal = a.machineStatus?.Reject     || 0; bVal = b.machineStatus?.Reject     || 0; break;
       case "Speed":   aVal = a.machineStatus?.Speed      || 0; bVal = b.machineStatus?.Speed      || 0; break;
-      case "Swabs":   aVal = a.machineStatus?.Swaps      || 0; bVal = b.machineStatus?.Swaps      || 0; break;
+      case "Swabs":   aVal = a.machineStatus?.Swabs      || 0; bVal = b.machineStatus?.Swabs      || 0; break;
       case "Output":  aVal = a.machineStatus?.Boxes      || 0; bVal = b.machineStatus?.Boxes      || 0; break;
       case "Sync":
         aVal = a.lastSyncStatus ? new Date(a.lastSyncStatus).getTime() : 0;
@@ -282,7 +282,7 @@ function CellSection({
     effSum += m.machineStatus?.Efficiency ?? 0;
     // Scrap: running machines only
     if (isRunning && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
-    if (m.machineStatus?.Swaps)      swabsTotal  += m.machineStatus.Swaps;
+    if (m.machineStatus?.Swabs)      swabsTotal  += m.machineStatus.Swaps;
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
     // Speed: running machines only
     if (isRunning && m.machineStatus?.Speed) { speedSum += m.machineStatus.Speed; speedCount++; }

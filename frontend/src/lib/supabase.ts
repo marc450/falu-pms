@@ -27,7 +27,7 @@ export interface MachineStatusMessage {
   Error: string;
   ActShift: number;
   Speed: number;
-  Swaps: number;
+  Swabs: number;
   Boxes: number;
   Efficiency: number;
   Reject: number;
@@ -42,11 +42,11 @@ export interface ShiftDataMessage {
   MissingSticks: number;
   FoultyPickups: number;
   OtherErrors: number;
-  ProducedSwaps: number;
-  PackagedSwaps: number;
+  ProducedSwabs: number;
+  PackagedSwabs: number;
   ProducedBoxes: number;
   ProducedBoxesLayerPlus: number;
-  DisgardedSwaps: number;
+  DiscardedSwabs: number;
   Efficiency: number;
   Reject: number;
   Save: boolean;

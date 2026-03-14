@@ -149,7 +149,7 @@ async function loadRegisteredMachines() {
           Error: row.error_message || "",
           ActShift: row.active_shift || 0,
           Speed: row.speed || 0,
-          Swaps: row.current_swaps || 0,
+          Swabs: row.current_swabs || 0,
           Boxes: row.current_boxes || 0,
           Efficiency: row.current_efficiency || 0,
           Reject: row.current_reject || 0,
@@ -214,7 +214,7 @@ async function handleStatusMessage(payload) {
   const prevActShift = allMachines[machineCode].machineStatus?.ActShift;
   const incomingActShift = data.ActShift;
   if (prevActShift !== undefined && incomingActShift && prevActShift !== incomingActShift) {
-    data.Swaps = 0;
+    data.Swabs = 0;
     data.Boxes = 0;
     logger.info(`Machine ${machineCode} shift ${prevActShift}→${incomingActShift}: reset Swaps/Boxes`);
   }
@@ -242,7 +242,7 @@ async function handleStatusMessage(payload) {
       error_message: data.Error || null,
       active_shift: data.ActShift || 1,
       speed: data.Speed || 0,
-      current_swaps: data.Swaps || 0,
+      current_swabs: data.Swabs || 0,
       current_boxes: data.Boxes || 0,
       current_efficiency: data.Efficiency || 0,
       current_reject: data.Reject || 0,
@@ -265,7 +265,7 @@ async function handleShiftMessage(payload) {
   // Check if data has meaningful content
   const hasData = (data.ProductionTime || 0) > 0 ||
                   (data.IdleTime || 0) > 0 ||
-                  (data.ProducedSwaps || 0) > 0 ||
+                  (data.ProducedSwabs || 0) > 0 ||
                   (data.ProducedBoxes || 0) > 0;
 
   // Update in-memory state
@@ -299,11 +299,11 @@ async function handleShiftMessage(payload) {
       missing_sticks: data.MissingSticks || 0,
       faulty_pickups: data.FoultyPickups || 0,
       other_errors: data.OtherErrors || 0,
-      produced_swabs: data.ProducedSwaps || 0,
-      packaged_swabs: data.PackagedSwaps || 0,
+      produced_swabs: data.ProducedSwabs || 0,
+      packaged_swabs: data.PackagedSwabs || 0,
       produced_boxes: data.ProducedBoxes || 0,
       produced_boxes_layer_plus: data.ProducedBoxesLayerPlus || 0,
-      discarded_swabs: data.DisgardedSwaps || 0,
+      discarded_swabs: data.DiscardedSwabs || 0,
       efficiency: data.Efficiency || 0,
       reject_rate: data.Reject || 0,
       save_flag: data.Save || false,
@@ -338,8 +338,8 @@ function logToCsv(data) {
   const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
   const prodTime = formatMinutesToTime(data.ProductionTime);
   const idleTime = formatMinutesToTime(data.IdleTime);
-  const header = "Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FoultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DisgardedSwaps;Efficiency;Reject";
-  const row = `${timestamp};${data.Machine};${data.Shift};${prodTime};${idleTime};${data.CottonTears || 0};${data.MissingSticks || 0};${data.FoultyPickups || 0};${data.OtherErrors || 0};${data.ProducedSwaps || 0};${data.PackagedSwaps || 0};${data.ProducedBoxes || 0};${data.ProducedBoxesLayerPlus || 0};${data.DisgardedSwaps || 0};${(data.Efficiency || 0).toFixed(2)};${(data.Reject || 0).toFixed(2)}`;
+  const header = "Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FoultyPickups;OtherErrors;ProducedSwabs;PackagedSwabs;ProducedBoxes;ProducedBoxesLayerPlus;DiscardedSwabs;Efficiency;Reject";
+  const row = `${timestamp};${data.Machine};${data.Shift};${prodTime};${idleTime};${data.CottonTears || 0};${data.MissingSticks || 0};${data.FoultyPickups || 0};${data.OtherErrors || 0};${data.ProducedSwabs || 0};${data.PackagedSwabs || 0};${data.ProducedBoxes || 0};${data.ProducedBoxesLayerPlus || 0};${data.DiscardedSwabs || 0};${(data.Efficiency || 0).toFixed(2)};${(data.Reject || 0).toFixed(2)}`;
 
   // Per-machine log
   const machineLogPath = path.join("csv_logs", "machines", `${data.Machine}.csv`);
@@ -369,11 +369,11 @@ async function logToSavedShiftLogs(machineId, machineCode, data) {
     missing_sticks: data.MissingSticks || 0,
     faulty_pickups: data.FoultyPickups || 0,
     other_errors: data.OtherErrors || 0,
-    produced_swabs: data.ProducedSwaps || 0,
-    packaged_swabs: data.PackagedSwaps || 0,
+    produced_swabs: data.ProducedSwabs || 0,
+    packaged_swabs: data.PackagedSwabs || 0,
     produced_boxes: data.ProducedBoxes || 0,
     produced_boxes_layer_plus: data.ProducedBoxesLayerPlus || 0,
-    discarded_swabs: data.DisgardedSwaps || 0,
+    discarded_swabs: data.DiscardedSwabs || 0,
     efficiency: data.Efficiency || 0,
     reject_rate: data.Reject || 0,
   });
