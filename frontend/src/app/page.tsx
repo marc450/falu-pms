@@ -397,9 +397,6 @@ function CellSection({
                     <span className={`text-sm font-semibold ${buCc.text}`}>
                       {Math.round(cellProjected)}{" "}
                       <span className="text-xs font-normal opacity-60">/ {Math.round(cellTarget)} BUs</span>
-                      {cellRate !== null && (
-                        <span className="opacity-70 ml-1 text-xs">({Math.round(cellRate * 100)}%)</span>
-                      )}
                     </span>
                   </div>
                 ) : null}
@@ -558,7 +555,7 @@ function ParkSummaryTiles({
     ? `${Math.round(floorProjected)} / ${Math.round(floorTarget)}`
     : "—";
   const buSub = floorRate !== null
-    ? `${Math.round(floorRate * 100)}% of target · BUs/shift`
+    ? `BUs / shift`
     : hasAnyBuTarget ? "No live data" : "No targets set";
 
   return (
