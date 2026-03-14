@@ -680,11 +680,10 @@ export default function Dashboard() {
       }
       setMachines(merged);
     } catch {
-      // Bridge unreachable: show registered machines as offline rather than blank.
-      // During subsequent polls this preserves last known live state via the
-      // existing machines state, but on first load merged only has placeholders.
+      // Bridge unreachable: always show registered machines as offline with no
+      // data rather than preserving stale live values.
       setMqttConnected(false);
-      setMachines(prev => Object.keys(prev).length > 0 ? prev : merged);
+      setMachines(merged);
     }
   }, []);
 
