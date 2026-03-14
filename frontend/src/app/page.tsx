@@ -352,9 +352,12 @@ function CellSection({
             >
               {/* Machine col → cell name */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[0].minW}px` }}>
-                <div className="flex items-center gap-2">
-                  <i className={`bi ${icon} ${color}`}></i>
-                  <span className="text-white font-semibold text-sm">{title}</span>
+                <div className={!open ? "flex flex-col gap-0.5" : "flex items-center gap-2"}>
+                  {!open && <span className="text-[10px] invisible">·</span>}
+                  <div className="flex items-center gap-2">
+                    <i className={`bi ${icon} ${color}`}></i>
+                    <span className="text-white font-semibold text-sm">{title}</span>
+                  </div>
                 </div>
               </td>
               {/* Status col → running count, traffic-light colored */}
