@@ -347,7 +347,7 @@ const machines = {};
 client.on("connect", () => {
   console.log("Connected to MQTT broker");
 
-  MACHINE_NAMES.forEach(name => { machines[name] = initMachine(name); });
+  MACHINE_NAMES.forEach(name => { if (!machines[name]) machines[name] = initMachine(name); });
 
   const { shiftNumber, elapsedMinutes } = getShiftInfo();
   console.log(`Starting at Shift ${shiftNumber}, ${elapsedMinutes.toFixed(1)} min elapsed\n`);
