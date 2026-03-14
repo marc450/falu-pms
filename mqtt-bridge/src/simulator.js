@@ -286,11 +286,11 @@ function publishStatus(client, machine) {
     Status:     machine.status,
     Error:      "",  // error messages deferred to later implementation
     ActShift:   machine.activeShift,
-    Speed:      isRunning ? machine.currentSpeed        : 0,
-    Swabs:      isRunning ? shift.producedSwabs         : 0,
-    Boxes:      isRunning ? shift.producedBoxes         : 0,
-    Efficiency: parseFloat((isRunning ? machine.efficiency : 0).toFixed(1)),
-    Reject:     parseFloat((isRunning ? machine.reject     : 0).toFixed(1)),
+    Speed:      isRunning ? machine.currentSpeed : 0,
+    Swabs:      shift.producedSwabs,
+    Boxes:      shift.producedBoxes,
+    Efficiency: parseFloat(machine.efficiency.toFixed(1)),
+    Reject:     parseFloat(machine.reject.toFixed(1)),
   };
   client.publish(`${topicPrefix}/Status`, JSON.stringify(msg), { qos: 1 });
 }
