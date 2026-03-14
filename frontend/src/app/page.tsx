@@ -181,7 +181,7 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
         ) : null}
       </td>
       <td className="px-4 py-3">
-        {m.machineStatus?.Swabs ? m.machineStatus.Swaps.toLocaleString() : ""}
+        {m.machineStatus?.Swabs ? m.machineStatus.Swabs.toLocaleString() : ""}
       </td>
       <td className="px-4 py-3">
         {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
@@ -282,7 +282,7 @@ function CellSection({
     effSum += m.machineStatus?.Efficiency ?? 0;
     // Scrap: running machines only
     if (isRunning && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
-    if (m.machineStatus?.Swabs)      swabsTotal  += m.machineStatus.Swaps;
+    if (m.machineStatus?.Swabs)      swabsTotal  += m.machineStatus.Swabs;
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
     // Speed: running machines only
     if (isRunning && m.machineStatus?.Speed) { speedSum += m.machineStatus.Speed; speedCount++; }
