@@ -738,10 +738,6 @@ export default function Dashboard() {
               <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
               Loading...
             </span>
-          ) : !hasData ? (
-            <span className="bg-gray-700 text-gray-400 text-xs px-3 py-1.5 rounded-full">
-              <i className="bi bi-plug mr-1"></i>No machines connected
-            </span>
           ) : (
             <span className={`text-xs px-3 py-1.5 rounded-full flex items-center gap-1 ${mqttConnected ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
               <i className={`bi bi-${mqttConnected ? "wifi" : "wifi-off"}`}></i>
@@ -767,39 +763,30 @@ export default function Dashboard() {
       {/* ── Grouped by production cell ── */}
       {useCells ? (
         <>
-          {!hasData ? (
-            <div className="bg-gray-800/50 rounded-lg border border-gray-700 px-4 py-16 text-center text-gray-500">
-              <i className="bi bi-plug text-3xl mb-3 block opacity-30"></i>
-              No machines connected.
-            </div>
-          ) : (
-            <>
-              {cells.map((cell) => (
-                <CellSection
-                  key={cell.id}
-                  title={cell.name}
-                  icon="bi-collection"
-                  color="text-cyan-400"
-                  machines={machinesForCell(cell.id)}
-                  onMachineClick={(code) => router.push(`/production?machine=${code}`)}
-                  thresholds={thresholds}
-                  shiftLengthMinutes={effectiveShiftMins}
-                  shiftStartedAt={shiftStartedAt}
-                />
-              ))}
-              {unassigned.length > 0 && (
-                <CellSection
-                  title="Unassigned"
-                  icon="bi-inbox"
-                  color="text-gray-400"
-                  machines={unassigned}
-                  onMachineClick={(code) => router.push(`/production?machine=${code}`)}
-                  thresholds={thresholds}
-                  shiftLengthMinutes={effectiveShiftMins}
-                  shiftStartedAt={shiftStartedAt}
-                />
-              )}
-            </>
+          {cells.map((cell) => (
+            <CellSection
+              key={cell.id}
+              title={cell.name}
+              icon="bi-collection"
+              color="text-cyan-400"
+              machines={machinesForCell(cell.id)}
+              onMachineClick={(code) => router.push(`/production?machine=${code}`)}
+              thresholds={thresholds}
+              shiftLengthMinutes={effectiveShiftMins}
+              shiftStartedAt={shiftStartedAt}
+            />
+          ))}
+          {unassigned.length > 0 && (
+            <CellSection
+              title="Unassigned"
+              icon="bi-inbox"
+              color="text-gray-400"
+              machines={unassigned}
+              onMachineClick={(code) => router.push(`/production?machine=${code}`)}
+              thresholds={thresholds}
+              shiftLengthMinutes={effectiveShiftMins}
+              shiftStartedAt={shiftStartedAt}
+            />
           )}
         </>
       ) : (
@@ -831,13 +818,6 @@ export default function Dashboard() {
                     onClick={() => router.push(`/production?machine=${m.machine}`)}
                   />
                 ))}
-                {Object.keys(machines).length === 0 && (
-                  <tr>
-                    <td colSpan={8} className="px-4 py-12 text-center text-gray-500">
-                      No machines connected.
-                    </td>
-                  </tr>
-                )}
               </tbody>
             </table>
           </div>
