@@ -109,6 +109,7 @@ export interface RegisteredMachine {
   scrap_good: number | null;
   scrap_mediocre: number | null;
   bu_target: number | null;
+  bu_mediocre: number | null;
   speed_target: number | null;
 }
 
@@ -117,7 +118,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, speed_target"
+      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
     )
     .eq("hidden", false)
     .order("machine_code");
@@ -132,6 +133,7 @@ export interface MachineTargets {
   scrap_good: number | null;
   scrap_mediocre: number | null;
   bu_target: number | null;
+  bu_mediocre: number | null;
   speed_target: number | null;
 }
 
@@ -303,18 +305,39 @@ export function applyRunRateColor(rate: number | null): { text: string; border: 
 // Speed color for individual machine rows — on target shows plain white (row rule: no green in rows)
 export function applyMachineSpeedColor(val: number | null, target: number | null): { text: string } {
   if (val === null || !target || target <= 0) return { text: "text-gray-300" };
-  if (val >= target)           return { text: "text-white"       };  // at/above target → white
-  if (val >= target * 0.9)     return { text: "text-yellow-400"  };  // within 10% → yellow
-  return                              { text: "text-red-400"     };   // >10% below → red
+  if (val >= target) return { text: "text-white"   };  // at/above target → white
+  return             { text: "text-red-400" };          // below target → red
 }
 
 // Speed color for cell header — on target shows green (headers keep traffic-light coloring)
 export function applySpeedHeaderColor(avgSpeed: number | null, avgTarget: number | null): { text: string } {
   if (avgSpeed === null || !avgTarget || avgTarget <= 0) return { text: "text-gray-500" };
-  const ratio = avgSpeed / avgTarget;
-  if (ratio >= 1.0)  return { text: "text-green-400"  };
-  if (ratio >= 0.9)  return { text: "text-yellow-400" };
-  return                    { text: "text-red-400"    };
+  if (avgSpeed >= avgTarget) return { text: "text-green-400" };  // at/above target → green
+  return                            { text: "text-red-400"   };  // below target → red
+}
+
+// BU run rate color using per-machine mediocre threshold
+// projected / target = rate; mediocreTarget is the absolute BU floor (optional)
+export function applyBuRunRateColor(
+  projected: number | null,
+  target: number | null,
+  mediocreTarget: number | null
+): { text: string; border: string } {
+  if (projected === null || target === null || target <= 0)
+    return { text: "text-gray-500", border: "border-gray-700" };
+  const rate = projected / target;
+  if (rate >= 0.95)
+    return { text: "text-green-400", border: "border-green-600" };
+  if (mediocreTarget !== null && mediocreTarget > 0) {
+    // Use absolute mediocre BU threshold when configured
+    if (projected >= mediocreTarget)
+      return { text: "text-yellow-400", border: "border-yellow-600" };
+  } else {
+    // Fallback: 80 % of target = mediocre
+    if (rate >= 0.80)
+      return { text: "text-yellow-400", border: "border-yellow-600" };
+  }
+  return { text: "text-red-400", border: "border-red-600" };
 }
 
 export async function updateCellOrder(

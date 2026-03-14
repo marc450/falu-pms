@@ -13,7 +13,7 @@ import {
   applyMachineScrapColor,
   applyMachineSpeedColor,
   applySpeedHeaderColor,
-  applyRunRateColor,
+  applyBuRunRateColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
 import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
@@ -32,6 +32,7 @@ type DashboardMachine = MachineData & {
   scrapGood?: number | null;
   scrapMediocre?: number | null;
   buTarget?: number | null;
+  buMediocre?: number | null;
   speedTarget?: number | null;
 };
 
@@ -144,7 +145,7 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
   const scpColor = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
   const spdColor = applyMachineSpeedColor(m.machineStatus?.Speed ?? null, m.speedTarget ?? null);
   const buRate   = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
-  const buColor  = applyRunRateColor(buRate?.rate ?? null);
+  const buColor  = applyBuRunRateColor(buRate?.projected ?? null, buRate?.target ?? null, m.buMediocre ?? null);
 
   // In rows: suppress green — only yellow and red signal problems; good = plain white
   const toRowColor = (c: string) => c === "text-green-400" ? "text-white" : c;
@@ -270,7 +271,7 @@ function CellSection({
   let running = 0, effSum = 0, scrapSum = 0, scrapCount = 0;
   let swabsTotal = 0, outputTotal = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
-  let cellProjected = 0, cellTarget = 0;
+  let cellProjected = 0, cellTarget = 0, cellMediocreTarget = 0;
   let effGoodSum = 0, effGoodCount = 0, effMedSum = 0, effMedCount = 0;
   let scrapGoodSum = 0, scrapGoodCount = 0, scrapMedSum = 0, scrapMedCount = 0;
   for (const m of machines) {
@@ -290,6 +291,7 @@ function CellSection({
     const br = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
     if (br) { cellProjected += br.projected; cellTarget += br.target; }
     else if (m.buTarget && m.buTarget > 0) { cellTarget += m.buTarget; }
+    if (m.buMediocre && m.buMediocre > 0) { cellMediocreTarget += m.buMediocre; }
     if (m.efficiencyGood)     { effGoodSum   += m.efficiencyGood;     effGoodCount++; }
     if (m.efficiencyMediocre) { effMedSum    += m.efficiencyMediocre; effMedCount++;  }
     if (m.scrapGood)          { scrapGoodSum += m.scrapGood;          scrapGoodCount++; }
@@ -307,7 +309,7 @@ function CellSection({
   const avgScrapMed  = scrapMedCount  > 0 ? scrapMedSum  / scrapMedCount  : null;
   const ec   = applyMachineEfficiencyColor(avgEff,   avgEffGood,   avgEffMed);
   const sc   = applyMachineScrapColor     (avgScrap, avgScrapGood, avgScrapMed);
-  const buCc = applyRunRateColor          (cellRate);
+  const buCc = applyBuRunRateColor(cellProjected, cellTarget, cellMediocreTarget > 0 ? cellMediocreTarget : null);
   const spCc = applySpeedHeaderColor(avgSpeed, avgSpeedTarget);
 
   // Derive output label from machines' packing formats
@@ -517,7 +519,7 @@ function ParkSummaryTiles({
 
   let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
   let scrapGoodSum = 0, scrapGoodCount = 0, scrapMedSum = 0, scrapMedCount = 0;
-  let floorProjected = 0, floorTarget = 0;
+  let floorProjected = 0, floorTarget = 0, floorMediocreTarget = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
     const isRunning = s === "run" || s === "running";
@@ -532,6 +534,7 @@ function ParkSummaryTiles({
     const br = calcBuRunRate(m, effectiveShiftMins, shiftStartedAt);
     if (br) { floorProjected += br.projected; floorTarget += br.target; }
     else if (m.buTarget && m.buTarget > 0) { floorTarget += m.buTarget; }
+    if (m.buMediocre && m.buMediocre > 0) { floorMediocreTarget += m.buMediocre; }
   }
 
   const avgEff        = effCount        > 0 ? effSum        / effCount        : null;
@@ -541,7 +544,7 @@ function ParkSummaryTiles({
   const floorRate     = floorTarget     > 0 ? floorProjected / floorTarget    : null;
   const ec            = applyEfficiencyColor(avgEff,   thresholds);
   const sc            = applyMachineScrapColor(avgScrap, avgScrapGood, avgScrapMed);
-  const buc           = applyRunRateColor   (floorRate);
+  const buc           = applyBuRunRateColor(floorProjected, floorTarget, floorMediocreTarget > 0 ? floorMediocreTarget : null);
 
   const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
   const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
@@ -650,6 +653,7 @@ export default function Dashboard() {
         scrapGood:         row.scrap_good ?? null,
         scrapMediocre:     row.scrap_mediocre ?? null,
         buTarget:          row.bu_target ?? null,
+        buMediocre:        row.bu_mediocre ?? null,
         speedTarget:       row.speed_target ?? null,
       };
     }
@@ -670,6 +674,7 @@ export default function Dashboard() {
           scrapGood:         merged[code]?.scrapGood ?? null,
           scrapMediocre:     merged[code]?.scrapMediocre ?? null,
           buTarget:          merged[code]?.buTarget ?? null,
+          buMediocre:        merged[code]?.buMediocre ?? null,
           speedTarget:       merged[code]?.speedTarget ?? null,
         };
       }
