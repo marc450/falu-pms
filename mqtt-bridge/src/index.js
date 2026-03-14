@@ -336,7 +336,6 @@ async function handleShiftMessage(payload) {
       efficiency: data.Efficiency || 0,
       reject_rate: data.Reject || 0,
       save_flag: data.Save || false,
-      raw_payload: data,
     });
 
     await supabase
