@@ -286,10 +286,10 @@ export function applyMachineEfficiencyColor(val: number | null, good: number | n
 }
 
 export function applyMachineScrapColor(val: number | null, good: number | null, mediocre: number | null) {
-  if (val === null || good === null || mediocre === null) return { text: "text-gray-300" };
-  if (val <= good)    return { text: "text-green-400"  };
-  if (val <= mediocre) return { text: "text-yellow-400" };
-  return                     { text: "text-red-400"    };
+  if (val === null || good === null || mediocre === null) return { text: "text-gray-300",   border: "border-gray-700"   };
+  if (val <= good)    return { text: "text-green-400",  border: "border-green-700"  };
+  if (val <= mediocre) return { text: "text-yellow-400", border: "border-yellow-700" };
+  return                     { text: "text-red-400",    border: "border-red-700"    };
 }
 
 // Run rate color: rate = projected ÷ target (e.g. 1.05 = 105 %)

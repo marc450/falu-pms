@@ -516,22 +516,32 @@ function ParkSummaryTiles({
   const effectiveShiftMins = Math.max(1, thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0));
 
   let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
+  let scrapGoodSum = 0, scrapGoodCount = 0, scrapMedSum = 0, scrapMedCount = 0;
   let floorProjected = 0, floorTarget = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
-    if (s === "run" || s === "running") running++;
+    const isRunning = s === "run" || s === "running";
+    if (isRunning) running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
-    if (m.machineStatus?.Reject)     { scrapSum += m.machineStatus.Reject;   scrapCount++; }
+    // Scrap: running machines only
+    if (isRunning && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
+    // Accumulate per-machine scrap targets for color thresholds
+    if (m.scrapGood)     { scrapGoodSum += m.scrapGood;     scrapGoodCount++; }
+    if (m.scrapMediocre) { scrapMedSum  += m.scrapMediocre; scrapMedCount++;  }
+    // BU: non-running machines still contribute their target
     const br = calcBuRunRate(m, effectiveShiftMins, shiftStartedAt);
     if (br) { floorProjected += br.projected; floorTarget += br.target; }
+    else if (m.buTarget && m.buTarget > 0) { floorTarget += m.buTarget; }
   }
 
-  const avgEff      = effCount   > 0 ? effSum   / effCount   : null;
-  const avgScrap    = scrapCount > 0 ? scrapSum / scrapCount : null;
-  const floorRate   = floorTarget > 0 ? floorProjected / floorTarget : null;
-  const ec          = applyEfficiencyColor(avgEff,   thresholds);
-  const sc          = applyScrapColor     (avgScrap, thresholds);
-  const buc         = applyRunRateColor   (floorRate);
+  const avgEff        = effCount        > 0 ? effSum        / effCount        : null;
+  const avgScrap      = scrapCount      > 0 ? scrapSum      / scrapCount      : null;
+  const avgScrapGood  = scrapGoodCount  > 0 ? scrapGoodSum  / scrapGoodCount  : null;
+  const avgScrapMed   = scrapMedCount   > 0 ? scrapMedSum   / scrapMedCount   : null;
+  const floorRate     = floorTarget     > 0 ? floorProjected / floorTarget    : null;
+  const ec            = applyEfficiencyColor(avgEff,   thresholds);
+  const sc            = applyMachineScrapColor(avgScrap, avgScrapGood, avgScrapMed);
+  const buc           = applyRunRateColor   (floorRate);
 
   const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
   const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
@@ -574,8 +584,8 @@ function ParkSummaryTiles({
         label="Avg Scrap Rate"
         value={avgScrap !== null ? `${avgScrap.toFixed(1)}%` : "—"}
         sub={avgScrap !== null
-          ? avgScrap <= thresholds.scrap.good ? "Good"
-          : avgScrap <= thresholds.scrap.mediocre ? "Mediocre" : "Above target"
+          ? (avgScrapGood === null || avgScrap <= avgScrapGood) ? "Good"
+          : (avgScrapMed === null || avgScrap <= avgScrapMed) ? "Mediocre" : "Above target"
           : "No live data"}
         colorClass={sc.text}
         borderClass={sc.border}
