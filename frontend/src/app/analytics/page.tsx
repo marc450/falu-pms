@@ -248,8 +248,8 @@ export default function Analytics() {
                       contentStyle={TOOLTIP_CONTENT_STYLE}
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={fmtDate}
-                      formatter={(v: number) => [`${v.toFixed(1)}%`, "Uptime"]}
+                      labelFormatter={(l) => fmtDate(l as string)}
+                      formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Uptime"]}
                     />
                     <ReferenceLine
                       y={thresholds.efficiency.good}
@@ -306,8 +306,8 @@ export default function Analytics() {
                       contentStyle={TOOLTIP_CONTENT_STYLE}
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={fmtDate}
-                      formatter={(v: number) => [`${v.toFixed(1)}%`, "Scrap"]}
+                      labelFormatter={(l) => fmtDate(l as string)}
+                      formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Scrap"]}
                     />
                     <ReferenceLine
                       y={thresholds.scrap.good}
@@ -356,8 +356,8 @@ export default function Analytics() {
                     contentStyle={TOOLTIP_CONTENT_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
-                    labelFormatter={fmtDate}
-                    formatter={(v: number) => [v.toLocaleString(), "Boxes"]}
+                    labelFormatter={(l) => fmtDate(l as string)}
+                    formatter={(v) => [Number(v ?? 0).toLocaleString(), "Boxes"]}
                     cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
                   <Bar
