@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
-  LineChart, Line, BarChart, Bar,
+  LineChart, Line,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceArea,
 } from "recharts";
@@ -646,8 +646,8 @@ export default function Analytics() {
             ) : undefined}
           >
             {!hasData ? <NoData /> : (
-              <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                   {/* Zones — higher is better; targets = sum of all machines */}
                   <ReferenceArea y1={buTarget ?? buMax} y2={buMax} fill="#4ade80" fillOpacity={buTarget !== null ? 0.08 : 0} />
                   <ReferenceArea y1={buMediocre ?? 0} y2={buTarget ?? 0} fill="#eab308" fillOpacity={buTarget !== null ? 0.07 : 0} />
@@ -673,17 +673,18 @@ export default function Analytics() {
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
                     labelFormatter={(l) => fmtLabel(l as string)}
-                    formatter={(v) => [`${Number(v ?? 0).toLocaleString()} BUs`, "Total park"]}
-                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
+                    formatter={(v) => [`${Number(v ?? 0).toLocaleString()} BUs`, "BU Output"]}
                   />
-                  <Bar
+                  <Line
+                    type="monotone"
                     dataKey="totalBU"
-                    name="BU output"
-                    fill="#22d3ee"
-                    radius={[2, 2, 0, 0]}
-                    maxBarSize={36}
+                    name="BU Output"
+                    stroke="#22d3ee"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
                   />
-                </BarChart>
+                </LineChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
