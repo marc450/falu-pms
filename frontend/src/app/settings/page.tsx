@@ -908,6 +908,7 @@ function ShiftsTab() {
   // Draft slots: edited locally, only persisted on explicit Save
   const [draftSlots, setDraftSlots] = useState<TimeSlot[]>(DEFAULT_SHIFT_CONFIG.slots);
   const [draftDowntime, setDraftDowntime] = useState<number>(0);
+  const [downtimeDisplay, setDowntimeDisplay] = useState("0");
   const [slotsDirty, setSlotsDirty] = useState(false);
   const [slotError, setSlotError] = useState<string | null>(null);
   const [slotSuccess, setSlotSuccess] = useState(false);
@@ -940,6 +941,7 @@ function ShiftsTab() {
         setConfig(cfg);
         setDraftSlots(cfg.slots);
         setDraftDowntime(cfg.plannedDowntimeMinutes);
+        setDowntimeDisplay(String(cfg.plannedDowntimeMinutes));
         setSlotsDirty(false);
         setSlotError(null);
         const map: Record<string, ShiftAssignment> = {};
@@ -1000,9 +1002,20 @@ function ShiftsTab() {
     markDirty();
   };
 
-  const updateDraftDowntime = (mins: number) => {
-    setDraftDowntime(Math.max(0, Math.round(mins)));
+  const updateDraftDowntime = (raw: string) => {
+    setDowntimeDisplay(raw);
+    const n = Number(raw);
+    if (raw !== "" && !isNaN(n)) {
+      setDraftDowntime(Math.max(0, Math.round(n)));
+    }
     markDirty();
+  };
+
+  const commitDraftDowntime = () => {
+    if (downtimeDisplay === "" || isNaN(Number(downtimeDisplay))) {
+      setDraftDowntime(0);
+      setDowntimeDisplay("0");
+    }
   };
 
   const clearAllSlots = () => {
@@ -1071,6 +1084,7 @@ function ShiftsTab() {
   const discardDraftChanges = () => {
     setDraftSlots(config.slots);
     setDraftDowntime(config.plannedDowntimeMinutes);
+    setDowntimeDisplay(String(config.plannedDowntimeMinutes));
     setSlotsDirty(false);
     setSlotError(null);
     setSlotSuccess(false);
@@ -1251,8 +1265,9 @@ function ShiftsTab() {
             <div className="flex items-center gap-2">
               <input
                 type="number" min={0} max={draftShiftMins}
-                value={draftDowntime}
-                onChange={e => updateDraftDowntime(Number(e.target.value) || 0)}
+                value={downtimeDisplay}
+                onChange={e => updateDraftDowntime(e.target.value)}
+                onBlur={commitDraftDowntime}
                 onWheel={e => e.currentTarget.blur()}
                 className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
               />
