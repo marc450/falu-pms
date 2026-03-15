@@ -457,6 +457,9 @@ export default function Analytics() {
   const fmtTick  = (key: string) => fmtBucket(key, granularity);
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity);
 
+  // Show every tick for ≤ 24 buckets; thin out for longer periods
+  const tickInterval = rows.length <= 24 ? 0 : Math.ceil(rows.length / 20) - 1;
+
   // Pre-compute Y-axis ceilings so both domain and ReferenceArea share the same max
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
   const scrapMax     = Math.ceil(Math.max(scrapDataMax, thresholds.scrap.mediocre) + 1);
@@ -586,7 +589,7 @@ export default function Analytics() {
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
                       tickFormatter={fmtTick}
-                      interval="preserveStartEnd"
+                      interval={tickInterval}
                     />
                     <YAxis
                       domain={[0, 100]}
@@ -641,7 +644,7 @@ export default function Analytics() {
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
                       tickFormatter={fmtTick}
-                      interval="preserveStartEnd"
+                      interval={tickInterval}
                     />
                     <YAxis
                       domain={[0, scrapMax]}
@@ -696,7 +699,7 @@ export default function Analytics() {
                     tickLine={false}
                     axisLine={{ stroke: AXIS_COLOR }}
                     tick={<RangeTick granularity={granularity} />}
-                    interval="preserveStartEnd"
+                    interval={tickInterval}
                     height={36}
                   />
                   <YAxis
