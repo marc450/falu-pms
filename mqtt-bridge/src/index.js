@@ -640,7 +640,8 @@ app.get("/api/logs/preview/:filename", (req, res) => {
 // ============================================
 // START
 // ============================================
-const PORT = process.env.API_PORT || 3001;
+// Railway injects $PORT — always use it. API_PORT is a local-dev fallback only.
+const PORT = process.env.PORT || process.env.API_PORT || 3001;
 
 // Start the HTTP server immediately so Railway health checks pass right away,
 // then load registered machines and connect to MQTT in the background.
