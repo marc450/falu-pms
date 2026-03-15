@@ -54,7 +54,12 @@ function calcBuRunRate(
   const elapsedMs  = Date.now() - shiftStartedAt;
   const elapsed    = elapsedMs / 60000;               // ms → minutes
   if (elapsed <= 0) return null;
-  const currentBUs = (m.shift1?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
+  // Read production from the shift that is actually active, not always shift1.
+  // Using shift1 when the machine is on shift 2 or 3 would carry over the
+  // previous shift's cumulative swabs as the starting point, inflating the projection.
+  const activeShift = m.machineStatus?.ActShift ?? 1;
+  const activeShiftData = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
+  const currentBUs = (activeShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
   const buPerMin   = (m.machineStatus?.Speed ?? 0) / 7200;
   const remaining  = Math.max(0, shiftLen - elapsed);
   const projected  = currentBUs + buPerMin * remaining;
