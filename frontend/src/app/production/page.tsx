@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { fetchMachine, requestShiftData } from "@/lib/supabase";
 import type { MachineData, ShiftDataMessage } from "@/lib/supabase";
@@ -12,6 +12,7 @@ function ProductionContent() {
   const [machine, setMachine] = useState<MachineData | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
+  const failCount = useRef(0);
   const router = useRouter();
 
   const loadData = useCallback(async () => {
@@ -20,8 +21,12 @@ function ProductionContent() {
       const data = await fetchMachine(machineName);
       setMachine(data);
       setOffline(false);
+      failCount.current = 0;
     } catch {
-      setOffline(true);
+      failCount.current += 1;
+      // Only declare offline after 3 consecutive failures (~6 s at 2 s poll rate).
+      // This prevents a single bridge restart or network hiccup from wiping the screen.
+      if (failCount.current >= 3) setOffline(true);
     } finally {
       setLoading(false);
     }
