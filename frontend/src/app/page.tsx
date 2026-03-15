@@ -158,13 +158,16 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
       <td className="px-4 py-3">
         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}>
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
-          <span>
-            {formatStatus(m.machineStatus?.Status)}
-            {m.machineStatus?.Error && (
-              <span className="opacity-80"> · {m.machineStatus.Error}</span>
-            )}
-          </span>
+          {formatStatus(m.machineStatus?.Status)}
         </span>
+        {m.machineStatus?.Error && (
+          <div
+            className="text-xs text-gray-400 mt-0.5 max-w-[140px] truncate"
+            title={m.machineStatus.Error}
+          >
+            {m.machineStatus.Error}
+          </div>
+        )}
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
         {!isOffline && hasProduction ? `${(m.machineStatus?.Efficiency ?? 0).toFixed(1)}%` : ""}
