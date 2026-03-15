@@ -136,7 +136,7 @@ function ProductionContent() {
             <i className="bi bi-arrow-left mr-1"></i> Back
           </button>
           <h2 className="text-xl font-bold text-white">
-            Production Details — {machineName}
+            Machine Monitor — <span className="text-cyan-400">{machineName}</span>
           </h2>
         </div>
         <span className="bg-cyan-900/30 text-cyan-400 text-xs px-3 py-1.5 rounded-full">
@@ -155,8 +155,8 @@ function ProductionContent() {
       ) : (
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
           {/* Card header */}
-          <div className="bg-blue-600 px-5 py-3 flex justify-between items-center">
-            <h4 className="text-white font-semibold">Machine: {machine.machine}</h4>
+          <div className="bg-gray-700/60 border-b border-gray-600 px-5 py-3 flex justify-between items-center">
+            <h4 className="text-white font-semibold"><span className="text-cyan-400">{machine.machine}</span> — Shift Data</h4>
             <div className="flex items-center gap-2">
               <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
                 <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
