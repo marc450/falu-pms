@@ -426,6 +426,8 @@ function connectMqtt() {
     password: brokerSettings.password,
     clientId: `falu-pms-bridge-${Date.now()}`,
     clean: true,
+    keepalive: 30,
+    connectTimeout: 15000,
     reconnectPeriod: 5000,
     rejectUnauthorized: !brokerSettings.isLocal,
   });
@@ -640,17 +642,17 @@ app.get("/api/logs/preview/:filename", (req, res) => {
 // ============================================
 const PORT = process.env.API_PORT || 3001;
 
-// Load registered machines first, then start MQTT and HTTP server
-loadRegisteredMachines().then(() => {
-  connectMqtt();
-  app.listen(PORT, () => {
-    logger.info(`FALU PMS Bridge API running on port ${PORT}`);
-    logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
-    logger.info(`Topic: ${getSubscribeTopic()}`);
-  });
-}).catch((err) => {
-  logger.error(`Startup failed: ${err.message}`);
-  process.exit(1);
+// Start the HTTP server immediately so Railway health checks pass right away,
+// then load registered machines and connect to MQTT in the background.
+// This prevents Railway from restarting the service while Supabase is warming up.
+app.listen(PORT, () => {
+  logger.info(`FALU PMS Bridge API running on port ${PORT}`);
+  logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
+  logger.info(`Topic: ${getSubscribeTopic()}`);
+
+  loadRegisteredMachines()
+    .then(() => connectMqtt())
+    .catch((err) => logger.error(`Startup error: ${err.message}`));
 });
 
 // Graceful shutdown

@@ -405,6 +405,8 @@ const client = mqtt.connect(url, {
   password:           BROKER_PASS,
   clientId:           `falu-simulator-${Date.now()}`,
   clean:              true,
+  keepalive:          30,
+  connectTimeout:     15000,
   reconnectPeriod:    5000,
   rejectUnauthorized: !IS_LOCAL,
 });
