@@ -56,7 +56,7 @@ const PRESETS: Preset[] = [
   { id: "all", label: "All time",        getRange: () => ({ start: new Date(2020, 0, 1),       end: mkNow() }) },
 ];
 
-const DEFAULT_PRESET_ID: PresetId = "7d";
+const DEFAULT_PRESET_ID: PresetId = "24h";
 
 // ─── Bucket formatting ────────────────────────────────────────────────────────
 
@@ -436,7 +436,7 @@ export default function Analytics() {
               title={`Avg Uptime ${chartTitle}`}
               legend={
                 <>
-                  <DashLegendLine color="#22d3ee" label={`Good (${thresholds.efficiency.good}%)`} />
+                  <DashLegendLine color="#4ade80" label={`Good (${thresholds.efficiency.good}%)`} />
                   <DashLegendLine color="#f59e0b" label={`Mediocre (${thresholds.efficiency.mediocre}%)`} />
                 </>
               }
@@ -469,11 +469,11 @@ export default function Analytics() {
                     />
                     <ReferenceLine
                       y={thresholds.efficiency.good}
-                      stroke="#22d3ee" strokeDasharray="4 2" strokeOpacity={0.45}
+                      stroke="#4ade80" strokeDasharray="5 3" strokeOpacity={0.72}
                     />
                     <ReferenceLine
                       y={thresholds.efficiency.mediocre}
-                      stroke="#f59e0b" strokeDasharray="4 2" strokeOpacity={0.45}
+                      stroke="#f59e0b" strokeDasharray="5 3" strokeOpacity={0.72}
                     />
                     <Line
                       type="monotone"
@@ -527,11 +527,11 @@ export default function Analytics() {
                     />
                     <ReferenceLine
                       y={thresholds.scrap.good}
-                      stroke="#4ade80" strokeDasharray="4 2" strokeOpacity={0.45}
+                      stroke="#4ade80" strokeDasharray="5 3" strokeOpacity={0.72}
                     />
                     <ReferenceLine
                       y={thresholds.scrap.mediocre}
-                      stroke="#f59e0b" strokeDasharray="4 2" strokeOpacity={0.45}
+                      stroke="#f59e0b" strokeDasharray="5 3" strokeOpacity={0.72}
                     />
                     <Line
                       type="monotone"
