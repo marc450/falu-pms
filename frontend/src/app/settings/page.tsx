@@ -932,9 +932,10 @@ function ShiftsTab() {
 
   const draftShiftMins = draftSlots.length > 0 ? Math.round(24 * 60 / draftSlots.length) : 480;
 
-  // Load config + assignments
+  // Load config + assignments (only show full-page spinner on first load)
+  const initialLoad = useRef(true);
   useEffect(() => {
-    setLoading(true);
+    if (initialLoad.current) setLoading(true);
     Promise.all([fetchShiftConfig(), fetchShiftAssignments(fromStr, toStr)])
       .then(([cfg, rows]) => {
         setConfig(cfg);
@@ -948,7 +949,7 @@ function ShiftsTab() {
         setAssignments(map);
       })
       .catch(console.error)
-      .finally(() => setLoading(false));
+      .finally(() => { setLoading(false); initialLoad.current = false; });
   }, [fromStr, toStr]);
 
   // Month navigation
