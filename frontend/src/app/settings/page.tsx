@@ -1195,7 +1195,7 @@ function ShiftsTab() {
             <i className="bi bi-clock text-cyan-400"></i>PLC Shift Structure
           </h4>
           <p className="text-gray-500 text-xs mt-0.5">
-            Match this to your PLC shift configuration. The PLC reports which shift number is active.
+            Match this to the shift configuration set on the machine HMI. The machine reports which shift number is active.
           </p>
         </div>
         <div className="px-5 py-3 space-y-2">
