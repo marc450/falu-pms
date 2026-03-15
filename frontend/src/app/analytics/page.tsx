@@ -273,28 +273,44 @@ export default function Analytics() {
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
+  const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    // For presets, always recompute the range so `end` = now() at call time.
+    // Storing the range at mount would freeze the window and miss readings
+    // that arrive after the page first loaded.
+    const effectiveRange: DateRange =
+      activePresetId !== "custom"
+        ? PRESETS.find(p => p.id === activePresetId)!.getRange()
+        : dateRange;
     try {
-      const [result, th] = await Promise.all([fetchFleetTrend(dateRange), fetchThresholds()]);
+      const [result, th] = await Promise.all([fetchFleetTrend(effectiveRange), fetchThresholds()]);
       setRows(result.rows);
       setGranularity(result.granularity);
       setTotalReadings(result.totalReadings);
       setThresholds(th);
+      setLastRefreshed(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load analytics data");
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
+  }, [activePresetId, dateRange]);
 
+  // Initial load + reload whenever period changes
   useEffect(() => { load(); }, [load]);
+
+  // Auto-refresh every 5 minutes so live production data stays current
+  useEffect(() => {
+    const timer = setInterval(load, 5 * 60 * 1000);
+    return () => clearInterval(timer);
+  }, [load]);
 
   function handlePresetSelect(preset: Preset) {
     setActivePresetId(preset.id);
-    setDateRange(preset.getRange());
+    setDateRange(preset.getRange()); // also update custom inputs in the selector
   }
 
   function handleCustomRange(range: DateRange) {
@@ -326,13 +342,30 @@ export default function Analytics() {
     <div>
       {/* ── Header ── */}
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-white">Fleet Analytics</h2>
-        <PeriodSelector
-          activePresetId={activePresetId}
-          dateRange={dateRange}
-          onPresetSelect={handlePresetSelect}
-          onCustomRange={handleCustomRange}
-        />
+        <div>
+          <h2 className="text-xl font-bold text-white">Fleet Analytics</h2>
+          {lastRefreshed && !loading && (
+            <p className="text-xs text-gray-600 mt-0.5">
+              Updated {format(lastRefreshed, "HH:mm:ss")}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={load}
+            disabled={loading}
+            title="Refresh now"
+            className="p-1.5 text-gray-500 hover:text-gray-300 disabled:opacity-40 transition-colors"
+          >
+            <i className={`bi bi-arrow-clockwise text-sm ${loading ? "animate-spin" : ""}`}></i>
+          </button>
+          <PeriodSelector
+            activePresetId={activePresetId}
+            dateRange={dateRange}
+            onPresetSelect={handlePresetSelect}
+            onCustomRange={handleCustomRange}
+          />
+        </div>
       </div>
 
       {/* ── Error banner ── */}
