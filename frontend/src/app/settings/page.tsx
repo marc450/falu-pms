@@ -834,6 +834,12 @@ function ThresholdsTab() {
     saveThresholds({ ...t, bu: { ...t.bu, plannedDowntimeMinutes: Math.round(mins) } }).catch(console.error);
   };
 
+  // Auto-save fleet-wide uptime/scrap thresholds on blur (used by Analytics reference lines)
+  const saveEfficiencyGood     = (v: number) => saveThresholds({ ...t, efficiency: { ...t.efficiency, good: v     } }).catch(console.error);
+  const saveEfficiencyMediocre = (v: number) => saveThresholds({ ...t, efficiency: { ...t.efficiency, mediocre: v } }).catch(console.error);
+  const saveScrapGood          = (v: number) => saveThresholds({ ...t, scrap:      { ...t.scrap,      good: v     } }).catch(console.error);
+  const saveScrapMediocre      = (v: number) => saveThresholds({ ...t, scrap:      { ...t.scrap,      mediocre: v } }).catch(console.error);
+
   if (loading) return (
     <div className="flex items-center gap-2 text-gray-400 py-8">
       <span className="animate-spin text-lg">⟳</span> Loading…
@@ -884,6 +890,62 @@ function ThresholdsTab() {
               <span className="text-gray-400 text-sm w-8">hrs</span>
             </div>
           </div>
+        </div>
+      </div>
+
+      {/* ── Fleet thresholds (used by Analytics reference lines) ── */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-sm">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-bar-chart-line text-cyan-400"></i>Fleet Thresholds
+          </h4>
+          <p className="text-gray-500 text-xs mt-0.5">Park-wide reference lines shown on the Analytics charts</p>
+        </div>
+        <div className="px-5 py-3 divide-y divide-gray-700/50">
+          <div className="pb-1 pt-2">
+            <p className="text-xs font-medium text-cyan-300 uppercase tracking-wide mb-1">
+              <i className="bi bi-speedometer2 mr-1"></i>Uptime
+            </p>
+          </div>
+          <ThresholdRow
+            label="Good"
+            sublabel="≥"
+            value={t.efficiency.good}
+            onChange={(v) => setT({ ...t, efficiency: { ...t.efficiency, good: v } })}
+            onSave={saveEfficiencyGood}
+            unit="%"
+          />
+          <ThresholdRow
+            label="Mediocre"
+            sublabel="≥"
+            value={t.efficiency.mediocre}
+            onChange={(v) => setT({ ...t, efficiency: { ...t.efficiency, mediocre: v } })}
+            onSave={saveEfficiencyMediocre}
+            unit="%"
+          />
+          <div className="pb-1 pt-3">
+            <p className="text-xs font-medium text-orange-300 uppercase tracking-wide mb-1">
+              <i className="bi bi-exclamation-triangle mr-1"></i>Scrap Rate
+            </p>
+          </div>
+          <ThresholdRow
+            label="Good"
+            sublabel="≤"
+            value={t.scrap.good}
+            onChange={(v) => setT({ ...t, scrap: { ...t.scrap, good: v } })}
+            onSave={saveScrapGood}
+            unit="%"
+            inverted
+          />
+          <ThresholdRow
+            label="Mediocre"
+            sublabel="≤"
+            value={t.scrap.mediocre}
+            onChange={(v) => setT({ ...t, scrap: { ...t.scrap, mediocre: v } })}
+            onSave={saveScrapMediocre}
+            unit="%"
+            inverted
+          />
         </div>
       </div>
 
