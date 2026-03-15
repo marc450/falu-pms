@@ -372,11 +372,12 @@ export default function Analytics() {
   const fmtTick  = (key: string) => fmtBucket(key, granularity);
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity);
 
-  const scrapCeil = (dataMax: number) =>
-    Math.ceil(Math.max(dataMax, thresholds.scrap.mediocre) + 1);
+  // Pre-compute Y-axis ceilings so both domain and ReferenceArea share the same max
+  const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
+  const scrapMax     = Math.ceil(Math.max(scrapDataMax, thresholds.scrap.mediocre) + 1);
 
-  const buCeil = (dataMax: number) =>
-    Math.ceil(Math.max(dataMax, buZoneMediocre ?? 0) * 1.1);
+  const buDataMax = hasData ? Math.max(...buRows.map(r => r.totalBUs)) : 0;
+  const buMax     = Math.ceil(Math.max(buDataMax, buZoneGood ?? 0, buZoneMediocre ?? 0) * 1.15);
 
   const chartTitle = granularity === "hour"
     ? "— hourly park average"
@@ -547,7 +548,7 @@ export default function Analytics() {
                     {/* Background zones — lower is better for scrap */}
                     <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.08} />
                     <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.07} />
-                    <ReferenceArea y1={thresholds.scrap.mediocre} y2={100} fill="#ef4444" fillOpacity={0.07} />
+                    <ReferenceArea y1={thresholds.scrap.mediocre} y2={scrapMax} fill="#ef4444" fillOpacity={0.07} />
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
@@ -558,7 +559,7 @@ export default function Analytics() {
                       interval="preserveStartEnd"
                     />
                     <YAxis
-                      domain={[0, scrapCeil]}
+                      domain={[0, scrapMax]}
                       tick={TICK_STYLE}
                       tickLine={false}
                       axisLine={false}
@@ -600,13 +601,10 @@ export default function Analytics() {
             {!hasData ? <NoData /> : (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                  {buZoneGood !== null && buZoneMediocre !== null && (
-                    <>
-                      <ReferenceArea y1={buZoneGood} y2={buCeil(Math.max(...buRows.map(r => r.totalBUs)))} fill="#4ade80" fillOpacity={0.08} />
-                      <ReferenceArea y1={buZoneMediocre} y2={buZoneGood} fill="#eab308" fillOpacity={0.07} />
-                      <ReferenceArea y1={0} y2={buZoneMediocre} fill="#ef4444" fillOpacity={0.07} />
-                    </>
-                  )}
+                  {/* Zones must be direct children — Recharts ignores fragments */}
+                  <ReferenceArea y1={buZoneGood ?? buMax} y2={buMax} fill="#4ade80" fillOpacity={buZoneGood !== null ? 0.08 : 0} />
+                  <ReferenceArea y1={buZoneMediocre ?? 0} y2={buZoneGood ?? 0} fill="#eab308" fillOpacity={buZoneGood !== null ? 0.07 : 0} />
+                  <ReferenceArea y1={0} y2={buZoneMediocre ?? 0} fill="#ef4444" fillOpacity={buZoneMediocre !== null ? 0.07 : 0} />
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                   <XAxis
                     dataKey="date"
@@ -617,7 +615,7 @@ export default function Analytics() {
                     interval="preserveStartEnd"
                   />
                   <YAxis
-                    domain={buZoneGood !== null ? [0, buCeil] : undefined}
+                    domain={[0, buMax]}
                     tick={TICK_STYLE}
                     tickLine={false}
                     axisLine={false}
