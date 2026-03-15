@@ -160,7 +160,11 @@ async function loadRegisteredMachines() {
     }
   }
 
-  logger.info(`Loaded ${data.length} registered machines from Supabase`);
+  const statusCounts = data.reduce((acc, r) => {
+    acc[r.status || "null"] = (acc[r.status || "null"] || 0) + 1;
+    return acc;
+  }, {});
+  logger.info(`Loaded ${data.length} registered machines from Supabase | statuses: ${JSON.stringify(statusCounts)}`);
 }
 
 // ============================================
@@ -250,33 +254,6 @@ async function handleStatusMessage(payload) {
       hidden: false,  // un-hide automatically when machine sends data again
     })
     .eq("id", machineId);
-
-  // For non-running machines, insert a status-only row into shift_readings
-  // so downtime periods are captured in the historical log.
-  const statusLower = (data.Status || "offline").toLowerCase();
-  const isRunning = statusLower === "run" || statusLower === "running";
-  if (!isRunning) {
-    await supabase.from("shift_readings").insert({
-      machine_id: machineId,
-      shift_number: data.ActShift || 1,
-      status: statusLower,
-      speed: 0,
-      production_time: 0,
-      idle_time: 0,
-      cotton_tears: 0,
-      missing_sticks: 0,
-      faulty_pickups: 0,
-      other_errors: 0,
-      produced_swabs: 0,
-      packaged_swabs: 0,
-      produced_boxes: 0,
-      produced_boxes_layer_plus: 0,
-      discarded_swabs: 0,
-      efficiency: 0,
-      reject_rate: 0,
-      save_flag: false,
-    });
-  }
 
   logger.debug(`Status updated: ${machineCode} - ${data.Status} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
 }
@@ -658,7 +635,7 @@ const PORT = process.env.PORT || process.env.API_PORT || 3001;
 // then load registered machines and connect to MQTT in the background.
 // This prevents Railway from restarting the service while Supabase is warming up.
 app.listen(PORT, () => {
-  logger.info(`FALU PMS Bridge API running on port ${PORT}`);
+  logger.info(`FALU PMS Bridge API running on port ${PORT} (process.env.PORT=${process.env.PORT ?? "unset"})`);
   logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
   logger.info(`Topic: ${getSubscribeTopic()}`);
 
