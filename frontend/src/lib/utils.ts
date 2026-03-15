@@ -3,8 +3,9 @@
  */
 export function formatMinutesToTime(minutes: number | undefined | null): string {
   if (!minutes || minutes === 0) return "00:00";
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
+  const total = Math.floor(minutes);
+  const h = Math.floor(total / 60);
+  const m = total % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 

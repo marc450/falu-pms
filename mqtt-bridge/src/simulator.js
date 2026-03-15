@@ -14,6 +14,73 @@
 
 require("dotenv").config();
 const mqtt = require("mqtt");
+const { createClient } = require("@supabase/supabase-js");
+
+// ============================================
+// SUPABASE STATE PERSISTENCE
+// ============================================
+const supabase = (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY)
+  ? createClient(process.env.SUPABASE_URL, process.env.SUPABASE_SERVICE_ROLE_KEY)
+  : null;
+
+const SAVE_EVERY_TICKS = 12; // save every ~60 s at 5 s/tick
+let tickCount = 0;
+
+async function saveState() {
+  if (!supabase) return;
+  const rows = Object.values(machines).map(m => ({
+    machine_name:      m.name,
+    active_shift:      m.activeShift,
+    status:            m.status,
+    error_end_min:     m.errorEndMin,
+    speed_tier_idx:    m.speedTierIdx,
+    base_speed:        m.baseSpeed,
+    tier_locked_until: m.tierLockedUntil,
+    cleaning_start_min: m.cleaningStartMin,
+    shift_1_data:      m.shifts[1],
+    shift_2_data:      m.shifts[2],
+    shift_3_data:      m.shifts[3],
+    updated_at:        new Date().toISOString(),
+  }));
+  const { error } = await supabase
+    .from("simulator_state")
+    .upsert(rows, { onConflict: "machine_name" });
+  if (error) console.error("[STATE] Save failed:", error.message);
+  else console.log(`[STATE] Saved ${rows.length} machines at ${new Date().toLocaleTimeString()}`);
+}
+
+async function loadState() {
+  if (!supabase) { console.log("[STATE] No Supabase config — skipping restore."); return false; }
+  const { data, error } = await supabase.from("simulator_state").select("*");
+  if (error || !data || data.length === 0) {
+    console.log("[STATE] No saved state found — starting fresh.");
+    return false;
+  }
+  const { shiftNumber } = getShiftInfo();
+  let restored = 0;
+  for (const row of data) {
+    const m = machines[row.machine_name];
+    if (!m) continue;
+    if (row.active_shift !== shiftNumber) {
+      console.log(`[STATE] ${row.machine_name}: saved shift ${row.active_shift} ≠ current ${shiftNumber} — fresh init`);
+      continue;
+    }
+    m.activeShift        = row.active_shift;
+    m.status             = row.status;
+    m.errorEndMin        = row.error_end_min;
+    m.speedTierIdx       = row.speed_tier_idx;
+    m.baseSpeed          = row.base_speed;
+    m.tierLockedUntil    = row.tier_locked_until;
+    m.cleaningStartMin   = row.cleaning_start_min;
+    m.shifts[1]          = row.shift_1_data || createShiftData();
+    m.shifts[2]          = row.shift_2_data || createShiftData();
+    m.shifts[3]          = row.shift_3_data || createShiftData();
+    restored++;
+    console.log(`[STATE] Restored ${row.machine_name} — ${m.shifts[m.activeShift].producedSwabs.toLocaleString()} swabs`);
+  }
+  console.log(`[STATE] Restored ${restored}/${data.length} machines.`);
+  return restored > 0;
+}
 
 // ============================================
 // BROKER CONFIG
@@ -345,13 +412,10 @@ const client = mqtt.connect(url, {
 const machines = {};
 let simulationStarted = false;
 
-client.on("connect", () => {
+client.on("connect", async () => {
   console.log("Connected to MQTT broker");
 
   MACHINE_NAMES.forEach(name => { if (!machines[name]) machines[name] = initMachine(name); });
-
-  const { shiftNumber, elapsedMinutes } = getShiftInfo();
-  console.log(`Starting at Shift ${shiftNumber}, ${elapsedMinutes.toFixed(1)} min elapsed\n`);
 
   // Subscribe to RequestShift topics
   client.subscribe(`${topicPrefix}/RequestShift/+`, { qos: 1 });
@@ -363,7 +427,13 @@ client.on("connect", () => {
   }
   simulationStarted = true;
 
-  setInterval(() => {
+  // Restore persisted state (overwrites fresh init for matching shifts)
+  await loadState();
+
+  const { shiftNumber, elapsedMinutes } = getShiftInfo();
+  console.log(`Starting at Shift ${shiftNumber}, ${elapsedMinutes.toFixed(1)} min elapsed\n`);
+
+  setInterval(async () => {
     const { shiftNumber, elapsedMinutes } = getShiftInfo();
 
     for (const machine of Object.values(machines)) {
@@ -389,6 +459,11 @@ client.on("connect", () => {
       publishStatus(client, machine);
       publishShiftData(client, machine, machine.activeShift, false);
     }
+
+    // ── Persist state periodically ───────────────────────────────────
+    tickCount++;
+    if (tickCount % SAVE_EVERY_TICKS === 0) await saveState();
+
   }, TICK_MS);
 
   console.log("Simulation running. Press Ctrl+C to stop.\n");
@@ -461,8 +536,9 @@ client.on("message", (topic, message) => {
 
 client.on("error", err => console.error(`MQTT Error: ${err.message}`));
 
-process.on("SIGINT", () => {
-  console.log("\nShutting down simulator...");
+process.on("SIGINT", async () => {
+  console.log("\nShutting down simulator — saving state...");
+  await saveState();
   client.end(true);
   process.exit(0);
 });
