@@ -12,7 +12,7 @@ import {
   startOfMonth, startOfQuarter, startOfYear,
 } from "date-fns";
 import {
-  fetchFleetTrend, fetchThresholds,
+  fetchFleetTrend, fetchRegisteredMachines,
   applyEfficiencyColor, applyScrapColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
@@ -286,11 +286,32 @@ export default function Analytics() {
         ? PRESETS.find(p => p.id === activePresetId)!.getRange()
         : dateRange;
     try {
-      const [result, th] = await Promise.all([fetchFleetTrend(effectiveRange), fetchThresholds()]);
+      const [result, machines] = await Promise.all([
+        fetchFleetTrend(effectiveRange),
+        fetchRegisteredMachines(),
+      ]);
       setRows(result.rows);
       setGranularity(result.granularity);
       setTotalReadings(result.totalReadings);
-      setThresholds(th);
+
+      // Derive reference-line thresholds from per-machine targets (same values
+      // as the live dashboard), falling back to defaults if none are configured.
+      const avg = (arr: (number | null)[]) => {
+        const vals = arr.filter((v): v is number => v !== null && !isNaN(v));
+        return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
+      };
+      const computedThresholds: Thresholds = {
+        efficiency: {
+          good:     avg(machines.map(m => m.efficiency_good))     ?? DEFAULT_THRESHOLDS.efficiency.good,
+          mediocre: avg(machines.map(m => m.efficiency_mediocre)) ?? DEFAULT_THRESHOLDS.efficiency.mediocre,
+        },
+        scrap: {
+          good:     avg(machines.map(m => m.scrap_good))     ?? DEFAULT_THRESHOLDS.scrap.good,
+          mediocre: avg(machines.map(m => m.scrap_mediocre)) ?? DEFAULT_THRESHOLDS.scrap.mediocre,
+        },
+        bu: DEFAULT_THRESHOLDS.bu,
+      };
+      setThresholds(computedThresholds);
       setLastRefreshed(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load analytics data");
