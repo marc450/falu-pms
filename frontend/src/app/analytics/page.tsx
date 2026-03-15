@@ -486,30 +486,30 @@ export default function Analytics() {
     <div>
       {/* ── Header ── */}
       <div className="flex justify-between items-center mb-6">
-        <PeriodSelector
-          activePresetId={activePresetId}
-          dateRange={dateRange}
-          onPresetSelect={handlePresetSelect}
-          onCustomRange={handleCustomRange}
-        />
-        <div className="flex items-end gap-4">
+        <div className="flex items-center gap-6">
           <h2 className="text-xl font-bold text-white">Analytics</h2>
-          {lastRefreshed && !loading && (
-            <div className="flex items-center gap-1.5">
-              <p className="text-xs text-gray-600">
-                Updated {format(lastRefreshed, "HH:mm:ss")}
-              </p>
-              <button
-                onClick={load}
-                disabled={loading}
-                title="Refresh now"
-                className="text-gray-600 hover:text-gray-300 disabled:opacity-40 transition-colors"
-              >
-                <i className={`bi bi-arrow-clockwise text-xs ${loading ? "animate-spin" : ""}`}></i>
-              </button>
-            </div>
-          )}
+          <PeriodSelector
+            activePresetId={activePresetId}
+            dateRange={dateRange}
+            onPresetSelect={handlePresetSelect}
+            onCustomRange={handleCustomRange}
+          />
         </div>
+        {lastRefreshed && !loading && (
+          <div className="flex items-center gap-1.5">
+            <p className="text-xs text-gray-600">
+              Updated {format(lastRefreshed, "HH:mm:ss")}
+            </p>
+            <button
+              onClick={load}
+              disabled={loading}
+              title="Refresh now"
+              className="text-gray-600 hover:text-gray-300 disabled:opacity-40 transition-colors"
+            >
+              <i className={`bi bi-arrow-clockwise text-xs ${loading ? "animate-spin" : ""}`}></i>
+            </button>
+          </div>
+        )}
       </div>
 
       {/* ── Error banner ── */}
