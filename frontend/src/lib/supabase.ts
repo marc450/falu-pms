@@ -366,6 +366,70 @@ export async function updateCellOrder(
 }
 
 // ============================================
+// ANALYTICS
+// ============================================
+
+export interface FleetTrendRow {
+  date: string;        // "YYYY-MM-DD"
+  avgUptime: number;   // avg efficiency % across all machines that day
+  avgScrap: number;    // avg reject_rate % across all machines that day
+  totalBoxes: number;  // sum produced_boxes
+  totalSwabs: number;  // sum produced_swabs
+  machineCount: number;// unique machines with readings that day
+  readingCount: number;// total save_flag readings that day
+}
+
+export async function fetchFleetTrend(days: number): Promise<FleetTrendRow[]> {
+  const since = new Date();
+  since.setDate(since.getDate() - days);
+
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("shift_readings")
+    .select("recorded_at, efficiency, reject_rate, produced_boxes, produced_swabs, machine_id")
+    .eq("save_flag", true)
+    .gte("recorded_at", since.toISOString())
+    .order("recorded_at", { ascending: true });
+
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) return [];
+
+  type DayAgg = {
+    uptimeSum: number; scrapSum: number;
+    boxes: number; swabs: number;
+    count: number; machines: Set<string>;
+  };
+  const byDate = new Map<string, DayAgg>();
+
+  for (const row of data) {
+    const date = (row.recorded_at as string).slice(0, 10);
+    let agg = byDate.get(date);
+    if (!agg) {
+      agg = { uptimeSum: 0, scrapSum: 0, boxes: 0, swabs: 0, count: 0, machines: new Set() };
+      byDate.set(date, agg);
+    }
+    agg.uptimeSum += (row.efficiency    as number) ?? 0;
+    agg.scrapSum  += (row.reject_rate   as number) ?? 0;
+    agg.boxes     += (row.produced_boxes as number) ?? 0;
+    agg.swabs     += (row.produced_swabs as number) ?? 0;
+    agg.count     += 1;
+    agg.machines.add(row.machine_id as string);
+  }
+
+  return Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, agg]) => ({
+      date,
+      avgUptime:    agg.count > 0 ? Math.round((agg.uptimeSum / agg.count) * 10) / 10 : 0,
+      avgScrap:     agg.count > 0 ? Math.round((agg.scrapSum  / agg.count) * 10) / 10 : 0,
+      totalBoxes:   agg.boxes,
+      totalSwabs:   agg.swabs,
+      machineCount: agg.machines.size,
+      readingCount: agg.count,
+    }));
+}
+
+// ============================================
 // BRIDGE API CLIENT
 // ============================================
 
