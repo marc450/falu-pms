@@ -393,6 +393,26 @@ export default function Analytics() {
         : buMediocrePerShift * shiftsPerDay)
     : null;
 
+  // KPI color for Total BU Output — compare actual total against what the park
+  // should have produced across all buckets: buckets × per-bucket target.
+  const buKpiGood     = buTarget !== null && rows.length > 0 ? rows.length * buTarget : null;
+  const buKpiMediocre = buMediocre !== null && rows.length > 0 ? rows.length * buMediocre : null;
+  const buKpiColor    = (() => {
+    if (totalBUs <= 0 || buKpiGood === null || buKpiMediocre === null)
+      return { text: "text-gray-500", border: "border-gray-700" };
+    if (totalBUs >= buKpiGood)     return { text: "text-green-400",  border: "border-green-700" };
+    if (totalBUs >= buKpiMediocre) return { text: "text-yellow-400", border: "border-yellow-700" };
+    return                                { text: "text-red-400",    border: "border-red-700" };
+  })();
+  // Swabs threshold is just BU threshold × 7200
+  const swabsKpiColor = (() => {
+    if (totalSwabs <= 0 || buKpiGood === null || buKpiMediocre === null)
+      return { text: "text-gray-500", border: "border-gray-700" };
+    if (totalSwabs >= buKpiGood * 7200)     return { text: "text-green-400",  border: "border-green-700" };
+    if (totalSwabs >= buKpiMediocre * 7200) return { text: "text-yellow-400", border: "border-yellow-700" };
+    return                                         { text: "text-red-400",    border: "border-red-700" };
+  })();
+
   const ec = applyEfficiencyColor(avgUptime, thresholds);
   const sc = applyScrapColor(avgScrap, thresholds);
 
@@ -477,17 +497,17 @@ export default function Analytics() {
               icon="bi-bullseye"
               label="Total BU Output"
               value={totalBUs > 0 ? totalBUs.toLocaleString() : "—"}
-              sub="Business units · selected period"
-              colorClass="text-white"
-              borderClass="border-gray-600"
+              sub={buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : "Business units · selected period"}
+              colorClass={buKpiColor.text}
+              borderClass={buKpiColor.border}
             />
             <KpiTile
               icon="bi-diamond"
               label="Total Swabs"
               value={totalSwabs > 0 ? `${(totalSwabs / 1_000_000).toFixed(2)}M` : "—"}
-              sub="Swabs produced · selected period"
-              colorClass="text-white"
-              borderClass="border-gray-600"
+              sub={buKpiGood !== null ? `Target: ${(buKpiGood * 7200 / 1_000_000).toFixed(2)}M` : "Swabs produced · selected period"}
+              colorClass={swabsKpiColor.text}
+              borderClass={swabsKpiColor.border}
             />
           </div>
 
