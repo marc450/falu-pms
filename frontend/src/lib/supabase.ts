@@ -385,8 +385,9 @@ export interface FleetTrendRow {
 }
 
 export interface FleetTrendResult {
-  rows: FleetTrendRow[];
-  granularity: "hour" | "day";
+  rows:          FleetTrendRow[];
+  granularity:   "hour" | "day";
+  totalReadings: number;
 }
 
 export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResult> {
@@ -407,16 +408,18 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
     .limit(50000);
 
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) return { rows: [], granularity };
+  if (!data || data.length === 0) return { rows: [], granularity, totalReadings: 0 };
 
   type ShiftKey = string; // `${machine_id}:${shift_number}`
   type BucketAgg = {
-    uptimeSum: number;
-    scrapSum:  number;
-    count:     number;
-    machines:  Set<string>;
-    boxesMax:  Map<ShiftKey, number>;
-    swabsMax:  Map<ShiftKey, number>;
+    uptimeSum:   number;
+    uptimeCount: number; // only readings where efficiency > 0 (excludes shift-start zeros)
+    scrapSum:    number;
+    scrapCount:  number;
+    count:       number;
+    machines:    Set<string>;
+    boxesMax:    Map<ShiftKey, number>;
+    swabsMax:    Map<ShiftKey, number>;
   };
 
   const byBucket = new Map<string, BucketAgg>();
@@ -427,15 +430,26 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
     let agg = byBucket.get(bucketKey);
     if (!agg) {
       agg = {
-        uptimeSum: 0, scrapSum: 0, count: 0,
+        uptimeSum: 0, uptimeCount: 0, scrapSum: 0, scrapCount: 0, count: 0,
         machines: new Set(), boxesMax: new Map(), swabsMax: new Map(),
       };
       byBucket.set(bucketKey, agg);
     }
 
-    agg.uptimeSum += (row.efficiency  as number) ?? 0;
-    agg.scrapSum  += (row.reject_rate as number) ?? 0;
-    agg.count     += 1;
+    const eff  = (row.efficiency  as number | null) ?? 0;
+    const scrap = (row.reject_rate as number | null) ?? 0;
+
+    // Exclude efficiency=0 from the uptime average — these are shift-initialisation
+    // readings where the PLC hasn't accumulated enough time for a meaningful figure.
+    if (eff > 0) {
+      agg.uptimeSum   += eff;
+      agg.uptimeCount += 1;
+    }
+    // reject_rate=0 is a valid measurement (no rejects), include it always.
+    agg.scrapSum   += scrap;
+    agg.scrapCount += 1;
+
+    agg.count += 1;
     agg.machines.add(row.machine_id as string);
 
     const shiftKey = `${row.machine_id}:${row.shift_number}`;
@@ -452,8 +466,8 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
       const totalSwabs = Array.from(agg.swabsMax.values()).reduce((s, v) => s + v, 0);
       return {
         date:         bucketKey,
-        avgUptime:    agg.count > 0 ? Math.round((agg.uptimeSum / agg.count) * 10) / 10 : 0,
-        avgScrap:     agg.count > 0 ? Math.round((agg.scrapSum  / agg.count) * 10) / 10 : 0,
+        avgUptime:    agg.uptimeCount > 0 ? Math.round((agg.uptimeSum / agg.uptimeCount) * 10) / 10 : 0,
+        avgScrap:     agg.scrapCount  > 0 ? Math.round((agg.scrapSum  / agg.scrapCount)  * 10) / 10 : 0,
         totalBoxes,
         totalSwabs,
         machineCount: agg.machines.size,
@@ -461,7 +475,7 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
       };
     });
 
-  return { rows, granularity };
+  return { rows, granularity, totalReadings: data.length };
 }
 
 // ============================================

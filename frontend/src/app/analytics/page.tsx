@@ -267,11 +267,12 @@ export default function Analytics() {
   const [dateRange, setDateRange]           = useState<DateRange>(() =>
     PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange()
   );
-  const [rows, setRows]               = useState<FleetTrendRow[]>([]);
-  const [granularity, setGranularity] = useState<"hour" | "day">("day");
-  const [thresholds, setThresholds]   = useState<Thresholds>(DEFAULT_THRESHOLDS);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState<string | null>(null);
+  const [rows, setRows]                   = useState<FleetTrendRow[]>([]);
+  const [granularity, setGranularity]     = useState<"hour" | "day">("day");
+  const [totalReadings, setTotalReadings] = useState<number>(0);
+  const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  const [loading, setLoading]             = useState(true);
+  const [error, setError]                 = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -280,6 +281,7 @@ export default function Analytics() {
       const [result, th] = await Promise.all([fetchFleetTrend(dateRange), fetchThresholds()]);
       setRows(result.rows);
       setGranularity(result.granularity);
+      setTotalReadings(result.totalReadings);
       setThresholds(th);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load analytics data");
@@ -382,6 +384,15 @@ export default function Analytics() {
               colorClass="text-white"
               borderClass="border-gray-600"
             />
+          </div>
+
+          {/* ── Data coverage note ── */}
+          <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-5 -mt-2">
+            <i className="bi bi-database"></i>
+            {totalReadings === 0
+              ? "No shift readings found for this period"
+              : `${totalReadings.toLocaleString()} shift reading${totalReadings !== 1 ? "s" : ""} · ${rows.length} ${granularity === "hour" ? "hourly" : "daily"} bucket${rows.length !== 1 ? "s" : ""}`
+            }
           </div>
 
           {/* ── Trend charts (2 columns) ── */}
