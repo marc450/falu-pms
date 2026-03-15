@@ -41,9 +41,8 @@ const logger = winston.createLogger({
   ],
 });
 
-// Ensure log directories exist
+// Ensure log directory exists
 fs.mkdirSync("logs", { recursive: true });
-fs.mkdirSync("csv_logs/machines", { recursive: true });
 
 // ============================================
 // SUPABASE
@@ -290,11 +289,8 @@ async function handleShiftMessage(payload) {
       .eq("id", machineId);
   }
 
-  // CSV logging when Save flag is true (end of shift)
   if (data.Save) {
-    logger.info(`Save flag received for ${machineCode}, Shift ${data.Shift} - Logging...`);
-    logToCsv(data);
-    await logToSavedShiftLogs(machineId, machineCode, data);
+    logger.info(`Save flag (end of shift) received for ${machineCode}, Shift ${data.Shift}`);
   }
 
   logger.debug(`Shift updated: ${machineCode} - ${data.Status} | Shift ${data.Shift} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
@@ -320,61 +316,6 @@ async function handleErrorMessage(payload) {
   allMachines[machineCode].activeErrors = errorCodes;
 
   // TODO: persist error codes to Supabase once schema is ready
-}
-
-// ============================================
-// CSV LOGGING
-// ============================================
-function formatMinutesToTime(minutes) {
-  if (!minutes || minutes === 0) return "00:00";
-  const h = Math.floor(minutes / 60);
-  const m = minutes % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
-}
-
-function logToCsv(data) {
-  const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
-  const prodTime = formatMinutesToTime(data.ProductionTime);
-  const idleTime = formatMinutesToTime(data.IdleTime);
-  const header = "Timestamp;Machine;Shift;Status;Speed;ProductionTime;IdleTime;ProducedSwabs;PackagedSwabs;DiscardedSwabs;ProducedBoxes;Efficiency;Reject";
-  const row = `${timestamp};${data.Machine};${data.Shift};${data.Status || ""};${data.Speed || 0};${prodTime};${idleTime};${data.ProducedSwabs || 0};${data.PackagedSwabs || 0};${data.DiscardedSwabs || 0};${data.ProducedBoxes || 0};${(data.Efficiency || 0).toFixed(2)};${(data.Reject || 0).toFixed(2)}`;
-
-  // Per-machine log
-  const machineLogPath = path.join("csv_logs", "machines", `${data.Machine}.csv`);
-  if (!fs.existsSync(machineLogPath)) {
-    fs.writeFileSync(machineLogPath, header + "\n", "utf8");
-  }
-  fs.appendFileSync(machineLogPath, row + "\n", "utf8");
-
-  // All-machines log
-  const allLogPath = path.join("csv_logs", "AllMachines.csv");
-  if (!fs.existsSync(allLogPath)) {
-    fs.writeFileSync(allLogPath, header + "\n", "utf8");
-  }
-  fs.appendFileSync(allLogPath, row + "\n", "utf8");
-
-  logger.info(`CSV logged: ${data.Machine} Shift ${data.Shift}`);
-}
-
-async function logToSavedShiftLogs(machineId, machineCode, data) {
-  await supabase.from("saved_shift_logs").insert({
-    machine_id: machineId,
-    machine_code: machineCode,
-    shift_number: data.Shift,
-    production_time: data.ProductionTime || 0,
-    idle_time: data.IdleTime || 0,
-    cotton_tears: 0,
-    missing_sticks: 0,
-    faulty_pickups: 0,
-    other_errors: 0,
-    produced_swabs: data.ProducedSwabs || 0,
-    packaged_swabs: data.PackagedSwabs || 0,
-    produced_boxes: data.ProducedBoxes || 0,
-    produced_boxes_layer_plus: 0,
-    discarded_swabs: data.DiscardedSwabs || 0,
-    efficiency: data.Efficiency || 0,
-    reject_rate: data.Reject || 0,
-  });
 }
 
 // ============================================
@@ -521,73 +462,6 @@ app.get("/api/settings/broker", (req, res) => {
     isLocal: brokerSettings.isLocal,
     subscribeTopic: getSubscribeTopic(),
   });
-});
-
-// CSV log files listing
-app.get("/api/logs", (req, res) => {
-  const logs = [];
-  const allLogPath = path.join("csv_logs", "AllMachines.csv");
-
-  if (fs.existsSync(allLogPath)) {
-    const stat = fs.statSync(allLogPath);
-    logs.push({
-      name: "AllMachines.csv",
-      path: "AllMachines.csv",
-      size: stat.size,
-      lastModified: stat.mtime,
-    });
-  }
-
-  const machineLogsDir = path.join("csv_logs", "machines");
-  if (fs.existsSync(machineLogsDir)) {
-    const files = fs.readdirSync(machineLogsDir).filter(f => f.endsWith(".csv"));
-    for (const file of files) {
-      const stat = fs.statSync(path.join(machineLogsDir, file));
-      logs.push({
-        name: file,
-        path: `machines/${file}`,
-        size: stat.size,
-        lastModified: stat.mtime,
-      });
-    }
-  }
-
-  res.json(logs);
-});
-
-// Download a CSV log
-app.get("/api/logs/download/:filename", (req, res) => {
-  const filePath = path.join("csv_logs", req.params.filename);
-  if (fs.existsSync(filePath)) {
-    return res.download(filePath);
-  }
-  res.status(404).json({ error: "File not found" });
-});
-
-app.get("/api/logs/download/machines/:filename", (req, res) => {
-  const filePath = path.join("csv_logs", "machines", req.params.filename);
-  if (fs.existsSync(filePath)) {
-    return res.download(filePath);
-  }
-  res.status(404).json({ error: "File not found" });
-});
-
-// Get CSV content (for inline preview)
-app.get("/api/logs/preview/:filename", (req, res) => {
-  let filePath = path.join("csv_logs", req.params.filename);
-  if (!fs.existsSync(filePath)) {
-    filePath = path.join("csv_logs", "machines", req.params.filename);
-  }
-  if (!fs.existsSync(filePath)) {
-    return res.status(404).json({ error: "File not found" });
-  }
-
-  const content = fs.readFileSync(filePath, "utf8");
-  const lines = content.trim().split("\n");
-  const headers = lines[0] ? lines[0].split(";") : [];
-  const rows = lines.slice(1).map(line => line.split(";"));
-
-  res.json({ headers, rows: rows.slice(-50) }); // Last 50 rows
 });
 
 // ============================================
