@@ -12,7 +12,7 @@ import {
   startOfMonth, startOfQuarter, startOfYear,
 } from "date-fns";
 import {
-  fetchFleetTrend, fetchRegisteredMachines,
+  fetchFleetTrend, fetchRegisteredMachines, fetchThresholds,
   applyEfficiencyColor, applyScrapColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
@@ -269,6 +269,8 @@ export default function Analytics() {
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
   const [totalReadings, setTotalReadings] = useState<number>(0);
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  const [buZoneGood, setBuZoneGood]       = useState<number | null>(null);
+  const [buZoneMediocre, setBuZoneMediocre] = useState<number | null>(null);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
@@ -284,9 +286,10 @@ export default function Analytics() {
         ? PRESETS.find(p => p.id === activePresetId)!.getRange()
         : dateRange;
     try {
-      const [result, machines] = await Promise.all([
+      const [result, machines, savedThresholds] = await Promise.all([
         fetchFleetTrend(effectiveRange),
         fetchRegisteredMachines(),
+        fetchThresholds(),
       ]);
       setRows(result.rows);
       setGranularity(result.granularity);
@@ -299,6 +302,8 @@ export default function Analytics() {
         const vals = arr.filter((v): v is number => v !== null && v > 0 && !isNaN(v));
         return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
       };
+      const avgBuTarget   = avg(machines.map(m => m.bu_target));
+      const avgBuMediocre = avg(machines.map(m => m.bu_mediocre));
       const computedThresholds: Thresholds = {
         efficiency: {
           good:     avg(machines.map(m => m.efficiency_good))     ?? DEFAULT_THRESHOLDS.efficiency.good,
@@ -308,9 +313,22 @@ export default function Analytics() {
           good:     avg(machines.map(m => m.scrap_good))     ?? DEFAULT_THRESHOLDS.scrap.good,
           mediocre: avg(machines.map(m => m.scrap_mediocre)) ?? DEFAULT_THRESHOLDS.scrap.mediocre,
         },
-        bu: DEFAULT_THRESHOLDS.bu,
+        bu: savedThresholds.bu, // shift length + planned downtime from app_settings
       };
       setThresholds(computedThresholds);
+
+      // Compute BU zone levels for the bar chart.
+      // BU targets are per-machine per-shift. Scale to per-bucket expected output.
+      const shiftHours = computedThresholds.bu.shiftLengthMinutes / 60;
+      const avgMachines = result.rows.length > 0
+        ? result.rows.reduce((s, r) => s + r.machineCount, 0) / result.rows.length
+        : machines.length;
+      const bucketScale = result.granularity === "hour"
+        ? avgMachines / shiftHours             // 1 hour of N machines
+        : avgMachines * (24 / shiftHours);     // full day of N machines
+      setBuZoneGood(avgBuTarget !== null ? Math.round(avgBuTarget * bucketScale) : null);
+      setBuZoneMediocre(avgBuMediocre !== null ? Math.round(avgBuMediocre * bucketScale) : null);
+
       setLastRefreshed(new Date());
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load analytics data");
@@ -342,8 +360,11 @@ export default function Analytics() {
   const hasData    = rows.length > 0;
   const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
   const avgScrap   = hasData ? rows.reduce((s, d) => s + d.avgScrap,  0) / rows.length : null;
-  const totalBoxes = rows.reduce((s, d) => s + d.totalBoxes, 0);
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
+  const totalBUs   = Math.round(totalSwabs / 7200);
+
+  // Pre-compute BU per bucket for the bar chart
+  const buRows = rows.map(r => ({ ...r, totalBUs: Math.round(r.totalSwabs / 7200) }));
 
   const ec = applyEfficiencyColor(avgUptime, thresholds);
   const sc = applyScrapColor(avgScrap, thresholds);
@@ -353,6 +374,9 @@ export default function Analytics() {
 
   const scrapCeil = (dataMax: number) =>
     Math.ceil(Math.max(dataMax, thresholds.scrap.mediocre) + 1);
+
+  const buCeil = (dataMax: number) =>
+    Math.ceil(Math.max(dataMax, buZoneMediocre ?? 0) * 1.1);
 
   const chartTitle = granularity === "hour"
     ? "— hourly park average"
@@ -422,10 +446,10 @@ export default function Analytics() {
               borderClass={sc.border}
             />
             <KpiTile
-              icon="bi-box-seam"
-              label="Total Output"
-              value={totalBoxes > 0 ? totalBoxes.toLocaleString() : "—"}
-              sub="Boxes produced · selected period"
+              icon="bi-bullseye"
+              label="Total BU Output"
+              value={totalBUs > 0 ? totalBUs.toLocaleString() : "—"}
+              sub="Business units · selected period"
               colorClass="text-white"
               borderClass="border-gray-600"
             />
@@ -551,10 +575,10 @@ export default function Analytics() {
                       type="monotone"
                       dataKey="avgScrap"
                       name="Scrap"
-                      stroke="#f87171"
+                      stroke="#22d3ee"
                       strokeWidth={2}
                       dot={false}
-                      activeDot={{ r: 4, fill: "#f87171", strokeWidth: 0 }}
+                      activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
                     />
                   </LineChart>
                 </ResponsiveContainer>
@@ -562,11 +586,27 @@ export default function Analytics() {
             </ChartCard>
           </div>
 
-          {/* ── Box output bar chart ── */}
-          <ChartCard title="Box Output — total across all machines">
+          {/* ── BU output bar chart ── */}
+          <ChartCard
+            title={`BU Output — total across all machines${granularity === "hour" ? " (per hour)" : " (per day)"}`}
+            legend={buZoneGood !== null ? (
+              <>
+                <ZoneLegend color="#4ade80" label={`Good (≥${buZoneGood})`} />
+                <ZoneLegend color="#eab308" label={`Mediocre (≥${buZoneMediocre ?? 0})`} />
+                <ZoneLegend color="#ef4444" label={`Poor (<${buZoneMediocre ?? 0})`} />
+              </>
+            ) : undefined}
+          >
             {!hasData ? <NoData /> : (
               <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  {buZoneGood !== null && buZoneMediocre !== null && (
+                    <>
+                      <ReferenceArea y1={buZoneGood} y2={buCeil(Math.max(...buRows.map(r => r.totalBUs)))} fill="#4ade80" fillOpacity={0.08} />
+                      <ReferenceArea y1={buZoneMediocre} y2={buZoneGood} fill="#eab308" fillOpacity={0.07} />
+                      <ReferenceArea y1={0} y2={buZoneMediocre} fill="#ef4444" fillOpacity={0.07} />
+                    </>
+                  )}
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                   <XAxis
                     dataKey="date"
@@ -577,6 +617,7 @@ export default function Analytics() {
                     interval="preserveStartEnd"
                   />
                   <YAxis
+                    domain={buZoneGood !== null ? [0, buCeil] : undefined}
                     tick={TICK_STYLE}
                     tickLine={false}
                     axisLine={false}
@@ -587,13 +628,13 @@ export default function Analytics() {
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
                     labelFormatter={(l) => fmtLabel(l as string)}
-                    formatter={(v) => [Number(v ?? 0).toLocaleString(), "Boxes"]}
+                    formatter={(v) => [Number(v ?? 0).toLocaleString(), "BUs"]}
                     cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
                   <Bar
-                    dataKey="totalBoxes"
-                    name="Boxes"
-                    fill="#0e7490"
+                    dataKey="totalBUs"
+                    name="BUs"
+                    fill="#22d3ee"
                     radius={[2, 2, 0, 0]}
                     maxBarSize={36}
                   />
