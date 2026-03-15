@@ -872,15 +872,6 @@ function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-function startOfWeek(d: Date): Date {
-  const clone = new Date(d);
-  const day = clone.getDay();
-  const diff = day === 0 ? -6 : 1 - day;
-  clone.setDate(clone.getDate() + diff);
-  clone.setHours(0, 0, 0, 0);
-  return clone;
-}
-
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const TEAM_COLORS: Record<string, string> = {
@@ -915,23 +906,31 @@ function ShiftsTab() {
   const [saving, setSaving] = useState(false);
 
   const [assignments, setAssignments] = useState<Record<string, ShiftAssignment>>({});
-  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
+  const [monthDate, setMonthDate] = useState<Date>(() => new Date()); // tracks current displayed month
   const [loading, setLoading] = useState(true);
   const [newTeamName, setNewTeamName] = useState("");
   const [editingSlot, setEditingSlot] = useState<number | null>(null);
 
-  const weekDates: Date[] = [];
-  for (let i = 0; i < 7; i++) {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + i);
-    weekDates.push(d);
-  }
-  const weekEnd = weekDates[6];
-  const fromStr = toISODate(weekDates[0]);
-  const toStr = toISODate(weekEnd);
+  // Build calendar grid dates for the displayed month
+  const year = monthDate.getFullYear();
+  const month = monthDate.getMonth();
+  const firstOfMonth = new Date(year, month, 1);
+  const lastOfMonth = new Date(year, month + 1, 0);
+  // Start on Monday: day 0=Sun maps to offset 6, Mon=0, Tue=1, etc.
+  const startDay = firstOfMonth.getDay();
+  const leadingBlanks = startDay === 0 ? 6 : startDay - 1;
+  const totalDays = lastOfMonth.getDate();
+  const trailingBlanks = (7 - ((leadingBlanks + totalDays) % 7)) % 7;
+
+  // All days of the month
+  const monthDates: Date[] = [];
+  for (let d = 1; d <= totalDays; d++) monthDates.push(new Date(year, month, d));
+
+  // Date range for fetching assignments (just the month)
+  const fromStr = toISODate(firstOfMonth);
+  const toStr = toISODate(lastOfMonth);
 
   const draftShiftMins = draftSlots.length > 0 ? Math.round(24 * 60 / draftSlots.length) : 480;
-  const shiftMins = shiftLengthFromSlots(config.slots);
 
   // Load config + assignments
   useEffect(() => {
@@ -952,10 +951,10 @@ function ShiftsTab() {
       .finally(() => setLoading(false));
   }, [fromStr, toStr]);
 
-  // Week navigation
-  const prevWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); };
-  const nextWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); };
-  const goToday = () => setWeekStart(startOfWeek(new Date()));
+  // Month navigation
+  const prevMonth = () => setMonthDate(new Date(year, month - 1, 1));
+  const nextMonth = () => setMonthDate(new Date(year, month + 1, 1));
+  const goToday = () => setMonthDate(new Date());
 
   // Persist helper for team changes (these still auto-save, only slot structure requires explicit save)
   const persistConfig = (updated: ShiftConfig) => {
@@ -1102,12 +1101,12 @@ function ShiftsTab() {
     saveShiftAssignment(dateStr, newTeams).catch(console.error);
   };
 
-  const clearWeek = () => {
+  const clearMonth = () => {
     const emptySlots = config.slots.map(() => null);
     const bulk: ShiftAssignment[] = [];
     const map = { ...assignments };
-    for (let i = 0; i < 7; i++) {
-      const dateStr = toISODate(weekDates[i]);
+    for (const d of monthDates) {
+      const dateStr = toISODate(d);
       const a: ShiftAssignment = { shift_date: dateStr, slot_teams: emptySlots };
       map[dateStr] = a;
       bulk.push(a);
@@ -1116,18 +1115,18 @@ function ShiftsTab() {
     saveShiftAssignmentsBulk(bulk).catch(console.error);
   };
 
-  const copyPrevWeek = async () => {
-    const prevStart = new Date(weekStart);
-    prevStart.setDate(prevStart.getDate() - 7);
-    const prevEnd = new Date(prevStart);
-    prevEnd.setDate(prevEnd.getDate() + 6);
+  const copyPrevMonth = async () => {
+    const prevFirst = new Date(year, month - 1, 1);
+    const prevLast = new Date(year, month, 0);
     try {
-      const prevRows = await fetchShiftAssignments(toISODate(prevStart), toISODate(prevEnd));
+      const prevRows = await fetchShiftAssignments(toISODate(prevFirst), toISODate(prevLast));
       const bulk: ShiftAssignment[] = [];
       const map = { ...assignments };
-      for (let i = 0; i < 7; i++) {
-        const dateStr = toISODate(weekDates[i]);
-        const prevDateStr = toISODate(new Date(prevStart.getTime() + i * 86_400_000));
+      for (const d of monthDates) {
+        const dateStr = toISODate(d);
+        // Match by day-of-month from previous month (capped at prev month length)
+        const prevDay = Math.min(d.getDate(), prevLast.getDate());
+        const prevDateStr = toISODate(new Date(prevFirst.getFullYear(), prevFirst.getMonth(), prevDay));
         const src = prevRows.find(r => r.shift_date === prevDateStr);
         const a: ShiftAssignment = {
           shift_date: dateStr,
@@ -1323,99 +1322,119 @@ function ShiftsTab() {
         </div>
       </div>
 
-      {/* ── Weekly calendar ──────────────────────────────── */}
+      {/* ── Monthly calendar ─────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700 flex items-center justify-between">
           <div>
             <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-              <i className="bi bi-calendar3 text-cyan-400"></i>Weekly Schedule
+              <i className="bi bi-calendar3 text-cyan-400"></i>Monthly Schedule
             </h4>
             <p className="text-gray-500 text-xs mt-0.5">Assign teams to each day&apos;s shifts</p>
           </div>
-          <button onClick={copyPrevWeek} className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Copy from previous week">
-            <i className="bi bi-clipboard mr-1"></i>Copy prev. week
+          <button onClick={copyPrevMonth} className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Copy assignments from previous month">
+            <i className="bi bi-clipboard mr-1"></i>Copy prev. month
           </button>
         </div>
 
-        {/* Week navigation */}
+        {/* Month navigation */}
         <div className="px-5 py-2 border-b border-gray-700/50 flex items-center justify-between">
-          <button onClick={prevWeek} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+          <button onClick={prevMonth} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
             <i className="bi bi-chevron-left"></i>
           </button>
           <div className="flex items-center gap-3">
             <span className="text-sm text-white font-medium">
-              {weekDates[0].toLocaleDateString("de-DE", { day: "2-digit", month: "short" })}
-              {" – "}
-              {weekEnd.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" })}
+              {firstOfMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" })}
             </span>
             <button onClick={goToday} className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors">Today</button>
           </div>
-          <button onClick={nextWeek} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+          <button onClick={nextMonth} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
             <i className="bi bi-chevron-right"></i>
           </button>
         </div>
 
-        {/* Calendar grid — dynamic rows based on slot count */}
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[600px]">
-            <thead>
-              <tr className="border-b border-gray-700/50">
-                <th className="px-3 py-2 text-left text-xs text-gray-500 font-normal w-24"></th>
-                {weekDates.map((d, i) => (
-                  <th key={i} className={`px-2 py-2 text-center text-xs font-medium ${isToday(d) ? "text-cyan-400" : "text-gray-400"}`}>
-                    <div>{WEEKDAYS[i]}</div>
-                    <div className={`text-sm mt-0.5 ${isToday(d) ? "text-cyan-300 font-semibold" : "text-white"}`}>
-                      {d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}
-                    </div>
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {config.slots.map((slot, slotIdx) => {
-                const end = slotEndHour(config.slots, slotIdx);
-                const icon = SLOT_ICONS[slotIdx % SLOT_ICONS.length];
-                return (
-                  <tr key={slotIdx} className={slotIdx < config.slots.length - 1 ? "border-b border-gray-700/30" : ""}>
-                    <td className="px-3 py-2">
-                      <div className="text-xs text-gray-400 flex items-center gap-1.5">
-                        <i className={`bi ${icon}`}></i>{slot.name}
-                      </div>
-                      <div className="text-[10px] text-gray-600">{fmtHour(slot.startHour)}–{fmtHour(end)}</div>
-                    </td>
-                    {weekDates.map((d, dayIdx) => {
-                      const dateStr = toISODate(d);
-                      const a = assignments[dateStr];
+        {/* Calendar grid */}
+        <div className="p-3">
+          {/* Day-of-week header */}
+          <div className="grid grid-cols-7 mb-1">
+            {WEEKDAYS.map(day => (
+              <div key={day} className="text-center text-xs text-gray-500 font-medium py-1">{day}</div>
+            ))}
+          </div>
+
+          {/* Day cells */}
+          <div className="grid grid-cols-7 gap-1">
+            {/* Leading blanks */}
+            {Array.from({ length: leadingBlanks }).map((_, i) => (
+              <div key={`lb-${i}`} className="min-h-[60px]" />
+            ))}
+
+            {/* Actual days */}
+            {monthDates.map(d => {
+              const dateStr = toISODate(d);
+              const today = isToday(d);
+              const weekend = d.getDay() === 0 || d.getDay() === 6;
+              const a = assignments[dateStr];
+              return (
+                <div
+                  key={dateStr}
+                  className={`rounded-md border p-1.5 min-h-[60px] transition-colors ${
+                    today
+                      ? "border-cyan-500/60 bg-cyan-900/15"
+                      : weekend
+                        ? "border-gray-700/40 bg-gray-800/30"
+                        : "border-gray-700/30 bg-gray-800/20"
+                  }`}
+                >
+                  <div className={`text-xs font-medium mb-1 ${today ? "text-cyan-300" : weekend ? "text-gray-500" : "text-gray-400"}`}>
+                    {d.getDate()}
+                  </div>
+                  <div className="space-y-0.5">
+                    {config.slots.map((slot, slotIdx) => {
                       const team = a?.slot_teams?.[slotIdx] ?? null;
                       return (
-                        <td key={dayIdx} className={`px-1 py-2 text-center ${isToday(d) ? "bg-cyan-900/10" : ""}`}>
-                          <select
-                            value={team ?? ""}
-                            onChange={e => assign(dateStr, slotIdx, e.target.value || null)}
-                            className={`w-full text-center text-sm font-semibold rounded py-1.5 px-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
-                              team ? `${teamColor(team)} text-white` : "bg-gray-800 text-gray-600"
-                            }`}
-                          >
-                            <option value="" className="bg-gray-800 text-gray-400">&mdash;</option>
-                            {config.teams.map(t => (
-                              <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
-                            ))}
-                          </select>
-                        </td>
+                        <select
+                          key={slotIdx}
+                          value={team ?? ""}
+                          onChange={e => assign(dateStr, slotIdx, e.target.value || null)}
+                          title={`${slot.name} (${fmtHour(slot.startHour)})`}
+                          className={`w-full text-center text-[11px] font-semibold rounded py-0.5 px-0.5 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
+                            team ? `${teamColor(team)} text-white` : "bg-gray-700/50 text-gray-600"
+                          }`}
+                        >
+                          <option value="" className="bg-gray-800 text-gray-400">{slot.name.charAt(0)}</option>
+                          {config.teams.map(t => (
+                            <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
+                          ))}
+                        </select>
                       );
                     })}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                  </div>
+                </div>
+              );
+            })}
+
+            {/* Trailing blanks */}
+            {Array.from({ length: trailingBlanks }).map((_, i) => (
+              <div key={`tb-${i}`} className="min-h-[60px]" />
+            ))}
+          </div>
         </div>
 
-        {/* Quick actions */}
-        <div className="px-5 py-3 border-t border-gray-700/50 flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-gray-500 mr-1">Quick:</span>
-          <button onClick={clearWeek} className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
-            Clear week
+        {/* Slot legend + quick actions */}
+        <div className="px-5 py-3 border-t border-gray-700/50 flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-3">
+            {config.slots.map((slot, idx) => {
+              const icon = SLOT_ICONS[idx % SLOT_ICONS.length];
+              return (
+                <span key={idx} className="text-xs text-gray-500 flex items-center gap-1">
+                  <i className={`bi ${icon}`}></i>
+                  Row {idx + 1} = {slot.name}
+                </span>
+              );
+            })}
+          </div>
+          <button onClick={clearMonth} className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
+            Clear month
           </button>
         </div>
       </div>
