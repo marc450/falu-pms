@@ -1,31 +1,28 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from "recharts";
-import { format, parseISO } from "date-fns";
+import {
+  format, parseISO,
+  subHours, subDays, subMonths,
+  startOfMonth, startOfQuarter, startOfYear,
+} from "date-fns";
 import {
   fetchFleetTrend, fetchThresholds,
   applyEfficiencyColor, applyScrapColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { FleetTrendRow, Thresholds } from "@/lib/supabase";
+import type { DateRange, FleetTrendRow, Thresholds } from "@/lib/supabase";
 
-// ─── Constants ─────────────────────────────────────────────────────────────
+// ─── Chart constants ─────────────────────────────────────────────────────────
 
-const PERIOD_OPTIONS = [
-  { label: "7 days",  days: 7  },
-  { label: "14 days", days: 14 },
-  { label: "30 days", days: 30 },
-] as const;
-type Period = (typeof PERIOD_OPTIONS)[number]["days"];
-
-const GRID_COLOR   = "#374151";
-const AXIS_COLOR   = "#4b5563";
-const TICK_STYLE   = { fill: "#9ca3af", fontSize: 11 };
+const GRID_COLOR  = "#374151";
+const AXIS_COLOR  = "#4b5563";
+const TICK_STYLE  = { fill: "#9ca3af", fontSize: 11 };
 const TOOLTIP_CONTENT_STYLE = {
   backgroundColor: "#1f2937",
   border: "1px solid #374151",
@@ -35,11 +32,57 @@ const TOOLTIP_CONTENT_STYLE = {
 const TOOLTIP_LABEL_STYLE = { color: "#9ca3af", marginBottom: 4 };
 const TOOLTIP_ITEM_STYLE  = { padding: "1px 0" };
 
-// ─── Sub-components ─────────────────────────────────────────────────────────
+// ─── Period presets ───────────────────────────────────────────────────────────
 
-function KpiTile({
-  icon, label, value, sub, colorClass, borderClass,
-}: {
+type PresetId = "24h" | "7d" | "4w" | "6m" | "12m" | "mtd" | "qtd" | "ytd" | "all";
+
+interface Preset {
+  id:       PresetId;
+  label:    string;
+  getRange: () => DateRange;
+}
+
+const mkNow = () => new Date();
+
+const PRESETS: Preset[] = [
+  { id: "24h", label: "Last 24 hours",   getRange: () => ({ start: subHours(mkNow(), 24),    end: mkNow() }) },
+  { id: "7d",  label: "Last 7 days",     getRange: () => ({ start: subDays(mkNow(), 7),       end: mkNow() }) },
+  { id: "4w",  label: "Last 4 weeks",    getRange: () => ({ start: subDays(mkNow(), 28),      end: mkNow() }) },
+  { id: "6m",  label: "Last 6 months",   getRange: () => ({ start: subMonths(mkNow(), 6),     end: mkNow() }) },
+  { id: "12m", label: "Last 12 months",  getRange: () => ({ start: subMonths(mkNow(), 12),    end: mkNow() }) },
+  { id: "mtd", label: "Month to date",   getRange: () => ({ start: startOfMonth(mkNow()),     end: mkNow() }) },
+  { id: "qtd", label: "Quarter to date", getRange: () => ({ start: startOfQuarter(mkNow()),   end: mkNow() }) },
+  { id: "ytd", label: "Year to date",    getRange: () => ({ start: startOfYear(mkNow()),      end: mkNow() }) },
+  { id: "all", label: "All time",        getRange: () => ({ start: new Date(2020, 0, 1),       end: mkNow() }) },
+];
+
+const DEFAULT_PRESET_ID: PresetId = "7d";
+
+// ─── Bucket formatting ────────────────────────────────────────────────────────
+
+function fmtBucket(key: string, granularity: "hour" | "day"): string {
+  try {
+    return granularity === "hour"
+      ? format(parseISO(key + ":00:00"), "HH:mm")
+      : format(parseISO(key), "dd.MM");
+  } catch { return key; }
+}
+
+function fmtBucketFull(key: string, granularity: "hour" | "day"): string {
+  try {
+    return granularity === "hour"
+      ? format(parseISO(key + ":00:00"), "dd.MM.yyyy HH:mm")
+      : format(parseISO(key), "dd.MM.yyyy");
+  } catch { return key; }
+}
+
+function toDateInputValue(d: Date): string {
+  return format(d, "yyyy-MM-dd");
+}
+
+// ─── KPI tile ────────────────────────────────────────────────────────────────
+
+function KpiTile({ icon, label, value, sub, colorClass, borderClass }: {
   icon: string; label: string; value: string;
   sub?: string; colorClass: string; borderClass: string;
 }) {
@@ -55,9 +98,9 @@ function KpiTile({
   );
 }
 
-function ChartCard({
-  title, legend, children,
-}: {
+// ─── Chart card ──────────────────────────────────────────────────────────────
+
+function ChartCard({ title, legend, children }: {
   title: string;
   legend?: React.ReactNode;
   children: React.ReactNode;
@@ -73,17 +116,21 @@ function ChartCard({
   );
 }
 
+// ─── Empty state ─────────────────────────────────────────────────────────────
+
 function NoData() {
   return (
     <div className="flex flex-col items-center justify-center h-[220px] gap-2">
       <i className="bi bi-inbox text-3xl text-gray-600"></i>
-      <p className="text-sm text-gray-500">No saved shift data for this period</p>
+      <p className="text-sm text-gray-500">No data for this period</p>
       <p className="text-xs text-gray-600 max-w-xs text-center">
-        Shift readings appear here once machines save their shift data via the PLC
+        Shift readings appear here once machines send data via the PLC
       </p>
     </div>
   );
 }
+
+// ─── Legend dashed line ───────────────────────────────────────────────────────
 
 function DashLegendLine({ color, label }: { color: string; label: string }) {
   return (
@@ -96,69 +143,194 @@ function DashLegendLine({ color, label }: { color: string; label: string }) {
   );
 }
 
-// ─── Page ───────────────────────────────────────────────────────────────────
+// ─── Period selector ──────────────────────────────────────────────────────────
+
+function PeriodSelector({
+  activePresetId,
+  dateRange,
+  onPresetSelect,
+  onCustomRange,
+}: {
+  activePresetId: PresetId | "custom";
+  dateRange:      DateRange;
+  onPresetSelect: (preset: Preset) => void;
+  onCustomRange:  (range: DateRange) => void;
+}) {
+  const [open, setOpen]             = useState(false);
+  const [customStart, setCustomStart] = useState(() => toDateInputValue(dateRange.start));
+  const [customEnd,   setCustomEnd]   = useState(() => toDateInputValue(dateRange.end));
+  const ref = useRef<HTMLDivElement>(null);
+
+  // Keep inputs in sync when external range changes (e.g. preset click)
+  useEffect(() => {
+    setCustomStart(toDateInputValue(dateRange.start));
+    setCustomEnd(toDateInputValue(dateRange.end));
+  }, [dateRange]);
+
+  // Close on outside click
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  const buttonLabel =
+    activePresetId === "custom"
+      ? `${format(dateRange.start, "dd.MM.yyyy")} – ${format(dateRange.end, "dd.MM.yyyy")}`
+      : PRESETS.find(p => p.id === activePresetId)?.label ?? "Select period";
+
+  function applyCustom() {
+    try {
+      const start = parseISO(customStart);
+      const end   = parseISO(customEnd);
+      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
+        end.setHours(23, 59, 59, 999);
+        onCustomRange({ start, end });
+        setOpen(false);
+      }
+    } catch { /* ignore parse errors */ }
+  }
+
+  return (
+    <div className="relative" ref={ref}>
+      {/* Trigger button */}
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+      >
+        <i className="bi bi-calendar3 text-xs text-gray-500"></i>
+        {buttonLabel}
+        <i className={`bi bi-chevron-${open ? "up" : "down"} text-xs text-gray-500`}></i>
+      </button>
+
+      {/* Dropdown panel */}
+      {open && (
+        <div className="absolute right-0 top-full mt-1 z-50 flex bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+
+          {/* Preset list */}
+          <div className="py-2 border-r border-gray-800 min-w-[160px]">
+            {PRESETS.map(preset => (
+              <button
+                key={preset.id}
+                onClick={() => { onPresetSelect(preset); setOpen(false); }}
+                className={`w-full text-left px-4 py-1.5 text-sm transition-colors ${
+                  activePresetId === preset.id
+                    ? "text-cyan-400 bg-cyan-950/50"
+                    : "text-gray-400 hover:text-white hover:bg-gray-800"
+                }`}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Custom range */}
+          <div className="p-4 flex flex-col gap-3 min-w-[190px]">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Custom range</p>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">From</span>
+              <input
+                type="date"
+                value={customStart}
+                onChange={e => setCustomStart(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
+              />
+            </label>
+            <label className="flex flex-col gap-1">
+              <span className="text-xs text-gray-500">To</span>
+              <input
+                type="date"
+                value={customEnd}
+                onChange={e => setCustomEnd(e.target.value)}
+                className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
+              />
+            </label>
+            <button
+              onClick={applyCustom}
+              className="mt-1 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition-colors font-medium"
+            >
+              Apply
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Analytics() {
-  const [period, setPeriod]         = useState<Period>(14);
-  const [trend, setTrend]           = useState<FleetTrendRow[]>([]);
-  const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
-  const [loading, setLoading]       = useState(true);
-  const [error, setError]           = useState<string | null>(null);
+  const [activePresetId, setActivePresetId] = useState<PresetId | "custom">(DEFAULT_PRESET_ID);
+  const [dateRange, setDateRange]           = useState<DateRange>(() =>
+    PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange()
+  );
+  const [rows, setRows]               = useState<FleetTrendRow[]>([]);
+  const [granularity, setGranularity] = useState<"hour" | "day">("day");
+  const [thresholds, setThresholds]   = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  const [loading, setLoading]         = useState(true);
+  const [error, setError]             = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [data, th] = await Promise.all([fetchFleetTrend(period), fetchThresholds()]);
-      setTrend(data);
+      const [result, th] = await Promise.all([fetchFleetTrend(dateRange), fetchThresholds()]);
+      setRows(result.rows);
+      setGranularity(result.granularity);
       setThresholds(th);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load analytics data");
     } finally {
       setLoading(false);
     }
-  }, [period]);
+  }, [dateRange]);
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Summary KPIs over entire period ──
-  const hasData   = trend.length > 0;
-  const avgUptime = hasData ? trend.reduce((s, d) => s + d.avgUptime, 0) / trend.length : null;
-  const avgScrap  = hasData ? trend.reduce((s, d) => s + d.avgScrap,  0) / trend.length : null;
-  const totalBoxes = trend.reduce((s, d) => s + d.totalBoxes, 0);
-  const totalSwabs = trend.reduce((s, d) => s + d.totalSwabs, 0);
+  function handlePresetSelect(preset: Preset) {
+    setActivePresetId(preset.id);
+    setDateRange(preset.getRange());
+  }
+
+  function handleCustomRange(range: DateRange) {
+    setActivePresetId("custom");
+    setDateRange(range);
+  }
+
+  // ── Summary KPIs ──
+  const hasData    = rows.length > 0;
+  const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
+  const avgScrap   = hasData ? rows.reduce((s, d) => s + d.avgScrap,  0) / rows.length : null;
+  const totalBoxes = rows.reduce((s, d) => s + d.totalBoxes, 0);
+  const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
 
   const ec = applyEfficiencyColor(avgUptime, thresholds);
   const sc = applyScrapColor(avgScrap, thresholds);
 
-  const fmtDate = (d: string) => {
-    try { return format(parseISO(d), "dd.MM"); } catch { return d; }
-  };
+  const fmtTick  = (key: string) => fmtBucket(key, granularity);
+  const fmtLabel = (key: string) => fmtBucketFull(key, granularity);
 
-  // Scrap Y-axis ceiling: show at least up to the mediocre threshold + a bit of headroom
   const scrapCeil = (dataMax: number) =>
     Math.ceil(Math.max(dataMax, thresholds.scrap.mediocre) + 1);
+
+  const chartTitle = granularity === "hour"
+    ? "— hourly park average"
+    : "— daily park average";
 
   return (
     <div>
       {/* ── Header ── */}
       <div className="flex justify-between items-center mb-6">
         <h2 className="text-xl font-bold text-white">Fleet Analytics</h2>
-        <div className="flex gap-1 bg-gray-800 rounded-lg p-1">
-          {PERIOD_OPTIONS.map((opt) => (
-            <button
-              key={opt.days}
-              onClick={() => setPeriod(opt.days)}
-              className={`px-4 py-1.5 text-sm rounded-md transition-colors ${
-                period === opt.days
-                  ? "bg-cyan-600/30 text-cyan-400 font-medium"
-                  : "text-gray-400 hover:text-white"
-              }`}
-            >
-              {opt.label}
-            </button>
-          ))}
-        </div>
+        <PeriodSelector
+          activePresetId={activePresetId}
+          dateRange={dateRange}
+          onPresetSelect={handlePresetSelect}
+          onCustomRange={handleCustomRange}
+        />
       </div>
 
       {/* ── Error banner ── */}
@@ -182,7 +354,7 @@ export default function Analytics() {
               icon="bi-speedometer2"
               label="Avg Uptime"
               value={avgUptime !== null ? `${avgUptime.toFixed(1)}%` : "—"}
-              sub={`Park average · last ${period} days`}
+              sub="Park average · selected period"
               colorClass={ec.text}
               borderClass={ec.border}
             />
@@ -190,7 +362,7 @@ export default function Analytics() {
               icon="bi-exclamation-triangle"
               label="Avg Scrap Rate"
               value={avgScrap !== null ? `${avgScrap.toFixed(1)}%` : "—"}
-              sub={`Park average · last ${period} days`}
+              sub="Park average · selected period"
               colorClass={sc.text}
               borderClass={sc.border}
             />
@@ -198,7 +370,7 @@ export default function Analytics() {
               icon="bi-box-seam"
               label="Total Output"
               value={totalBoxes > 0 ? totalBoxes.toLocaleString() : "—"}
-              sub={`Boxes produced · last ${period} days`}
+              sub="Boxes produced · selected period"
               colorClass="text-white"
               borderClass="border-gray-600"
             />
@@ -206,7 +378,7 @@ export default function Analytics() {
               icon="bi-diamond"
               label="Total Swabs"
               value={totalSwabs > 0 ? `${(totalSwabs / 1_000_000).toFixed(2)}M` : "—"}
-              sub={`Swabs produced · last ${period} days`}
+              sub="Swabs produced · selected period"
               colorClass="text-white"
               borderClass="border-gray-600"
             />
@@ -217,7 +389,7 @@ export default function Analytics() {
 
             {/* Uptime trend */}
             <ChartCard
-              title="Avg Uptime — daily park average"
+              title={`Avg Uptime ${chartTitle}`}
               legend={
                 <>
                   <DashLegendLine color="#22d3ee" label={`Good (${thresholds.efficiency.good}%)`} />
@@ -227,14 +399,14 @@ export default function Analytics() {
             >
               {!hasData ? <NoData /> : (
                 <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={trend} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
                       tick={TICK_STYLE}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
-                      tickFormatter={fmtDate}
+                      tickFormatter={fmtTick}
                       interval="preserveStartEnd"
                     />
                     <YAxis
@@ -248,7 +420,7 @@ export default function Analytics() {
                       contentStyle={TOOLTIP_CONTENT_STYLE}
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={(l) => fmtDate(l as string)}
+                      labelFormatter={(l) => fmtLabel(l as string)}
                       formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Uptime"]}
                     />
                     <ReferenceLine
@@ -275,7 +447,7 @@ export default function Analytics() {
 
             {/* Scrap trend */}
             <ChartCard
-              title="Avg Scrap Rate — daily park average"
+              title={`Avg Scrap Rate ${chartTitle}`}
               legend={
                 <>
                   <DashLegendLine color="#4ade80" label={`Good (≤${thresholds.scrap.good}%)`} />
@@ -285,14 +457,14 @@ export default function Analytics() {
             >
               {!hasData ? <NoData /> : (
                 <ResponsiveContainer width="100%" height={220}>
-                  <LineChart data={trend} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
                       tick={TICK_STYLE}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
-                      tickFormatter={fmtDate}
+                      tickFormatter={fmtTick}
                       interval="preserveStartEnd"
                     />
                     <YAxis
@@ -306,7 +478,7 @@ export default function Analytics() {
                       contentStyle={TOOLTIP_CONTENT_STYLE}
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
-                      labelFormatter={(l) => fmtDate(l as string)}
+                      labelFormatter={(l) => fmtLabel(l as string)}
                       formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Scrap"]}
                     />
                     <ReferenceLine
@@ -332,18 +504,18 @@ export default function Analytics() {
             </ChartCard>
           </div>
 
-          {/* ── Daily output bar chart ── */}
-          <ChartCard title="Daily Box Output — total across all machines">
+          {/* ── Box output bar chart ── */}
+          <ChartCard title="Box Output — total across all machines">
             {!hasData ? <NoData /> : (
               <ResponsiveContainer width="100%" height={180}>
-                <BarChart data={trend} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                <BarChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                   <XAxis
                     dataKey="date"
                     tick={TICK_STYLE}
                     tickLine={false}
                     axisLine={{ stroke: AXIS_COLOR }}
-                    tickFormatter={fmtDate}
+                    tickFormatter={fmtTick}
                     interval="preserveStartEnd"
                   />
                   <YAxis
@@ -356,7 +528,7 @@ export default function Analytics() {
                     contentStyle={TOOLTIP_CONTENT_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
-                    labelFormatter={(l) => fmtDate(l as string)}
+                    labelFormatter={(l) => fmtLabel(l as string)}
                     formatter={(v) => [Number(v ?? 0).toLocaleString(), "Boxes"]}
                     cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />

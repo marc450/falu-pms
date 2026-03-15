@@ -369,66 +369,99 @@ export async function updateCellOrder(
 // ANALYTICS
 // ============================================
 
-export interface FleetTrendRow {
-  date: string;        // "YYYY-MM-DD"
-  avgUptime: number;   // avg efficiency % across all machines that day
-  avgScrap: number;    // avg reject_rate % across all machines that day
-  totalBoxes: number;  // sum produced_boxes
-  totalSwabs: number;  // sum produced_swabs
-  machineCount: number;// unique machines with readings that day
-  readingCount: number;// total save_flag readings that day
+export interface DateRange {
+  start: Date;
+  end: Date;
 }
 
-export async function fetchFleetTrend(days: number): Promise<FleetTrendRow[]> {
-  const since = new Date();
-  since.setDate(since.getDate() - days);
+export interface FleetTrendRow {
+  date: string;        // "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH" (hourly)
+  avgUptime: number;   // avg efficiency % across all machines in bucket
+  avgScrap: number;    // avg reject_rate % across all machines in bucket
+  totalBoxes: number;  // sum of per-(machine_id, shift_number) MAX produced_boxes
+  totalSwabs: number;  // sum of per-(machine_id, shift_number) MAX produced_swabs
+  machineCount: number;// unique machines with readings in bucket
+  readingCount: number;// total readings in bucket
+}
+
+export interface FleetTrendResult {
+  rows: FleetTrendRow[];
+  granularity: "hour" | "day";
+}
+
+export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResult> {
+  const diffMs   = range.end.getTime() - range.start.getTime();
+  const diffDays = diffMs / (1000 * 60 * 60 * 24);
+  const granularity: "hour" | "day" = diffDays <= 2 ? "hour" : "day";
 
   const sb = getSupabase();
-  // saved_shift_logs is the purpose-built table for completed shift snapshots:
-  // one row per machine per PLC Save event, no save_flag filter needed.
-  // Simpler and more correct than filtering shift_readings on save_flag.
+  // Use shift_readings for all analytics — high-frequency time-series with per-reading
+  // efficiency/scrap values. produced_boxes/swabs are cumulative counters within a shift,
+  // so we take MAX per (machine_id, shift_number) per bucket to avoid double-counting.
   const { data, error } = await sb
-    .from("saved_shift_logs")
-    .select("saved_at, efficiency, reject_rate, produced_boxes, produced_swabs, machine_code")
-    .gte("saved_at", since.toISOString())
-    .order("saved_at", { ascending: true });
+    .from("shift_readings")
+    .select("recorded_at, efficiency, reject_rate, produced_boxes, produced_swabs, machine_id, shift_number")
+    .gte("recorded_at", range.start.toISOString())
+    .lte("recorded_at", range.end.toISOString())
+    .order("recorded_at", { ascending: true })
+    .limit(50000);
 
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) return [];
+  if (!data || data.length === 0) return { rows: [], granularity };
 
-  type DayAgg = {
-    uptimeSum: number; scrapSum: number;
-    boxes: number; swabs: number;
-    count: number; machines: Set<string>;
+  type ShiftKey = string; // `${machine_id}:${shift_number}`
+  type BucketAgg = {
+    uptimeSum: number;
+    scrapSum:  number;
+    count:     number;
+    machines:  Set<string>;
+    boxesMax:  Map<ShiftKey, number>;
+    swabsMax:  Map<ShiftKey, number>;
   };
-  const byDate = new Map<string, DayAgg>();
+
+  const byBucket = new Map<string, BucketAgg>();
 
   for (const row of data) {
-    const date = (row.saved_at as string).slice(0, 10);
-    let agg = byDate.get(date);
+    const ts        = row.recorded_at as string;
+    const bucketKey = granularity === "hour" ? ts.slice(0, 13) : ts.slice(0, 10);
+    let agg = byBucket.get(bucketKey);
     if (!agg) {
-      agg = { uptimeSum: 0, scrapSum: 0, boxes: 0, swabs: 0, count: 0, machines: new Set() };
-      byDate.set(date, agg);
+      agg = {
+        uptimeSum: 0, scrapSum: 0, count: 0,
+        machines: new Set(), boxesMax: new Map(), swabsMax: new Map(),
+      };
+      byBucket.set(bucketKey, agg);
     }
-    agg.uptimeSum += (row.efficiency     as number) ?? 0;
-    agg.scrapSum  += (row.reject_rate    as number) ?? 0;
-    agg.boxes     += (row.produced_boxes as number) ?? 0;
-    agg.swabs     += (row.produced_swabs as number) ?? 0;
+
+    agg.uptimeSum += (row.efficiency  as number) ?? 0;
+    agg.scrapSum  += (row.reject_rate as number) ?? 0;
     agg.count     += 1;
-    agg.machines.add(row.machine_code as string);
+    agg.machines.add(row.machine_id as string);
+
+    const shiftKey = `${row.machine_id}:${row.shift_number}`;
+    const boxes    = (row.produced_boxes as number) ?? 0;
+    const swabs    = (row.produced_swabs as number) ?? 0;
+    agg.boxesMax.set(shiftKey, Math.max(agg.boxesMax.get(shiftKey) ?? 0, boxes));
+    agg.swabsMax.set(shiftKey, Math.max(agg.swabsMax.get(shiftKey) ?? 0, swabs));
   }
 
-  return Array.from(byDate.entries())
+  const rows: FleetTrendRow[] = Array.from(byBucket.entries())
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, agg]) => ({
-      date,
-      avgUptime:    agg.count > 0 ? Math.round((agg.uptimeSum / agg.count) * 10) / 10 : 0,
-      avgScrap:     agg.count > 0 ? Math.round((agg.scrapSum  / agg.count) * 10) / 10 : 0,
-      totalBoxes:   agg.boxes,
-      totalSwabs:   agg.swabs,
-      machineCount: agg.machines.size,
-      readingCount: agg.count,
-    }));
+    .map(([bucketKey, agg]) => {
+      const totalBoxes = Array.from(agg.boxesMax.values()).reduce((s, v) => s + v, 0);
+      const totalSwabs = Array.from(agg.swabsMax.values()).reduce((s, v) => s + v, 0);
+      return {
+        date:         bucketKey,
+        avgUptime:    agg.count > 0 ? Math.round((agg.uptimeSum / agg.count) * 10) / 10 : 0,
+        avgScrap:     agg.count > 0 ? Math.round((agg.scrapSum  / agg.count) * 10) / 10 : 0,
+        totalBoxes,
+        totalSwabs,
+        machineCount: agg.machines.size,
+        readingCount: agg.count,
+      };
+    });
+
+  return { rows, granularity };
 }
 
 // ============================================
