@@ -905,6 +905,14 @@ function slotEndHour(slots: TimeSlot[], index: number): number {
 
 function ShiftsTab() {
   const [config, setConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
+  // Draft slots: edited locally, only persisted on explicit Save
+  const [draftSlots, setDraftSlots] = useState<TimeSlot[]>(DEFAULT_SHIFT_CONFIG.slots);
+  const [draftDowntime, setDraftDowntime] = useState<number>(0);
+  const [slotsDirty, setSlotsDirty] = useState(false);
+  const [slotError, setSlotError] = useState<string | null>(null);
+  const [slotSuccess, setSlotSuccess] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const [assignments, setAssignments] = useState<Record<string, ShiftAssignment>>({});
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
   const [loading, setLoading] = useState(true);
@@ -921,6 +929,7 @@ function ShiftsTab() {
   const fromStr = toISODate(weekDates[0]);
   const toStr = toISODate(weekEnd);
 
+  const draftShiftMins = draftSlots.length > 0 ? Math.round(24 * 60 / draftSlots.length) : 480;
   const shiftMins = shiftLengthFromSlots(config.slots);
 
   // Load config + assignments
@@ -929,6 +938,10 @@ function ShiftsTab() {
     Promise.all([fetchShiftConfig(), fetchShiftAssignments(fromStr, toStr)])
       .then(([cfg, rows]) => {
         setConfig(cfg);
+        setDraftSlots(cfg.slots);
+        setDraftDowntime(cfg.plannedDowntimeMinutes);
+        setSlotsDirty(false);
+        setSlotError(null);
         const map: Record<string, ShiftAssignment> = {};
         for (const r of rows) map[r.shift_date] = r;
         setAssignments(map);
@@ -942,7 +955,7 @@ function ShiftsTab() {
   const nextWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); };
   const goToday = () => setWeekStart(startOfWeek(new Date()));
 
-  // Persist helper: update config in state + save to DB (syncs shiftLengthMinutes automatically)
+  // Persist helper for team changes (these still auto-save, only slot structure requires explicit save)
   const persistConfig = (updated: ShiftConfig) => {
     setConfig(updated);
     saveShiftConfig(updated).catch(console.error);
@@ -959,32 +972,108 @@ function ShiftsTab() {
     persistConfig({ ...config, teams: config.teams.filter(t => t !== name) });
   };
 
-  // ── Slot management ───────────────────────────────────────
+  // ── Draft slot management (local only until Save) ─────────
+  const markDirty = () => { setSlotsDirty(true); setSlotError(null); setSlotSuccess(false); };
+
   const addSlot = () => {
-    if (config.slots.length >= 4) return;
-    const newCount = config.slots.length + 1;
+    if (draftSlots.length >= 4) return;
+    const newCount = draftSlots.length + 1;
     const spacing = Math.round(24 / newCount);
+    const firstStart = draftSlots[0]?.startHour ?? 6;
     const newSlots: TimeSlot[] = Array.from({ length: newCount }, (_, i) => ({
-      name: config.slots[i]?.name ?? `Slot ${i + 1}`,
-      startHour: (config.slots[0]?.startHour ?? 6) + i * spacing,
-    })).map(s => ({ ...s, startHour: s.startHour % 24 }));
-    persistConfig({ ...config, slots: newSlots });
+      name: draftSlots[i]?.name ?? `Shift ${i + 1}`,
+      startHour: (firstStart + i * spacing) % 24,
+    }));
+    setDraftSlots(newSlots);
+    markDirty();
   };
 
   const removeSlot = (idx: number) => {
-    if (config.slots.length <= 2) return;
-    const newSlots = config.slots.filter((_, i) => i !== idx);
-    persistConfig({ ...config, slots: newSlots });
+    if (draftSlots.length <= 1) return;
+    setDraftSlots(draftSlots.filter((_, i) => i !== idx));
+    markDirty();
   };
 
   const updateSlot = (idx: number, patch: Partial<TimeSlot>) => {
-    const newSlots = config.slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
-    persistConfig({ ...config, slots: newSlots });
+    setDraftSlots(draftSlots.map((s, i) => i === idx ? { ...s, ...patch } : s));
     setEditingSlot(null);
+    markDirty();
   };
 
-  const savePlannedDowntime = (mins: number) => {
-    persistConfig({ ...config, plannedDowntimeMinutes: Math.max(0, Math.round(mins)) });
+  const updateDraftDowntime = (mins: number) => {
+    setDraftDowntime(Math.max(0, Math.round(mins)));
+    markDirty();
+  };
+
+  const clearAllSlots = () => {
+    setDraftSlots([]);
+    markDirty();
+  };
+
+  // ── Validate and save slot configuration ───────────────────
+  const validateAndSave = async () => {
+    setSlotError(null);
+    setSlotSuccess(false);
+
+    // Must have at least 1 slot
+    if (draftSlots.length === 0) {
+      setSlotError("You need at least one time slot. Add slots before saving.");
+      return;
+    }
+
+    // Check that all slots have names
+    if (draftSlots.some(s => !s.name.trim())) {
+      setSlotError("Every slot needs a name.");
+      return;
+    }
+
+    // Validate 24h coverage: each slot = 24 / slotCount hours, start hours must be unique
+    const hours = draftSlots.map(s => s.startHour);
+    const uniqueHours = new Set(hours);
+    if (uniqueHours.size !== hours.length) {
+      setSlotError("Each slot must have a unique start hour.");
+      return;
+    }
+
+    // Check slots tile 24h evenly
+    const slotLength = 24 / draftSlots.length;
+    if (slotLength !== Math.floor(slotLength)) {
+      setSlotError(`${draftSlots.length} slots do not divide evenly into 24 hours. Use 1, 2, 3, or 4 slots.`);
+      return;
+    }
+
+    // Check downtime is less than shift length
+    const shiftMinsDraft = Math.round(24 * 60 / draftSlots.length);
+    if (draftDowntime >= shiftMinsDraft) {
+      setSlotError(`Planned downtime (${draftDowntime} min) must be less than shift duration (${shiftMinsDraft} min).`);
+      return;
+    }
+
+    // Sort slots by start hour for consistency
+    const sorted = [...draftSlots].sort((a, b) => a.startHour - b.startHour);
+
+    setSaving(true);
+    try {
+      const updated: ShiftConfig = { ...config, slots: sorted, plannedDowntimeMinutes: draftDowntime };
+      await saveShiftConfig(updated);
+      setConfig(updated);
+      setDraftSlots(sorted);
+      setSlotsDirty(false);
+      setSlotSuccess(true);
+      setTimeout(() => setSlotSuccess(false), 3000);
+    } catch (e) {
+      setSlotError(`Failed to save: ${e instanceof Error ? e.message : "unknown error"}`);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const discardDraftChanges = () => {
+    setDraftSlots(config.slots);
+    setDraftDowntime(config.plannedDowntimeMinutes);
+    setSlotsDirty(false);
+    setSlotError(null);
+    setSlotSuccess(false);
   };
 
   // ── Assignment management ─────────────────────────────────
@@ -1085,23 +1174,27 @@ function ShiftsTab() {
         </div>
       </div>
 
-      {/* ── Time slots + shift duration ──────────────────── */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-lg">
+      {/* ── PLC Shift Structure ──────────────────────────── */}
+      <div className={`bg-gray-800/50 border rounded-lg overflow-hidden max-w-lg ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-clock text-cyan-400"></i>Time Slots
+            <i className="bi bi-clock text-cyan-400"></i>PLC Shift Structure
           </h4>
           <p className="text-gray-500 text-xs mt-0.5">
-            {config.slots.length} slots &times; {(shiftMins / 60).toFixed(0)}h each = 24h
+            Match this to your PLC shift configuration. The PLC reports which shift number is active.
           </p>
         </div>
         <div className="px-5 py-3 space-y-2">
-          {config.slots.map((slot, idx) => {
-            const end = slotEndHour(config.slots, idx);
+          {draftSlots.length === 0 && (
+            <p className="text-gray-500 text-sm py-2 italic">No shifts configured. Add at least one slot.</p>
+          )}
+          {draftSlots.map((slot, idx) => {
+            const end = slotEndHour(draftSlots, idx);
             const icon = SLOT_ICONS[idx % SLOT_ICONS.length];
             return (
               <div key={idx} className="flex items-center justify-between py-1.5 border-b border-gray-700/30 last:border-b-0">
                 <div className="flex items-center gap-2">
+                  <span className="text-[10px] text-gray-600 font-mono w-5 text-right">#{idx + 1}</span>
                   <i className={`bi ${icon} text-sm text-gray-400`}></i>
                   {editingSlot === idx ? (
                     <div className="flex items-center gap-2">
@@ -1121,11 +1214,11 @@ function ShiftsTab() {
                     </div>
                   ) : (
                     <button onClick={() => setEditingSlot(idx)} className="text-sm text-white hover:text-cyan-300 transition-colors">
-                      {slot.name} <span className="text-gray-500 ml-1">{fmtHour(slot.startHour)} – {fmtHour(end)}</span>
+                      {slot.name} <span className="text-gray-500 ml-1">{fmtHour(slot.startHour)} &ndash; {fmtHour(end)}</span>
                     </button>
                   )}
                 </div>
-                {config.slots.length > 2 && editingSlot !== idx && (
+                {editingSlot !== idx && (
                   <button onClick={() => removeSlot(idx)} className="text-gray-600 hover:text-red-400 transition-colors p-1" title="Remove slot">
                     <i className="bi bi-x-lg text-xs"></i>
                   </button>
@@ -1133,27 +1226,33 @@ function ShiftsTab() {
               </div>
             );
           })}
-          {config.slots.length < 4 && (
-            <button onClick={addSlot} className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors pt-1">
-              <i className="bi bi-plus-circle"></i> Add time slot
-            </button>
-          )}
+          <div className="flex items-center gap-3 pt-1">
+            {draftSlots.length < 4 && (
+              <button onClick={addSlot} className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors">
+                <i className="bi bi-plus-circle"></i> Add shift
+              </button>
+            )}
+            {draftSlots.length > 0 && (
+              <button onClick={clearAllSlots} className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 transition-colors">
+                <i className="bi bi-trash3"></i> Clear all
+              </button>
+            )}
+          </div>
         </div>
 
-        {/* Shift duration + downtime (derived from slots) */}
+        {/* Shift duration + downtime (derived from draft slots) */}
         <div className="px-5 py-3 border-t border-gray-700/50 divide-y divide-gray-700/30">
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-white">Shift duration</span>
-            <span className="text-sm text-cyan-400">{(shiftMins / 60).toFixed(1)} hrs</span>
+            <span className="text-sm text-cyan-400">{draftSlots.length > 0 ? `${(draftShiftMins / 60).toFixed(1)} hrs` : "\u2014"}</span>
           </div>
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-white">Planned downtime</span>
             <div className="flex items-center gap-2">
               <input
-                type="number" min={0} max={shiftMins}
-                value={config.plannedDowntimeMinutes}
-                onChange={e => setConfig(c => ({ ...c, plannedDowntimeMinutes: Math.max(0, Number(e.target.value) || 0) }))}
-                onBlur={e => savePlannedDowntime(Number(e.target.value))}
+                type="number" min={0} max={draftShiftMins}
+                value={draftDowntime}
+                onChange={e => updateDraftDowntime(Number(e.target.value) || 0)}
                 onWheel={e => e.currentTarget.blur()}
                 className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
               />
@@ -1163,9 +1262,49 @@ function ShiftsTab() {
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-white">Effective production time</span>
             <span className="text-sm text-cyan-400">
-              {((shiftMins - config.plannedDowntimeMinutes) / 60).toFixed(1)} hrs
+              {draftSlots.length > 0 ? `${((draftShiftMins - draftDowntime) / 60).toFixed(1)} hrs` : "\u2014"}
             </span>
           </div>
+        </div>
+
+        {/* Error / success messages */}
+        {slotError && (
+          <div className="mx-5 mb-3 px-3 py-2 bg-red-900/40 border border-red-700/50 rounded text-sm text-red-300 flex items-start gap-2">
+            <i className="bi bi-exclamation-triangle-fill mt-0.5 shrink-0"></i>
+            <span>{slotError}</span>
+          </div>
+        )}
+        {slotSuccess && (
+          <div className="mx-5 mb-3 px-3 py-2 bg-green-900/40 border border-green-700/50 rounded text-sm text-green-300 flex items-center gap-2">
+            <i className="bi bi-check-circle-fill"></i>
+            Shift structure saved successfully.
+          </div>
+        )}
+
+        {/* Save / Discard buttons */}
+        <div className="px-5 py-3 border-t border-gray-700/50 flex items-center gap-3">
+          <button
+            onClick={validateAndSave}
+            disabled={!slotsDirty || saving}
+            className={`px-4 py-2 text-sm font-medium rounded transition-colors flex items-center gap-2 ${
+              slotsDirty
+                ? "bg-cyan-600 hover:bg-cyan-500 text-white"
+                : "bg-gray-700 text-gray-500 cursor-not-allowed"
+            }`}
+          >
+            {saving ? <span className="animate-spin">&#x27F3;</span> : <i className="bi bi-check-lg"></i>}
+            Save shift structure
+          </button>
+          {slotsDirty && (
+            <button onClick={discardDraftChanges} className="px-3 py-2 text-sm text-gray-400 hover:text-white transition-colors">
+              Discard
+            </button>
+          )}
+          {slotsDirty && (
+            <span className="text-xs text-amber-400 ml-auto flex items-center gap-1">
+              <i className="bi bi-exclamation-circle"></i> Unsaved changes
+            </span>
+          )}
         </div>
       </div>
 
