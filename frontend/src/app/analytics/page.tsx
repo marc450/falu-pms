@@ -394,9 +394,18 @@ export default function Analytics() {
     : null;
 
   // KPI color for Total BU Output — compare actual total against what the park
-  // should have produced across all buckets: buckets × per-bucket target.
-  const buKpiGood     = buTarget !== null && rows.length > 0 ? rows.length * buTarget : null;
-  const buKpiMediocre = buMediocre !== null && rows.length > 0 ? rows.length * buMediocre : null;
+  // should have produced in the selected period.
+  // Daily target = sum(targets) × (24 / shiftHours).  Period target = daily × days.
+  const effectiveRange: DateRange =
+    activePresetId !== "custom"
+      ? PRESETS.find(p => p.id === activePresetId)!.getRange()
+      : dateRange;
+  const periodHours   = Math.max((effectiveRange.end.getTime() - effectiveRange.start.getTime()) / 3_600_000, 1);
+  const periodDays    = periodHours / 24;
+  const dailyBuGood   = buTargetPerShift !== null ? buTargetPerShift * shiftsPerDay : null;
+  const dailyBuMed    = buMediocrePerShift !== null ? buMediocrePerShift * shiftsPerDay : null;
+  const buKpiGood     = dailyBuGood !== null ? dailyBuGood * periodDays : null;
+  const buKpiMediocre = dailyBuMed !== null ? dailyBuMed * periodDays : null;
   const buKpiColor    = (() => {
     if (totalBUs <= 0 || buKpiGood === null || buKpiMediocre === null)
       return { text: "text-gray-500", border: "border-gray-700" };
