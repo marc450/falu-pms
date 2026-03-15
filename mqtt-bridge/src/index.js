@@ -470,9 +470,20 @@ function connectMqtt() {
     logger.warn("MQTT offline");
   });
 
-  mqttClient.on("disconnect", () => {
+  mqttClient.on("disconnect", (packet) => {
     mqttConnected = false;
+    logger.warn(`MQTT disconnect received (reason code: ${packet?.reasonCode ?? "unknown"})`);
   });
+
+  mqttClient.on("close", () => {
+    mqttConnected = false;
+    logger.warn("MQTT connection closed");
+  });
+
+  // Heartbeat: log connection status every 30 s so we can confirm the bridge is alive
+  setInterval(() => {
+    logger.info(`[HEARTBEAT] MQTT connected: ${mqttConnected} | machines: ${Object.keys(allMachines).length}`);
+  }, 30000);
 }
 
 function publishRequestShift(machine, shift) {
