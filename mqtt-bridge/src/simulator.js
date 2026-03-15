@@ -343,6 +343,7 @@ const client = mqtt.connect(url, {
 });
 
 const machines = {};
+let simulationStarted = false;
 
 client.on("connect", () => {
   console.log("Connected to MQTT broker");
@@ -354,6 +355,13 @@ client.on("connect", () => {
 
   // Subscribe to RequestShift topics
   client.subscribe(`${topicPrefix}/RequestShift/+`, { qos: 1 });
+
+  // Guard: only start the tick loop once — reconnects must not spawn a second interval
+  if (simulationStarted) {
+    console.log("Reconnected — reusing existing simulation loop.\n");
+    return;
+  }
+  simulationStarted = true;
 
   setInterval(() => {
     const { shiftNumber, elapsedMinutes } = getShiftInfo();
