@@ -2,11 +2,12 @@
  * Format minutes to HH:MM string (matches developer's FormatMinutesToTime)
  */
 export function formatMinutesToTime(minutes: number | undefined | null): string {
-  if (!minutes || minutes === 0) return "00:00";
-  const total = Math.floor(minutes);
-  const h = Math.floor(total / 60);
-  const m = total % 60;
-  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+  if (!minutes || minutes === 0) return "00:00:00";
+  const totalSeconds = Math.round(minutes * 60);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 /**

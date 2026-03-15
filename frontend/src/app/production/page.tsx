@@ -2,13 +2,14 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, requestShiftData } from "@/lib/supabase";
-import type { MachineData, ShiftDataMessage } from "@/lib/supabase";
+import { fetchMachine, requestShiftData, PACKING_FORMATS } from "@/lib/supabase";
+import type { MachineData, ShiftDataMessage, PackingFormat } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 
 function ProductionContent() {
   const searchParams = useSearchParams();
   const machineName = searchParams.get("machine") || "";
+  const packingFormat = (searchParams.get("packing") || null) as PackingFormat | null;
   const [machine, setMachine] = useState<MachineData | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -83,26 +84,35 @@ function ProductionContent() {
     }
   };
 
-  const metrics: {
+  // Derive packaging label (e.g. "Blisters", "Boxes", "Bags") from URL param
+  const packingLabel = packingFormat && PACKING_FORMATS[packingFormat]
+    ? PACKING_FORMATS[packingFormat]
+    : "Boxes";
+
+  type MetricDef = {
     label: string;
     key: keyof ShiftDataMessage;
     format?: "time" | "percent" | "number";
-    warnFn?: (val: number) => boolean;
     dangerClass?: string;
-  }[] = [
+  };
+
+  const metrics: MetricDef[] = [
     { label: "Production Time", key: "ProductionTime", format: "time" },
-    { label: "Idle Time", key: "IdleTime", format: "time" },
-    { label: "Cotton Tears", key: "CottonTears", warnFn: (v) => v > 5, dangerClass: "text-yellow-400" },
+    { label: "Idle Time",       key: "IdleTime",       format: "time" },
+    { label: "Uptime",          key: "Efficiency",     format: "percent" },
+    { label: "Produced Swabs",  key: "ProducedSwabs" },
+    { label: "Packaged Swabs",  key: "PackagedSwabs" },
+    { label: "Discarded Swabs", key: "DiscardedSwabs" },
+    { label: "Scrap",           key: "Reject",         format: "percent", dangerClass: "text-red-400" },
+    { label: `Produced ${packingLabel}`,            key: "ProducedBoxes" },
+    { label: `${packingLabel} w. Extra Layer`,      key: "ProducedBoxesLayerPlus" },
+  ];
+
+  const errorMetrics: MetricDef[] = [
+    { label: "Cotton Tears",   key: "CottonTears",   dangerClass: "text-yellow-400" },
     { label: "Missing Sticks", key: "MissingSticks" },
     { label: "Faulty Pickups", key: "FoultyPickups" },
-    { label: "Other Errors", key: "OtherErrors" },
-    { label: "Produced Swabs", key: "ProducedSwabs" },
-    { label: "Packaged Swabs", key: "PackagedSwabs" },
-    { label: "Produced Boxes", key: "ProducedBoxes" },
-    { label: "Produced Boxes Layer+", key: "ProducedBoxesLayerPlus" },
-    { label: "Discarded Swabs", key: "DiscardedSwabs" },
-    { label: "Efficiency", key: "Efficiency", format: "percent" },
-    { label: "Reject", key: "Reject", format: "percent", dangerClass: "text-red-400" },
+    { label: "Other Errors",   key: "OtherErrors" },
   ];
 
   if (!machineName) {
@@ -192,6 +202,29 @@ function ProductionContent() {
                 {metrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5">
                     <td className="px-4 py-2.5 font-medium text-gray-200">{metric.label}</td>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${metric.dangerClass || ""}`}>
+                      {renderShiftValue(machine.shift1, metric.key, metric.format)}
+                    </td>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${metric.dangerClass || ""}`}>
+                      {renderShiftValue(machine.shift2, metric.key, metric.format)}
+                    </td>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${metric.dangerClass || ""}`}>
+                      {renderShiftValue(machine.shift3, metric.key, metric.format)}
+                    </td>
+                    <td className={`px-4 py-2.5 text-center ${metric.dangerClass || ""}`}>
+                      {renderShiftValue(machine.total, metric.key, metric.format)}
+                    </td>
+                  </tr>
+                ))}
+                {/* Errors section separator */}
+                <tr className="bg-gray-900/40">
+                  <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-600">
+                    <i className="bi bi-exclamation-triangle mr-1.5"></i>Errors
+                  </td>
+                </tr>
+                {errorMetrics.map((metric) => (
+                  <tr key={metric.key} className="hover:bg-white/5 bg-gray-900/20">
+                    <td className="px-4 py-2.5 font-medium text-gray-300">{metric.label}</td>
                     <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${metric.dangerClass || ""}`}>
                       {renderShiftValue(machine.shift1, metric.key, metric.format)}
                     </td>

@@ -255,7 +255,7 @@ function CellSection({
   icon: string;
   color: string;
   machines: DashboardMachine[];
-  onMachineClick: (code: string) => void;
+  onMachineClick: (code: string, packingFormat?: PackingFormat | null) => void;
   thresholds: Thresholds;
   shiftLengthMinutes: number;
   shiftStartedAt: number;
@@ -475,7 +475,7 @@ function CellSection({
           {open && (
             <tbody className="divide-y divide-gray-700/50">
               {sortedMachines.map((m) => (
-                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} shiftStartedAt={shiftStartedAt} onClick={() => onMachineClick(m.machine)} />
+                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} shiftStartedAt={shiftStartedAt} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
               ))}
               {machines.length === 0 && (
                 <tr>
@@ -785,7 +785,7 @@ export default function Dashboard() {
               icon="bi-collection"
               color="text-cyan-400"
               machines={machinesForCell(cell.id)}
-              onMachineClick={(code) => router.push(`/production?machine=${code}`)}
+              onMachineClick={(code, pf) => router.push(`/production?machine=${code}${pf ? `&packing=${pf}` : ""}`)}
               thresholds={thresholds}
               shiftLengthMinutes={effectiveShiftMins}
               shiftStartedAt={shiftStartedAt}
@@ -797,7 +797,7 @@ export default function Dashboard() {
               icon="bi-inbox"
               color="text-gray-400"
               machines={unassigned}
-              onMachineClick={(code) => router.push(`/production?machine=${code}`)}
+              onMachineClick={(code, pf) => router.push(`/production?machine=${code}${pf ? `&packing=${pf}` : ""}`)}
               thresholds={thresholds}
               shiftLengthMinutes={effectiveShiftMins}
               shiftStartedAt={shiftStartedAt}
@@ -830,7 +830,7 @@ export default function Dashboard() {
                     m={m as DashboardMachine}
                     shiftLengthMinutes={effectiveShiftMins}
                     shiftStartedAt={shiftStartedAt}
-                    onClick={() => router.push(`/production?machine=${m.machine}`)}
+                    onClick={() => router.push(`/production?machine=${m.machine}${(m as DashboardMachine).packingFormat ? `&packing=${(m as DashboardMachine).packingFormat}` : ""}`)}
                   />
                 ))}
               </tbody>
