@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
-  LineChart, Line,
+  LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceArea,
 } from "recharts";
@@ -74,6 +74,35 @@ function fmtBucketFull(key: string, granularity: "hour" | "day"): string {
       ? format(parseISO(key + ":00:00"), "dd.MM.yyyy HH:mm")
       : format(parseISO(key), "dd.MM.yyyy");
   } catch { return key; }
+}
+
+function fmtBucketRange(key: string, granularity: "hour" | "day"): [string, string] {
+  try {
+    if (granularity === "hour") {
+      const d = parseISO(key + ":00:00");
+      const next = new Date(d.getTime() + 3_600_000);
+      return [format(d, "HH:mm"), format(next, "HH:mm")];
+    }
+    const d = parseISO(key);
+    const next = new Date(d.getTime() + 86_400_000);
+    return [format(d, "dd.MM"), format(next, "dd.MM")];
+  } catch { return [key, ""]; }
+}
+
+// Custom two-line X-axis tick for the BU chart showing bucket start→end
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function RangeTick({ x, y, payload, granularity }: any) {
+  const [line1, line2] = fmtBucketRange(payload?.value ?? "", granularity);
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10}>
+        {line1}
+      </text>
+      <text x={0} y={0} dy={23} textAnchor="middle" fill="#9ca3af" fontSize={10}>
+        {line2}
+      </text>
+    </g>
+  );
 }
 
 function toDateInputValue(d: Date): string {
@@ -655,8 +684,8 @@ export default function Analytics() {
             ) : undefined}
           >
             {!hasData ? <NoData /> : (
-              <ResponsiveContainer width="100%" height={220}>
-                <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <ResponsiveContainer width="100%" height={240}>
+                <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 16 }}>
                   {/* Zones — higher is better; targets = sum of all machines */}
                   <ReferenceArea y1={buTarget ?? buMax} y2={buMax} fill="#4ade80" fillOpacity={buTarget !== null ? 0.08 : 0} />
                   <ReferenceArea y1={buMediocre ?? 0} y2={buTarget ?? 0} fill="#eab308" fillOpacity={buTarget !== null ? 0.07 : 0} />
@@ -664,11 +693,11 @@ export default function Analytics() {
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                   <XAxis
                     dataKey="date"
-                    tick={TICK_STYLE}
                     tickLine={false}
                     axisLine={{ stroke: AXIS_COLOR }}
-                    tickFormatter={fmtTick}
+                    tick={<RangeTick granularity={granularity} />}
                     interval="preserveStartEnd"
+                    height={36}
                   />
                   <YAxis
                     domain={[0, buMax]}
@@ -681,19 +710,21 @@ export default function Analytics() {
                     contentStyle={TOOLTIP_CONTENT_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
-                    labelFormatter={(l) => fmtLabel(l as string)}
+                    labelFormatter={(l) => {
+                      const [from, to] = fmtBucketRange(l as string, granularity);
+                      return `${from} – ${to}`;
+                    }}
                     formatter={(v) => [`${Number(v ?? 0).toLocaleString()} BUs`, "BU Output"]}
+                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
-                  <Line
-                    type="monotone"
+                  <Bar
                     dataKey="totalBU"
                     name="BU Output"
-                    stroke="#22d3ee"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
+                    fill="#22d3ee"
+                    radius={[2, 2, 0, 0]}
+                    maxBarSize={36}
                   />
-                </LineChart>
+                </BarChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
