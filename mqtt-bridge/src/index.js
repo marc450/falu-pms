@@ -644,16 +644,9 @@ app.listen(PORT, () => {
     .catch((err) => logger.error(`Startup error: ${err.message}`));
 });
 
-// Graceful shutdown (SIGINT = Ctrl+C locally, SIGTERM = Railway stopping the container)
-process.on("SIGINT",  () => { logger.info("Received SIGINT — shutting down"); if (mqttClient) mqttClient.end(true); process.exit(0); });
-process.on("SIGTERM", () => { logger.info("Received SIGTERM — shutting down"); if (mqttClient) mqttClient.end(true); process.exit(0); });
-
-// Crash diagnostics — log the error before the process dies
-process.on("uncaughtException", (err) => {
-  logger.error(`UNCAUGHT EXCEPTION: ${err.message}\n${err.stack}`);
-  process.exit(1);
-});
-process.on("unhandledRejection", (reason) => {
-  logger.error(`UNHANDLED REJECTION: ${reason instanceof Error ? reason.stack : reason}`);
-  // Don't exit — log and continue so a single failed Supabase call doesn't kill the bridge
+// Graceful shutdown
+process.on("SIGINT", () => {
+  logger.info("Shutting down...");
+  if (mqttClient) mqttClient.end(true);
+  process.exit(0);
 });
