@@ -486,10 +486,16 @@ export default function Analytics() {
     <div>
       {/* ── Header ── */}
       <div className="flex justify-between items-center mb-6">
-        <div>
+        <PeriodSelector
+          activePresetId={activePresetId}
+          dateRange={dateRange}
+          onPresetSelect={handlePresetSelect}
+          onCustomRange={handleCustomRange}
+        />
+        <div className="flex items-end gap-4">
           <h2 className="text-xl font-bold text-white">Analytics</h2>
           {lastRefreshed && !loading && (
-            <div className="flex items-center gap-1.5 mt-0.5">
+            <div className="flex items-center gap-1.5">
               <p className="text-xs text-gray-600">
                 Updated {format(lastRefreshed, "HH:mm:ss")}
               </p>
@@ -504,12 +510,6 @@ export default function Analytics() {
             </div>
           )}
         </div>
-        <PeriodSelector
-          activePresetId={activePresetId}
-          dateRange={dateRange}
-          onPresetSelect={handlePresetSelect}
-          onCustomRange={handleCustomRange}
-        />
       </div>
 
       {/* ── Error banner ── */}
