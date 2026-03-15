@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, requestShiftData, PACKING_FORMATS } from "@/lib/supabase";
-import type { MachineData, ShiftDataMessage, PackingFormat } from "@/lib/supabase";
+import { fetchMachine, fetchMachineTargets, requestShiftData, PACKING_FORMATS } from "@/lib/supabase";
+import type { MachineData, MachineTargets, ShiftDataMessage, PackingFormat } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 
 function ProductionContent() {
@@ -11,6 +11,7 @@ function ProductionContent() {
   const machineName = searchParams.get("machine") || "";
   const packingFormat = (searchParams.get("packing") || null) as PackingFormat | null;
   const [machine, setMachine] = useState<MachineData | null>(null);
+  const [targets, setTargets] = useState<MachineTargets | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
   const failCount = useRef(0);
@@ -38,6 +39,11 @@ function ProductionContent() {
       setLoading(false);
       return;
     }
+
+    // Fetch threshold settings once — they only change via admin, not during a shift
+    fetchMachineTargets(machineName)
+      .then(setTargets)
+      .catch(() => { /* thresholds unavailable — coloring will be suppressed */ });
 
     loadData();
 
@@ -89,31 +95,58 @@ function ProductionContent() {
     ? PACKING_FORMATS[packingFormat]
     : "Boxes";
 
+  // Returns a Tailwind color class for a metric value based on thresholds.
+  // "good" thresholds: higher is better (Uptime). "bad" thresholds: lower is better (Scrap).
+  const uptimeColor = (v: number): string => {
+    const good = targets?.efficiency_good ?? null;
+    const med  = targets?.efficiency_mediocre ?? null;
+    if (good === null && med === null) return "";          // no targets → no color
+    if (good !== null && v >= good)    return "text-green-400";
+    if (med  !== null && v >= med)     return "text-yellow-400";
+    return "text-red-400";
+  };
+  const scrapColor = (v: number): string => {
+    const good = targets?.scrap_good ?? null;
+    const med  = targets?.scrap_mediocre ?? null;
+    if (good === null && med === null) return "";          // no targets → no color
+    if (good !== null && v <= good)    return "text-green-400";
+    if (med  !== null && v <= med)     return "text-yellow-400";
+    return "text-red-400";
+  };
+
   type MetricDef = {
     label: string;
     key: keyof ShiftDataMessage;
     format?: "time" | "percent" | "number";
-    dangerClass?: string;
+    colorFn?: (val: number) => string;
   };
 
   const metrics: MetricDef[] = [
     { label: "Production Time", key: "ProductionTime", format: "time" },
     { label: "Idle Time",       key: "IdleTime",       format: "time" },
-    { label: "Uptime",          key: "Efficiency",     format: "percent" },
+    { label: "Uptime",          key: "Efficiency",     format: "percent", colorFn: uptimeColor },
     { label: "Produced Swabs",  key: "ProducedSwabs" },
     { label: "Packaged Swabs",  key: "PackagedSwabs" },
     { label: "Discarded Swabs", key: "DiscardedSwabs" },
-    { label: "Scrap",           key: "Reject",         format: "percent", dangerClass: "text-red-400" },
-    { label: `Produced ${packingLabel}`,            key: "ProducedBoxes" },
-    { label: `${packingLabel} w. Extra Layer`,      key: "ProducedBoxesLayerPlus" },
+    { label: "Scrap",           key: "Reject",         format: "percent", colorFn: scrapColor },
+    { label: `Produced ${packingLabel}`,       key: "ProducedBoxes" },
+    { label: `${packingLabel} w. Extra Layer`, key: "ProducedBoxesLayerPlus" },
   ];
 
   const errorMetrics: MetricDef[] = [
-    { label: "Cotton Tears",   key: "CottonTears",   dangerClass: "text-yellow-400" },
+    { label: "Cotton Tears",   key: "CottonTears" },   // no hardcoded color — no thresholds configured
     { label: "Missing Sticks", key: "MissingSticks" },
     { label: "Faulty Pickups", key: "FoultyPickups" },
     { label: "Other Errors",   key: "OtherErrors" },
   ];
+
+  // Per-cell color: apply colorFn to the actual value in that shift
+  const cellColor = (metric: MetricDef, shift: ShiftDataMessage | undefined): string => {
+    if (!metric.colorFn || !shift) return "";
+    const val = shift[metric.key];
+    if (val === undefined || val === null) return "";
+    return metric.colorFn(val as number);
+  };
 
   if (!machineName) {
     return (
@@ -202,16 +235,16 @@ function ProductionContent() {
                 {metrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5">
                     <td className="px-4 py-2.5 font-medium text-gray-200">{metric.label}</td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, machine.shift1)}`}>
                       {renderShiftValue(machine.shift1, metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, machine.shift2)}`}>
                       {renderShiftValue(machine.shift2, metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, machine.shift3)}`}>
                       {renderShiftValue(machine.shift3, metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, machine.total)}`}>
                       {renderShiftValue(machine.total, metric.key, metric.format)}
                     </td>
                   </tr>
@@ -225,16 +258,16 @@ function ProductionContent() {
                 {errorMetrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5 bg-gray-900/20">
                     <td className="px-4 py-2.5 font-medium text-gray-300">{metric.label}</td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, machine.shift1)}`}>
                       {renderShiftValue(machine.shift1, metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, machine.shift2)}`}>
                       {renderShiftValue(machine.shift2, metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, machine.shift3)}`}>
                       {renderShiftValue(machine.shift3, metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${metric.dangerClass || ""}`}>
+                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, machine.total)}`}>
                       {renderShiftValue(machine.total, metric.key, metric.format)}
                     </td>
                   </tr>

@@ -137,6 +137,17 @@ export interface MachineTargets {
   speed_target: number | null;
 }
 
+export async function fetchMachineTargets(machine_code: string): Promise<MachineTargets> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("machines")
+    .select("efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target")
+    .eq("machine_code", machine_code)
+    .single();
+  if (error) throw new Error(error.message);
+  return data as MachineTargets;
+}
+
 export async function updateMachineTargets(
   machine_code: string,
   targets: MachineTargets
