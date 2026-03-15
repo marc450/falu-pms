@@ -315,14 +315,17 @@ export default function Analytics() {
       };
       setThresholds(computedThresholds);
 
-      // Sum all machines' BU targets — the chart shows total park output so
-      // zones must equal the combined target across the entire machine park.
+      // BU targets are per-machine per-shift. The chart shows total park
+      // output per hour, so: sum all machines' targets ÷ shift length in hours.
       const sum = (arr: (number | null)[]) => {
         const vals = arr.filter((v): v is number => v !== null && v > 0 && !isNaN(v));
         return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) : null;
       };
-      setBuTarget(sum(machines.map(m => m.bu_target)));
-      setBuMediocre(sum(machines.map(m => m.bu_mediocre)));
+      const shiftHours = (savedThresholds.bu.shiftLengthMinutes || 480) / 60;
+      const rawBuTarget   = sum(machines.map(m => m.bu_target));
+      const rawBuMediocre = sum(machines.map(m => m.bu_mediocre));
+      setBuTarget(rawBuTarget !== null ? rawBuTarget / shiftHours : null);
+      setBuMediocre(rawBuMediocre !== null ? rawBuMediocre / shiftHours : null);
 
       setLastRefreshed(new Date());
     } catch (e) {
@@ -379,8 +382,8 @@ export default function Analytics() {
   const buMax     = Math.ceil(Math.max(buDataMax, buTarget ?? 0, buMediocre ?? 0) * 1.15);
 
   const chartTitle = granularity === "hour"
-    ? "— hourly park average"
-    : "— daily park average";
+    ? "— hourly park total"
+    : "— daily park total";
 
   return (
     <div>
@@ -591,9 +594,9 @@ export default function Analytics() {
             title={`Total BU Output ${chartTitle}`}
             legend={buTarget !== null ? (
               <>
-                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget).toLocaleString()} BUs)`} />
-                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0).toLocaleString()} BUs)`} />
-                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0).toLocaleString()} BUs)`} />
+                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget).toLocaleString()} BUs/h)`} />
+                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0).toLocaleString()} BUs/h)`} />
+                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0).toLocaleString()} BUs/h)`} />
               </>
             ) : undefined}
           >
