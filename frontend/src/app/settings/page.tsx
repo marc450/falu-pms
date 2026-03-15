@@ -18,15 +18,21 @@ import {
   saveThresholds,
   DEFAULT_THRESHOLDS,
   PACKING_FORMATS,
+  fetchShiftConfig,
+  saveShiftConfig,
+  fetchShiftAssignments,
+  saveShiftAssignment,
+  saveShiftAssignmentsBulk,
+  DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment } from "@/lib/supabase";
 
 type DropTarget = {
   cellId: string | null;      // destination cell (null = unassigned)
   beforeCode: string | null;  // insert before this machine (null = append to end)
 };
 
-type Tab = "users" | "machines" | "thresholds" | "mqtt";
+type Tab = "users" | "machines" | "thresholds" | "shifts" | "mqtt";
 
 // ─────────────────────────────────────────────────────────────
 // Reusable confirmation modal
@@ -905,6 +911,419 @@ function ThresholdsTab() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Shifts tab — manage shift teams & weekly calendar assignment
+// ─────────────────────────────────────────────────────────────
+
+/** Return "YYYY-MM-DD" for a Date. */
+function toISODate(d: Date): string {
+  return d.toISOString().slice(0, 10);
+}
+
+/** Get Monday 00:00 of the week containing `d`. */
+function startOfWeek(d: Date): Date {
+  const clone = new Date(d);
+  const day = clone.getDay(); // 0=Sun … 6=Sat
+  const diff = day === 0 ? -6 : 1 - day; // shift so Mon=0
+  clone.setDate(clone.getDate() + diff);
+  clone.setHours(0, 0, 0, 0);
+  return clone;
+}
+
+const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
+
+const TEAM_COLORS: Record<string, string> = {
+  A: "bg-cyan-600",
+  B: "bg-amber-600",
+  C: "bg-emerald-600",
+  D: "bg-purple-600",
+};
+
+function teamColor(team: string): string {
+  return TEAM_COLORS[team] ?? "bg-gray-600";
+}
+
+function ShiftsTab() {
+  const [config, setConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
+  const [assignments, setAssignments] = useState<Record<string, ShiftAssignment>>({});
+  const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
+  const [loading, setLoading] = useState(true);
+  const [newTeamName, setNewTeamName] = useState("");
+  const [editStartHour, setEditStartHour] = useState(false);
+
+  // Build array of 7 dates for the current week
+  const weekDates: Date[] = [];
+  for (let i = 0; i < 7; i++) {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + i);
+    weekDates.push(d);
+  }
+
+  const weekEnd = weekDates[6];
+  const fromStr = toISODate(weekDates[0]);
+  const toStr = toISODate(weekEnd);
+
+  // Load config + assignments for visible week
+  useEffect(() => {
+    setLoading(true);
+    Promise.all([
+      fetchShiftConfig(),
+      fetchShiftAssignments(fromStr, toStr),
+    ])
+      .then(([cfg, rows]) => {
+        setConfig(cfg);
+        const map: Record<string, ShiftAssignment> = {};
+        for (const r of rows) map[r.shift_date] = r;
+        setAssignments(map);
+      })
+      .catch(console.error)
+      .finally(() => setLoading(false));
+  }, [fromStr, toStr]);
+
+  // Navigate weeks
+  const prevWeek = () => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() - 7);
+    setWeekStart(d);
+  };
+  const nextWeek = () => {
+    const d = new Date(weekStart);
+    d.setDate(d.getDate() + 7);
+    setWeekStart(d);
+  };
+  const goToday = () => setWeekStart(startOfWeek(new Date()));
+
+  // Assign a team to a slot
+  const assign = (dateStr: string, slot: "day" | "night", team: string | null) => {
+    const prev = assignments[dateStr] ?? { shift_date: dateStr, day_team: null, night_team: null };
+    const updated = { ...prev, [slot === "day" ? "day_team" : "night_team"]: team };
+    setAssignments(a => ({ ...a, [dateStr]: updated }));
+    saveShiftAssignment(dateStr, updated.day_team, updated.night_team).catch(console.error);
+  };
+
+  // Fill entire week with a repeating pattern
+  const fillWeek = (pattern: { day: string | null; night: string | null }[]) => {
+    const bulk: ShiftAssignment[] = [];
+    const map = { ...assignments };
+    for (let i = 0; i < 7; i++) {
+      const dateStr = toISODate(weekDates[i]);
+      const p = pattern[i % pattern.length];
+      const a: ShiftAssignment = { shift_date: dateStr, day_team: p.day, night_team: p.night };
+      map[dateStr] = a;
+      bulk.push(a);
+    }
+    setAssignments(map);
+    saveShiftAssignmentsBulk(bulk).catch(console.error);
+  };
+
+  // Copy previous week to current
+  const copyPrevWeek = async () => {
+    const prevStart = new Date(weekStart);
+    prevStart.setDate(prevStart.getDate() - 7);
+    const prevEnd = new Date(prevStart);
+    prevEnd.setDate(prevEnd.getDate() + 6);
+    try {
+      const prevRows = await fetchShiftAssignments(toISODate(prevStart), toISODate(prevEnd));
+      const bulk: ShiftAssignment[] = [];
+      const map = { ...assignments };
+      for (let i = 0; i < 7; i++) {
+        const dateStr = toISODate(weekDates[i]);
+        const prevDateStr = toISODate(new Date(prevStart.getTime() + i * 86_400_000));
+        const src = prevRows.find(r => r.shift_date === prevDateStr);
+        const a: ShiftAssignment = {
+          shift_date: dateStr,
+          day_team: src?.day_team ?? null,
+          night_team: src?.night_team ?? null,
+        };
+        map[dateStr] = a;
+        bulk.push(a);
+      }
+      setAssignments(map);
+      await saveShiftAssignmentsBulk(bulk);
+    } catch (e) { console.error(e); }
+  };
+
+  // Add / remove team
+  const addTeam = () => {
+    const name = newTeamName.trim().toUpperCase();
+    if (!name || config.teams.includes(name)) return;
+    const updated = { ...config, teams: [...config.teams, name] };
+    setConfig(updated);
+    saveShiftConfig(updated).catch(console.error);
+    setNewTeamName("");
+  };
+  const removeTeam = (name: string) => {
+    const updated = { ...config, teams: config.teams.filter(t => t !== name) };
+    setConfig(updated);
+    saveShiftConfig(updated).catch(console.error);
+  };
+
+  const saveDayShiftStart = (hour: number) => {
+    const clamped = Math.max(0, Math.min(23, Math.round(hour)));
+    const updated = { ...config, dayShiftStartHour: clamped };
+    setConfig(updated);
+    saveShiftConfig(updated).catch(console.error);
+    setEditStartHour(false);
+  };
+
+  const nightStart = (config.dayShiftStartHour + 12) % 24;
+  const fmtHour = (h: number) => `${String(h).padStart(2, "0")}:00`;
+
+  const isToday = (d: Date) => toISODate(d) === toISODate(new Date());
+
+  if (loading) return (
+    <div className="flex items-center gap-2 text-gray-400 py-8">
+      <span className="animate-spin text-lg">⟳</span> Loading…
+    </div>
+  );
+
+  return (
+    <div className="space-y-5">
+
+      {/* ── Shift teams ─────────────────────────────────── */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-lg">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-people-fill text-cyan-400"></i>Shift Teams
+          </h4>
+          <p className="text-gray-500 text-xs mt-0.5">Define which teams rotate through shifts</p>
+        </div>
+        <div className="px-5 py-3">
+          <div className="flex flex-wrap gap-2 mb-3">
+            {config.teams.map(team => (
+              <span key={team} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold ${teamColor(team)}`}>
+                {team}
+                {config.teams.length > 1 && (
+                  <button
+                    onClick={() => removeTeam(team)}
+                    className="ml-1 opacity-60 hover:opacity-100 transition-opacity"
+                    title={`Remove team ${team}`}
+                  >
+                    <i className="bi bi-x-lg text-xs"></i>
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text"
+              value={newTeamName}
+              onChange={e => setNewTeamName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addTeam()}
+              placeholder="New team name…"
+              maxLength={10}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-cyan-500"
+            />
+            <button
+              onClick={addTeam}
+              disabled={!newTeamName.trim()}
+              className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm rounded transition-colors"
+            >
+              Add
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Time slot config ────────────────────────────── */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-lg">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-clock text-cyan-400"></i>Time Slots
+          </h4>
+          <p className="text-gray-500 text-xs mt-0.5">Two 12-hour slots per day</p>
+        </div>
+        <div className="px-5 py-3 space-y-2">
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-white">Day shift</span>
+            <div className="flex items-center gap-2">
+              {editStartHour ? (
+                <input
+                  type="number"
+                  min={0} max={23}
+                  defaultValue={config.dayShiftStartHour}
+                  onBlur={e => saveDayShiftStart(Number(e.target.value))}
+                  onKeyDown={e => e.key === "Enter" && saveDayShiftStart(Number((e.target as HTMLInputElement).value))}
+                  autoFocus
+                  className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-16 text-right focus:outline-none"
+                />
+              ) : (
+                <button
+                  onClick={() => setEditStartHour(true)}
+                  className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
+                >
+                  {fmtHour(config.dayShiftStartHour)} – {fmtHour(nightStart)}
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-white">Night shift</span>
+            <span className="text-sm text-gray-400">{fmtHour(nightStart)} – {fmtHour(config.dayShiftStartHour)}</span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Weekly calendar ──────────────────────────────── */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700 flex items-center justify-between">
+          <div>
+            <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+              <i className="bi bi-calendar3 text-cyan-400"></i>Weekly Schedule
+            </h4>
+            <p className="text-gray-500 text-xs mt-0.5">Assign teams to each day&apos;s shifts</p>
+          </div>
+          <div className="flex items-center gap-1">
+            <button onClick={copyPrevWeek} className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Copy assignments from previous week">
+              <i className="bi bi-clipboard mr-1"></i>Copy prev. week
+            </button>
+          </div>
+        </div>
+
+        {/* Week navigation */}
+        <div className="px-5 py-2 border-b border-gray-700/50 flex items-center justify-between">
+          <button onClick={prevWeek} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+            <i className="bi bi-chevron-left"></i>
+          </button>
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-white font-medium">
+              {weekDates[0].toLocaleDateString("de-DE", { day: "2-digit", month: "short" })}
+              {" – "}
+              {weekEnd.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" })}
+            </span>
+            <button onClick={goToday} className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors">
+              Today
+            </button>
+          </div>
+          <button onClick={nextWeek} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
+            <i className="bi bi-chevron-right"></i>
+          </button>
+        </div>
+
+        {/* Calendar grid */}
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[600px]">
+            <thead>
+              <tr className="border-b border-gray-700/50">
+                <th className="px-3 py-2 text-left text-xs text-gray-500 font-normal w-20"></th>
+                {weekDates.map((d, i) => (
+                  <th key={i} className={`px-2 py-2 text-center text-xs font-medium ${isToday(d) ? "text-cyan-400" : "text-gray-400"}`}>
+                    <div>{WEEKDAYS[i]}</div>
+                    <div className={`text-sm mt-0.5 ${isToday(d) ? "text-cyan-300 font-semibold" : "text-white"}`}>
+                      {d.toLocaleDateString("de-DE", { day: "2-digit", month: "2-digit" })}
+                    </div>
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {/* Day shift row */}
+              <tr className="border-b border-gray-700/30">
+                <td className="px-3 py-2">
+                  <div className="text-xs text-gray-400 flex items-center gap-1.5">
+                    <i className="bi bi-sun text-yellow-400"></i>Day
+                  </div>
+                  <div className="text-[10px] text-gray-600">{fmtHour(config.dayShiftStartHour)}–{fmtHour(nightStart)}</div>
+                </td>
+                {weekDates.map((d, i) => {
+                  const dateStr = toISODate(d);
+                  const a = assignments[dateStr];
+                  return (
+                    <td key={i} className={`px-1 py-2 text-center ${isToday(d) ? "bg-cyan-900/10" : ""}`}>
+                      <select
+                        value={a?.day_team ?? ""}
+                        onChange={e => assign(dateStr, "day", e.target.value || null)}
+                        className={`w-full text-center text-sm font-semibold rounded py-1.5 px-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
+                          a?.day_team
+                            ? `${teamColor(a.day_team)} text-white`
+                            : "bg-gray-800 text-gray-600"
+                        }`}
+                      >
+                        <option value="" className="bg-gray-800 text-gray-400">—</option>
+                        {config.teams.map(t => (
+                          <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
+                        ))}
+                      </select>
+                    </td>
+                  );
+                })}
+              </tr>
+
+              {/* Night shift row */}
+              <tr>
+                <td className="px-3 py-2">
+                  <div className="text-xs text-gray-400 flex items-center gap-1.5">
+                    <i className="bi bi-moon text-indigo-400"></i>Night
+                  </div>
+                  <div className="text-[10px] text-gray-600">{fmtHour(nightStart)}–{fmtHour(config.dayShiftStartHour)}</div>
+                </td>
+                {weekDates.map((d, i) => {
+                  const dateStr = toISODate(d);
+                  const a = assignments[dateStr];
+                  return (
+                    <td key={i} className={`px-1 py-2 text-center ${isToday(d) ? "bg-cyan-900/10" : ""}`}>
+                      <select
+                        value={a?.night_team ?? ""}
+                        onChange={e => assign(dateStr, "night", e.target.value || null)}
+                        className={`w-full text-center text-sm font-semibold rounded py-1.5 px-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
+                          a?.night_team
+                            ? `${teamColor(a.night_team)} text-white`
+                            : "bg-gray-800 text-gray-600"
+                        }`}
+                      >
+                        <option value="" className="bg-gray-800 text-gray-400">—</option>
+                        {config.teams.map(t => (
+                          <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
+                        ))}
+                      </select>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Quick-fill actions */}
+        <div className="px-5 py-3 border-t border-gray-700/50 flex items-center gap-2 flex-wrap">
+          <span className="text-xs text-gray-500 mr-1">Quick fill:</span>
+          {config.teams.length >= 2 && (
+            <button
+              onClick={() => fillWeek(
+                config.teams.length >= 4
+                  ? [
+                      { day: config.teams[0], night: config.teams[1] },
+                      { day: config.teams[0], night: config.teams[1] },
+                      { day: config.teams[0], night: config.teams[1] },
+                      { day: config.teams[0], night: config.teams[1] },
+                      { day: config.teams[2], night: config.teams[3] },
+                      { day: config.teams[2], night: config.teams[3] },
+                      { day: config.teams[2], night: config.teams[3] },
+                    ]
+                  : [
+                      { day: config.teams[0], night: config.teams[1] },
+                    ]
+              )}
+              className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+            >
+              {config.teams.length >= 4
+                ? `${config.teams[0]}/${config.teams[1]} weekdays · ${config.teams[2]}/${config.teams[3]} weekends`
+                : `Alternate ${config.teams[0]}/${config.teams[1]}`}
+            </button>
+          )}
+          <button
+            onClick={() => fillWeek([{ day: null, night: null }])}
+            className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
+          >
+            Clear week
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main settings page
 // ─────────────────────────────────────────────────────────────
 export default function SettingsPage() {
@@ -925,6 +1344,7 @@ export default function SettingsPage() {
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "machines",    label: "Machines",    icon: "bi-cpu-fill"       },
     { id: "thresholds",  label: "Targets",     icon: "bi-sliders"        },
+    { id: "shifts",      label: "Shifts",      icon: "bi-calendar3"      },
     { id: "users",       label: "Users",       icon: "bi-people-fill"    },
     { id: "mqtt",        label: "MQTT",        icon: "bi-router-fill"    },
   ];
@@ -976,6 +1396,9 @@ export default function SettingsPage() {
 
       {/* ── THRESHOLDS ── */}
       {activeTab === "thresholds" && <ThresholdsTab />}
+
+      {/* ── SHIFTS ── */}
+      {activeTab === "shifts" && <ShiftsTab />}
 
       {/* ── MQTT ── */}
       {activeTab === "mqtt" && (

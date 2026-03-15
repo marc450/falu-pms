@@ -89,10 +89,21 @@ function fmtBucketRange(key: string, granularity: "hour" | "day"): [string, stri
   } catch { return [key, ""]; }
 }
 
-// Custom two-line X-axis tick for the BU chart showing bucket start→end
+// Custom X-axis tick for the BU chart.
+// Hourly: two lines showing start→end time (e.g. "12:00 / 13:00").
+// Daily:  single date label (e.g. "15.12.") — one bar = one day, no end date needed.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function RangeTick({ x, y, payload, granularity }: any) {
   const [line1, line2] = fmtBucketRange(payload?.value ?? "", granularity);
+  if (granularity === "day") {
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10}>
+          {line1}
+        </text>
+      </g>
+    );
+  }
   return (
     <g transform={`translate(${x},${y})`}>
       <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10}>

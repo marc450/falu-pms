@@ -502,3 +502,96 @@ export async function fetchHealth() {
   const res = await fetch(`${API_BASE}/api/health`);
   return res.json();
 }
+
+// ─── Shift assignments ──────────────────────────────────────────────────────
+
+export interface ShiftConfig {
+  teams: string[];           // e.g. ["A", "B", "C", "D"]
+  dayShiftStartHour: number; // 0–23, e.g. 6 = 06:00
+}
+
+export const DEFAULT_SHIFT_CONFIG: ShiftConfig = {
+  teams: ["A", "B", "C", "D"],
+  dayShiftStartHour: 6,
+};
+
+export interface ShiftAssignment {
+  shift_date: string;   // "YYYY-MM-DD"
+  day_team: string | null;
+  night_team: string | null;
+}
+
+export async function fetchShiftConfig(): Promise<ShiftConfig> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("app_settings")
+    .select("value")
+    .eq("key", "shift_config")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!data) return DEFAULT_SHIFT_CONFIG;
+  const val = data.value as Record<string, unknown>;
+  return {
+    teams: (val.teams as string[]) ?? DEFAULT_SHIFT_CONFIG.teams,
+    dayShiftStartHour: (val.dayShiftStartHour as number) ?? DEFAULT_SHIFT_CONFIG.dayShiftStartHour,
+  };
+}
+
+export async function saveShiftConfig(config: ShiftConfig): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("app_settings")
+    .upsert({ key: "shift_config", value: config as unknown as Record<string, unknown> }, { onConflict: "key" });
+  if (error) throw new Error(error.message);
+}
+
+/** Fetch shift assignments for a date range (inclusive). */
+export async function fetchShiftAssignments(
+  from: string,
+  to: string,
+): Promise<ShiftAssignment[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("shift_assignments")
+    .select("shift_date, day_team, night_team")
+    .gte("shift_date", from)
+    .lte("shift_date", to)
+    .order("shift_date", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as ShiftAssignment[];
+}
+
+/** Upsert a single day's shift assignment. */
+export async function saveShiftAssignment(
+  shiftDate: string,
+  dayTeam: string | null,
+  nightTeam: string | null,
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("shift_assignments")
+    .upsert(
+      { shift_date: shiftDate, day_team: dayTeam, night_team: nightTeam },
+      { onConflict: "shift_date" },
+    );
+  if (error) throw new Error(error.message);
+}
+
+/** Bulk-upsert shift assignments for multiple days. */
+export async function saveShiftAssignmentsBulk(
+  assignments: ShiftAssignment[],
+): Promise<void> {
+  if (assignments.length === 0) return;
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("shift_assignments")
+    .upsert(
+      assignments.map(a => ({
+        shift_date: a.shift_date,
+        day_team: a.day_team,
+        night_team: a.night_team,
+      })),
+      { onConflict: "shift_date" },
+    );
+  if (error) throw new Error(error.message);
+}
