@@ -390,92 +390,55 @@ export interface FleetTrendResult {
   totalReadings: number;
 }
 
+// Row type returned by the get_fleet_trend Postgres RPC function
+interface RpcFleetTrendRow {
+  bucket:        string;
+  avg_uptime:    number;
+  avg_scrap:     number;
+  total_boxes:   number;
+  total_swabs:   number;
+  machine_count: number;
+  reading_count: number;
+}
+
 export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResult> {
   const diffMs   = range.end.getTime() - range.start.getTime();
   const diffDays = diffMs / (1000 * 60 * 60 * 24);
   const granularity: "hour" | "day" = diffDays <= 2 ? "hour" : "day";
 
   const sb = getSupabase();
-  // Use shift_readings for all analytics — high-frequency time-series with per-reading
-  // efficiency/scrap values. produced_boxes/swabs are cumulative counters within a shift,
-  // so we take MAX per (machine_id, shift_number) per bucket to avoid double-counting.
-  const { data, error } = await sb
-    .from("shift_readings")
-    .select("recorded_at, efficiency, reject_rate, produced_boxes, produced_swabs, machine_id, shift_number")
-    .gte("recorded_at", range.start.toISOString())
-    .lte("recorded_at", range.end.toISOString())
-    .order("recorded_at", { ascending: true })
-    .limit(50000);
+
+  // Call the server-side aggregation function (migration 005_fleet_trend_rpc.sql).
+  // This avoids PostgREST's max-rows cap (default 1 000) that would otherwise
+  // truncate raw row fetches and make recent data invisible.
+  // The function handles: time bucketing, efficiency=0 exclusion, MAX per
+  // (machine, shift) for cumulative production counters.
+  const { data, error } = await sb.rpc("get_fleet_trend", {
+    range_start:        range.start.toISOString(),
+    range_end:          range.end.toISOString(),
+    bucket_granularity: granularity,
+  });
 
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) return { rows: [], granularity, totalReadings: 0 };
-
-  type ShiftKey = string; // `${machine_id}:${shift_number}`
-  type BucketAgg = {
-    uptimeSum:   number;
-    uptimeCount: number; // only readings where efficiency > 0 (excludes shift-start zeros)
-    scrapSum:    number;
-    scrapCount:  number;
-    count:       number;
-    machines:    Set<string>;
-    boxesMax:    Map<ShiftKey, number>;
-    swabsMax:    Map<ShiftKey, number>;
-  };
-
-  const byBucket = new Map<string, BucketAgg>();
-
-  for (const row of data) {
-    const ts        = row.recorded_at as string;
-    const bucketKey = granularity === "hour" ? ts.slice(0, 13) : ts.slice(0, 10);
-    let agg = byBucket.get(bucketKey);
-    if (!agg) {
-      agg = {
-        uptimeSum: 0, uptimeCount: 0, scrapSum: 0, scrapCount: 0, count: 0,
-        machines: new Set(), boxesMax: new Map(), swabsMax: new Map(),
-      };
-      byBucket.set(bucketKey, agg);
-    }
-
-    const eff  = (row.efficiency  as number | null) ?? 0;
-    const scrap = (row.reject_rate as number | null) ?? 0;
-
-    // Exclude efficiency=0 from the uptime average — these are shift-initialisation
-    // readings where the PLC hasn't accumulated enough time for a meaningful figure.
-    if (eff > 0) {
-      agg.uptimeSum   += eff;
-      agg.uptimeCount += 1;
-    }
-    // reject_rate=0 is a valid measurement (no rejects), include it always.
-    agg.scrapSum   += scrap;
-    agg.scrapCount += 1;
-
-    agg.count += 1;
-    agg.machines.add(row.machine_id as string);
-
-    const shiftKey = `${row.machine_id}:${row.shift_number}`;
-    const boxes    = (row.produced_boxes as number) ?? 0;
-    const swabs    = (row.produced_swabs as number) ?? 0;
-    agg.boxesMax.set(shiftKey, Math.max(agg.boxesMax.get(shiftKey) ?? 0, boxes));
-    agg.swabsMax.set(shiftKey, Math.max(agg.swabsMax.get(shiftKey) ?? 0, swabs));
+  if (!data || (data as RpcFleetTrendRow[]).length === 0) {
+    return { rows: [], granularity, totalReadings: 0 };
   }
 
-  const rows: FleetTrendRow[] = Array.from(byBucket.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([bucketKey, agg]) => {
-      const totalBoxes = Array.from(agg.boxesMax.values()).reduce((s, v) => s + v, 0);
-      const totalSwabs = Array.from(agg.swabsMax.values()).reduce((s, v) => s + v, 0);
-      return {
-        date:         bucketKey,
-        avgUptime:    agg.uptimeCount > 0 ? Math.round((agg.uptimeSum / agg.uptimeCount) * 10) / 10 : 0,
-        avgScrap:     agg.scrapCount  > 0 ? Math.round((agg.scrapSum  / agg.scrapCount)  * 10) / 10 : 0,
-        totalBoxes,
-        totalSwabs,
-        machineCount: agg.machines.size,
-        readingCount: agg.count,
-      };
-    });
+  const rpcRows = data as RpcFleetTrendRow[];
 
-  return { rows, granularity, totalReadings: data.length };
+  const rows: FleetTrendRow[] = rpcRows.map(r => ({
+    date:         r.bucket,
+    avgUptime:    Number(r.avg_uptime)    || 0,
+    avgScrap:     Number(r.avg_scrap)     || 0,
+    totalBoxes:   Number(r.total_boxes)   || 0,
+    totalSwabs:   Number(r.total_swabs)   || 0,
+    machineCount: Number(r.machine_count) || 0,
+    readingCount: Number(r.reading_count) || 0,
+  }));
+
+  const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
+
+  return { rows, granularity, totalReadings };
 }
 
 // ============================================
