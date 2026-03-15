@@ -646,7 +646,23 @@ app.listen(PORT, () => {
 
 // Graceful shutdown
 process.on("SIGINT", () => {
-  logger.info("Shutting down...");
+  logger.info("Received SIGINT — shutting down");
   if (mqttClient) mqttClient.end(true);
   process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  logger.info("Received SIGTERM — shutting down");
+  if (mqttClient) mqttClient.end(true);
+  process.exit(0);
+});
+
+// Log crashes so Railway deploy logs show the cause
+process.on("uncaughtException", (err) => {
+  console.error("UNCAUGHT EXCEPTION:", err.message, err.stack);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  console.error("UNHANDLED REJECTION:", reason instanceof Error ? reason.stack : reason);
 });
