@@ -563,14 +563,6 @@ export default function Analytics() {
             />
           </div>
 
-          {/* ── Data coverage note ── */}
-          <div className="flex items-center gap-1.5 text-xs text-gray-600 mb-5 -mt-2">
-            <i className="bi bi-database"></i>
-            {totalReadings === 0
-              ? "No shift readings found for this period"
-              : `${totalReadings.toLocaleString()} shift reading${totalReadings !== 1 ? "s" : ""} · ${rows.length} ${granularity === "hour" ? "hourly" : "daily"} bucket${rows.length !== 1 ? "s" : ""}`
-            }
-          </div>
 
           {/* ── Trend charts (2 columns) ── */}
           <div className="grid grid-cols-2 gap-4 mb-4">
