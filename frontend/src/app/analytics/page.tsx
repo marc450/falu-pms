@@ -485,8 +485,8 @@ export default function Analytics() {
   return (
     <div>
       {/* ── Header ── */}
-      <div className="flex justify-between items-center mb-6">
-        <div className="flex items-center gap-6">
+      <div className="flex justify-between items-start mb-6 gap-6">
+        <div className="flex flex-col gap-3">
           <h2 className="text-xl font-bold text-white">Analytics</h2>
           <PeriodSelector
             activePresetId={activePresetId}
