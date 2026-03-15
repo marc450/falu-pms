@@ -140,12 +140,14 @@ function sortMachineList(
 // Machine row
 // ─────────────────────────────────────────────────────────────
 function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: DashboardMachine; shiftLengthMinutes: number; shiftStartedAt: number; onClick: () => void }) {
-  const status   = getStatusColor(m.machineStatus?.Status);
-  const effColor = applyMachineEfficiencyColor(m.machineStatus?.Efficiency ?? null, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
-  const scpColor = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
-  const spdColor = applyMachineSpeedColor(m.machineStatus?.Speed ?? null, m.speedTarget ?? null);
-  const buRate   = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
-  const buColor  = applyBuRunRateColor(buRate?.projected ?? null, buRate?.target ?? null, m.buMediocre ?? null);
+  const status     = getStatusColor(m.machineStatus?.Status);
+  const effColor   = applyMachineEfficiencyColor(m.machineStatus?.Efficiency ?? null, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
+  const scpColor   = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
+  const spdColor   = applyMachineSpeedColor(m.machineStatus?.Speed ?? null, m.speedTarget ?? null);
+  const buRate     = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
+  const buColor    = applyBuRunRateColor(buRate?.projected ?? null, buRate?.target ?? null, m.buMediocre ?? null);
+  const isOffline  = m.machineStatus?.Status?.toLowerCase() === "offline";
+  const hasProduction = (m.machineStatus?.Swabs ?? 0) > 0;
 
   // In rows: suppress green — only yellow and red signal problems; good = plain white
   const toRowColor = (c: string) => c === "text-green-400" ? "text-white" : c;
@@ -165,10 +167,10 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
         </span>
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
-        {m.machineStatus?.Efficiency ? `${m.machineStatus.Efficiency.toFixed(1)}%` : ""}
+        {!isOffline && hasProduction ? `${(m.machineStatus?.Efficiency ?? 0).toFixed(1)}%` : ""}
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(scpColor.text)}`}>
-        {m.machineStatus?.Reject ? `${m.machineStatus.Reject.toFixed(1)}%` : ""}
+        {!isOffline && hasProduction ? `${(m.machineStatus?.Reject ?? 0).toFixed(1)}%` : ""}
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(buColor.text)}`}>
         {buRate !== null
@@ -176,15 +178,15 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
           : ""}
       </td>
       <td className={`px-4 py-3 font-medium ${spdColor.text}`}>
-        {m.machineStatus?.Speed ? (
-          <>{m.machineStatus.Speed.toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
+        {!isOffline ? (
+          <>{(m.machineStatus?.Speed ?? 0).toLocaleString()} <span className="text-gray-500 text-xs">pcs/min</span></>
         ) : null}
       </td>
       <td className="px-4 py-3">
-        {m.machineStatus?.Swabs ? m.machineStatus.Swabs.toLocaleString() : ""}
+        {!isOffline ? (m.machineStatus?.Swabs ?? 0).toLocaleString() : ""}
       </td>
       <td className="px-4 py-3">
-        {m.machineStatus?.Boxes ? m.machineStatus.Boxes.toLocaleString() : ""}
+        {!isOffline ? (m.machineStatus?.Boxes ?? 0).toLocaleString() : ""}
       </td>
       <td className="px-4 py-3 text-gray-400">
         {m.lastSyncStatus
@@ -277,11 +279,13 @@ function CellSection({
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
     const isRunning = s === "run" || s === "running";
+    const isOffline = s === "offline" || !s;
     if (isRunning) running++;
     // Uptime: all machines count — non-running contribute 0
     effSum += m.machineStatus?.Efficiency ?? 0;
-    // Scrap: running machines only
-    if (isRunning && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
+    // Scrap: all non-offline machines with production history
+    const hasProduction = (m.machineStatus?.Swabs ?? 0) > 0;
+    if (!isOffline && hasProduction && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
     if (m.machineStatus?.Swabs)      swabsTotal  += m.machineStatus.Swabs;
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
     // Speed: running machines only
@@ -525,8 +529,10 @@ function ParkSummaryTiles({
     const isRunning = s === "run" || s === "running";
     if (isRunning) running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
-    // Scrap: running machines only
-    if (isRunning && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
+    // Scrap: all non-offline machines with production history
+    const isOffline = s === "offline" || !s;
+    const hasProduction = (m.machineStatus?.Swabs ?? 0) > 0;
+    if (!isOffline && hasProduction && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
     // Accumulate per-machine scrap targets for color thresholds
     if (m.scrapGood)     { scrapGoodSum += m.scrapGood;     scrapGoodCount++; }
     if (m.scrapMediocre) { scrapMedSum  += m.scrapMediocre; scrapMedCount++;  }
