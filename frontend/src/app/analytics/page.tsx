@@ -269,7 +269,7 @@ export default function Analytics() {
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
   const [totalReadings, setTotalReadings] = useState<number>(0);
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
-  const [buTarget, setBuTarget]           = useState<number | null>(null); // avg per-machine BU target (per shift)
+  const [buTarget, setBuTarget]           = useState<number | null>(null); // sum of all machines' BU targets
   const [buMediocre, setBuMediocre]       = useState<number | null>(null);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
@@ -315,10 +315,14 @@ export default function Analytics() {
       };
       setThresholds(computedThresholds);
 
-      // Store raw per-machine BU target averages — the chart normalises data
-      // to per-machine-per-shift so zones sit directly at these values.
-      setBuTarget(avg(machines.map(m => m.bu_target)));
-      setBuMediocre(avg(machines.map(m => m.bu_mediocre)));
+      // Sum all machines' BU targets — the chart shows total park output so
+      // zones must equal the combined target across the entire machine park.
+      const sum = (arr: (number | null)[]) => {
+        const vals = arr.filter((v): v is number => v !== null && v > 0 && !isNaN(v));
+        return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) : null;
+      };
+      setBuTarget(sum(machines.map(m => m.bu_target)));
+      setBuMediocre(sum(machines.map(m => m.bu_mediocre)));
 
       setLastRefreshed(new Date());
     } catch (e) {
@@ -354,18 +358,12 @@ export default function Analytics() {
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
   const totalBUs   = Math.round(totalSwabs / 7200);
 
-  // Per-machine-per-shift BU for each bucket (so zones match configured targets directly).
-  // Hourly: extrapolate 1 h of output → full shift length.
-  // Daily:  divide day's output by shifts-per-day to get per-shift average.
-  const shiftHours = thresholds.bu.shiftLengthMinutes / 60 || 8;
-  const buRows = rows.map(r => {
-    const rawBU       = r.totalSwabs / 7200;
-    const perMachine  = r.machineCount > 0 ? rawBU / r.machineCount : 0;
-    const perShift    = granularity === "hour"
-      ? perMachine * shiftHours          // extrapolate 1 h → full shift
-      : perMachine / (24 / shiftHours);  // daily total → per shift
-    return { ...r, buPerShift: Math.round(perShift * 10) / 10 };
-  });
+  // Total park BU output per bucket — no per-machine or per-shift normalisation.
+  // Zones are the sum of all machines' bu_target / bu_mediocre.
+  const buRows = rows.map(r => ({
+    ...r,
+    totalBU: Math.round((r.totalSwabs / 7200) * 10) / 10,
+  }));
 
   const ec = applyEfficiencyColor(avgUptime, thresholds);
   const sc = applyScrapColor(avgScrap, thresholds);
@@ -377,7 +375,7 @@ export default function Analytics() {
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
   const scrapMax     = Math.ceil(Math.max(scrapDataMax, thresholds.scrap.mediocre) + 1);
 
-  const buDataMax = hasData ? Math.max(...buRows.map(r => r.buPerShift)) : 0;
+  const buDataMax = hasData ? Math.max(...buRows.map(r => r.totalBU)) : 0;
   const buMax     = Math.ceil(Math.max(buDataMax, buTarget ?? 0, buMediocre ?? 0) * 1.15);
 
   const chartTitle = granularity === "hour"
@@ -588,21 +586,21 @@ export default function Analytics() {
             </ChartCard>
           </div>
 
-          {/* ── BU output per machine bar chart ── */}
+          {/* ── Total park BU output bar chart ── */}
           <ChartCard
-            title="Avg BU per Machine — projected per shift"
+            title={`Total BU Output ${chartTitle}`}
             legend={buTarget !== null ? (
               <>
-                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget)} BUs)`} />
-                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0)} BUs)`} />
-                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0)} BUs)`} />
+                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget).toLocaleString()} BUs)`} />
+                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0).toLocaleString()} BUs)`} />
+                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0).toLocaleString()} BUs)`} />
               </>
             ) : undefined}
           >
             {!hasData ? <NoData /> : (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                  {/* Zones at raw per-machine targets — no scaling needed */}
+                  {/* Zones — higher is better; targets = sum of all machines */}
                   <ReferenceArea y1={buTarget ?? buMax} y2={buMax} fill="#4ade80" fillOpacity={buTarget !== null ? 0.08 : 0} />
                   <ReferenceArea y1={buMediocre ?? 0} y2={buTarget ?? 0} fill="#eab308" fillOpacity={buTarget !== null ? 0.07 : 0} />
                   <ReferenceArea y1={0} y2={buMediocre ?? 0} fill="#ef4444" fillOpacity={buMediocre !== null ? 0.07 : 0} />
@@ -620,19 +618,19 @@ export default function Analytics() {
                     tick={TICK_STYLE}
                     tickLine={false}
                     axisLine={false}
-                    tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(0)}k` : String(v)}
+                    tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
                   />
                   <Tooltip
                     contentStyle={TOOLTIP_CONTENT_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
                     labelFormatter={(l) => fmtLabel(l as string)}
-                    formatter={(v) => [`${Number(v ?? 0).toFixed(1)} BUs`, "Per machine / shift"]}
+                    formatter={(v) => [`${Number(v ?? 0).toLocaleString()} BUs`, "Total park"]}
                     cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
                   <Bar
-                    dataKey="buPerShift"
-                    name="BU/machine"
+                    dataKey="totalBU"
+                    name="BU output"
                     fill="#22d3ee"
                     radius={[2, 2, 0, 0]}
                     maxBarSize={36}
