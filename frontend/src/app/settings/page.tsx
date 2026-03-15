@@ -1195,7 +1195,7 @@ function ShiftsTab() {
             <i className="bi bi-clock text-cyan-400"></i>Machine Shift Configuration
           </h4>
           <p className="text-gray-500 text-xs mt-0.5">
-            Match this to the shift configuration set on the machine HMI. The machine reports which shift number is active.
+            Match this to the shift configuration on the machine HMI. You cannot override the machine's shift structure here—only label and assign teams to the shifts it reports.
           </p>
         </div>
         <div className="px-5 py-3 space-y-2">
