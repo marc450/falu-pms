@@ -255,7 +255,7 @@ function PeriodSelector({
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute right-0 top-full mt-1 z-50 flex bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+        <div className="absolute left-0 top-full mt-1 z-50 flex bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
 
           {/* Preset list */}
           <div className="py-2 border-r border-gray-800 min-w-[160px]">
