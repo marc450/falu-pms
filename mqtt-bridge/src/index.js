@@ -1,18 +1,17 @@
 /**
- * FALU PMS - MQTT Bridge + REST API
+ * FALU PMS - MQTT Bridge + REST API (v2 — combined topic)
  *
- * Two-way MQTT bridge that:
- * 1. Subscribes to Status and Shift topics from cotton swab machines
- * 2. Can publish RequestShift messages back to machines
- * 3. Persists data to Supabase and CSV files
- * 4. Exposes a REST API for the frontend
+ * Subscribes to a single unified topic from cotton swab machines:
+ *   - cloud/Shift  → Combined status + shift data (every 5 s)
+ *   - cloud/Error   → Active error codes per machine (future)
  *
- * MQTT Topic Structure (matching developer's Blazor implementation):
+ * Historical shift data is stored in Supabase; the bridge no longer
+ * publishes RequestShift — the dashboard reads past shifts from the DB.
+ *
+ * MQTT Topic Structure:
  *   Subscribe: cloud/# (or local/#)
- *     - cloud/Status  → MachineStatus messages
- *     - cloud/Shift   → ShiftData messages
- *   Publish:
- *     - cloud/RequestShift → Request shift data from a machine
+ *     - cloud/Shift  → unified machine message (status + production)
+ *     - cloud/Error   → error code list (future)
  */
 
 require("dotenv").config();
@@ -55,25 +54,21 @@ const supabase = createClient(
 );
 
 // ============================================
-// IN-MEMORY STATE (mirrors developer's AllMachines dictionary)
+// IN-MEMORY STATE
 // ============================================
 const allMachines = {};
 // Structure per machine:
 // {
-//   machine: "M12",
-//   machineStatus: { Machine, Status, Error, ActShift, Speed, Swaps, Boxes, Efficiency, Reject },
-//   shift1: { ...shift data },
-//   shift2: { ...shift data },
-//   shift3: { ...shift data },
-//   total: { ...shift data },
-//   lastSyncStatus: Date,
-//   lastSyncShift: Date,
-//   lastRequestShift: Date,
+//   machine: "CB-30",
+//   machineStatus: { Machine, Status, Speed, Shift, Efficiency, Reject,
+//                    ProducedSwabs, PackagedSwabs, DiscardedSwabs, ProducedBoxes,
+//                    ProductionTime, IdleTime },
+//   lastSync: Date,
 // }
 
 let mqttConnected = false;
 let currentShiftNumber = 1;
-let shiftStartedAt = Date.now(); // wall-clock ms when current shift began
+let shiftStartedAt = Date.now();
 
 // Persist/restore shift state so a bridge restart doesn't lose the start time
 const SHIFT_STATE_FILE = path.join(__dirname, "..", "shift-state.json");
@@ -113,10 +108,6 @@ function getSubscribeTopic() {
   return brokerSettings.isLocal ? "local/#" : "cloud/#";
 }
 
-function getPublishTopicPrefix() {
-  return brokerSettings.isLocal ? "local" : "cloud";
-}
-
 // ============================================
 // STARTUP: LOAD ALL REGISTERED MACHINES
 // Ensures every machine in the DB appears on the dashboard,
@@ -125,7 +116,7 @@ function getPublishTopicPrefix() {
 async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
-    .select("id, machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift")
+    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift")
     .eq("hidden", false)
     .order("machine_code");
 
@@ -136,26 +127,22 @@ async function loadRegisteredMachines() {
 
   for (const row of data) {
     const code = row.machine_code;
-    // Pre-populate cache so getMachineId() doesn't need a DB round-trip
     machineIdCache[code] = row.id;
 
-    // Only seed if no live MQTT data has arrived yet for this machine
     if (!allMachines[code]) {
       allMachines[code] = {
         machine: code,
         machineStatus: {
           Machine: code,
           Status: row.status || "offline",
-          Error: row.error_message || "",
-          ActShift: row.active_shift || 0,
           Speed: row.speed || 0,
-          Swabs: row.current_swabs || 0,
-          Boxes: row.current_boxes || 0,
+          Shift: row.active_shift || 0,
+          ProducedSwabs: row.current_swabs || 0,
+          ProducedBoxes: row.current_boxes || 0,
           Efficiency: row.current_efficiency || 0,
           Reject: row.current_reject || 0,
         },
-        lastSyncStatus: row.last_sync_status || null,
-        lastSyncShift: row.last_sync_shift || null,
+        lastSync: row.last_sync_status || row.last_sync_shift || null,
       };
     }
   }
@@ -201,33 +188,30 @@ async function getMachineId(machineCode) {
 }
 
 // ============================================
-// STATUS MESSAGE HANDLER
+// COMBINED SHIFT MESSAGE HANDLER
 // ============================================
-async function handleStatusMessage(payload) {
+// cloud/Shift now carries everything: status fields + production data.
+// Confirmed field list:
+//   Machine, Status, Speed, Shift, ProductionTime, IdleTime,
+//   ProducedSwabs, PackagedSwabs, DiscardedSwabs, ProducedBoxes,
+//   Efficiency, Reject, Save
+async function handleShiftMessage(payload) {
   const data = JSON.parse(payload);
   const machineCode = data.Machine;
   if (!machineCode) return;
 
-  // Update in-memory state
+  // ── Update in-memory state ──
   if (!allMachines[machineCode]) {
     allMachines[machineCode] = { machine: machineCode };
   }
+  const m = allMachines[machineCode];
 
-  // Per-machine shift change detection — reset Swaps/Boxes immediately
-  // so the dashboard shows 0 for the new shift, not stale values from the old one.
-  const prevActShift = allMachines[machineCode].machineStatus?.ActShift;
-  const incomingActShift = data.ActShift;
-  if (prevActShift !== undefined && incomingActShift && prevActShift !== incomingActShift) {
-    data.Swabs = 0;
-    data.Boxes = 0;
-    logger.info(`Machine ${machineCode} shift ${prevActShift}→${incomingActShift}: reset Swaps/Boxes`);
+  // Shift change detection — track globally for BU run rate
+  const prevShift = m.machineStatus?.Shift;
+  const incomingShift = data.Shift || currentShiftNumber;
+  if (prevShift !== undefined && incomingShift && prevShift !== incomingShift) {
+    logger.info(`Machine ${machineCode} shift ${prevShift}→${incomingShift}`);
   }
-
-  allMachines[machineCode].machineStatus = data;
-  allMachines[machineCode].lastSyncStatus = new Date();
-
-  // Global shift tracking (used for shiftStartedAt / BU run rate)
-  const incomingShift = data.ActShift || currentShiftNumber;
   if (incomingShift !== currentShiftNumber) {
     currentShiftNumber = incomingShift;
     shiftStartedAt = Date.now();
@@ -235,102 +219,111 @@ async function handleStatusMessage(payload) {
     logger.info(`Global shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
   }
 
-  // Update Supabase
+  // Store as machineStatus, adding backward-compatible aliases so the frontend
+  // keeps working with both old (Status-only) and new (combined) payloads.
+  m.machineStatus = {
+    ...data,
+    // Aliases for the frontend which still reads .ActShift, .Swabs, .Boxes, .Error
+    ActShift: data.Shift || data.ActShift || 1,
+    Swabs:    data.ProducedSwabs ?? data.Swabs ?? 0,
+    Boxes:    data.ProducedBoxes ?? data.Boxes ?? 0,
+    Error:    data.Error || "",
+  };
+  m.lastSync = new Date();
+  // Also keep legacy lastSyncStatus for the REST API
+  m.lastSyncStatus = m.lastSync;
+
+  // ── Persist to Supabase ──
   const machineId = await getMachineId(machineCode);
   if (!machineId) return;
 
+  // Always update the machines table (status, speed, live counters)
+  const now = new Date().toISOString();
   await supabase
     .from("machines")
     .update({
       status: (data.Status || "offline").toLowerCase(),
-      error_message: data.Error || null,
-      active_shift: data.ActShift || 1,
+      error_message: null, // errors now come via cloud/Error
+      active_shift: data.Shift || 1,
       speed: data.Speed || 0,
-      current_swabs: data.Swabs || 0,
-      current_boxes: data.Boxes || 0,
+      current_swabs: data.ProducedSwabs || 0,
+      current_boxes: data.ProducedBoxes || 0,
       current_efficiency: data.Efficiency || 0,
       current_reject: data.Reject || 0,
-      last_sync_status: new Date().toISOString(),
-      hidden: false,  // un-hide automatically when machine sends data again
+      last_sync_status: now,
+      hidden: false,
     })
     .eq("id", machineId);
 
-  logger.debug(`Status updated: ${machineCode} - ${data.Status} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
-}
-
-// ============================================
-// SHIFT MESSAGE HANDLER
-// ============================================
-async function handleShiftMessage(payload) {
-  const data = JSON.parse(payload);
-  const machineCode = data.Machine;
-  if (!machineCode) return;
-
-  // Check if data has meaningful content
+  // Insert a shift_readings row if there's meaningful production data
   const hasData = (data.ProductionTime || 0) > 0 ||
                   (data.IdleTime || 0) > 0 ||
                   (data.ProducedSwabs || 0) > 0 ||
                   (data.ProducedBoxes || 0) > 0;
 
-  // Update in-memory state
-  if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode };
-  }
-
-  const m = allMachines[machineCode];
-  const shiftKey = data.Shift === 4 ? "total" : `shift${data.Shift}`;
-
-  // Only update if we have data or slot is empty (mirrors developer logic)
-  if (hasData || !m[shiftKey]) {
-    m[shiftKey] = data;
-    if (hasData) m.lastSyncShift = new Date();
-    logger.debug(`${shiftKey} updated for ${machineCode} - HasData: ${hasData}`);
-  } else {
-    logger.debug(`${shiftKey} update skipped for ${machineCode} - empty data`);
-  }
-
-  // Persist to Supabase
-  const machineId = await getMachineId(machineCode);
-  if (!machineId) return;
-
   if (hasData) {
     await supabase.from("shift_readings").insert({
       machine_id: machineId,
       shift_number: data.Shift,
-      status: (allMachines[machineCode]?.machineStatus?.Status || "run").toLowerCase(),
-      speed: allMachines[machineCode]?.machineStatus?.Speed || 0,
+      status: (data.Status || "run").toLowerCase(),
+      speed: data.Speed || 0,
       production_time: data.ProductionTime || 0,
       idle_time: data.IdleTime || 0,
-      cotton_tears: data.CottonTears || 0,
-      missing_sticks: data.MissingSticks || 0,
-      faulty_pickups: data.FoultyPickups || 0,
-      other_errors: data.OtherErrors || 0,
+      cotton_tears: 0,           // no longer in payload — will come via cloud/Error
+      missing_sticks: 0,
+      faulty_pickups: 0,
+      other_errors: 0,
       produced_swabs: data.ProducedSwabs || 0,
       packaged_swabs: data.PackagedSwabs || 0,
       produced_boxes: data.ProducedBoxes || 0,
-      produced_boxes_layer_plus: data.ProducedBoxesLayerPlus || 0,
+      produced_boxes_layer_plus: 0,
       discarded_swabs: data.DiscardedSwabs || 0,
       efficiency: data.Efficiency || 0,
       reject_rate: data.Reject || 0,
       save_flag: data.Save || false,
+      raw_payload: data,
     });
 
     await supabase
       .from("machines")
-      .update({ last_sync_shift: new Date().toISOString() })
+      .update({ last_sync_shift: now })
       .eq("id", machineId);
   }
 
-  // CSV logging when Save flag is true
+  // CSV logging when Save flag is true (end of shift)
   if (data.Save) {
     logger.info(`Save flag received for ${machineCode}, Shift ${data.Shift} - Logging...`);
     logToCsv(data);
     await logToSavedShiftLogs(machineId, machineCode, data);
   }
+
+  logger.debug(`Shift updated: ${machineCode} - ${data.Status} | Shift ${data.Shift} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
 }
 
 // ============================================
-// CSV LOGGING (matches developer's format exactly)
+// ERROR MESSAGE HANDLER (future — cloud/Error)
+// ============================================
+// Expected payload: { Machine: "CB-30", Errors: [101, 205, 310] }
+// For now, just log it. Full implementation after Sebastian ships PLC changes.
+async function handleErrorMessage(payload) {
+  const data = JSON.parse(payload);
+  const machineCode = data.Machine;
+  if (!machineCode) return;
+
+  const errorCodes = data.Errors || [];
+  logger.info(`Error codes for ${machineCode}: [${errorCodes.join(", ")}]`);
+
+  // Update in-memory state
+  if (!allMachines[machineCode]) {
+    allMachines[machineCode] = { machine: machineCode };
+  }
+  allMachines[machineCode].activeErrors = errorCodes;
+
+  // TODO: persist error codes to Supabase once schema is ready
+}
+
+// ============================================
+// CSV LOGGING
 // ============================================
 function formatMinutesToTime(minutes) {
   if (!minutes || minutes === 0) return "00:00";
@@ -343,8 +336,8 @@ function logToCsv(data) {
   const timestamp = new Date().toISOString().replace("T", " ").substring(0, 19);
   const prodTime = formatMinutesToTime(data.ProductionTime);
   const idleTime = formatMinutesToTime(data.IdleTime);
-  const header = "Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FoultyPickups;OtherErrors;ProducedSwabs;PackagedSwabs;ProducedBoxes;ProducedBoxesLayerPlus;DiscardedSwabs;Efficiency;Reject";
-  const row = `${timestamp};${data.Machine};${data.Shift};${prodTime};${idleTime};${data.CottonTears || 0};${data.MissingSticks || 0};${data.FoultyPickups || 0};${data.OtherErrors || 0};${data.ProducedSwabs || 0};${data.PackagedSwabs || 0};${data.ProducedBoxes || 0};${data.ProducedBoxesLayerPlus || 0};${data.DiscardedSwabs || 0};${(data.Efficiency || 0).toFixed(2)};${(data.Reject || 0).toFixed(2)}`;
+  const header = "Timestamp;Machine;Shift;Status;Speed;ProductionTime;IdleTime;ProducedSwabs;PackagedSwabs;DiscardedSwabs;ProducedBoxes;Efficiency;Reject";
+  const row = `${timestamp};${data.Machine};${data.Shift};${data.Status || ""};${data.Speed || 0};${prodTime};${idleTime};${data.ProducedSwabs || 0};${data.PackagedSwabs || 0};${data.DiscardedSwabs || 0};${data.ProducedBoxes || 0};${(data.Efficiency || 0).toFixed(2)};${(data.Reject || 0).toFixed(2)}`;
 
   // Per-machine log
   const machineLogPath = path.join("csv_logs", "machines", `${data.Machine}.csv`);
@@ -370,14 +363,14 @@ async function logToSavedShiftLogs(machineId, machineCode, data) {
     shift_number: data.Shift,
     production_time: data.ProductionTime || 0,
     idle_time: data.IdleTime || 0,
-    cotton_tears: data.CottonTears || 0,
-    missing_sticks: data.MissingSticks || 0,
-    faulty_pickups: data.FoultyPickups || 0,
-    other_errors: data.OtherErrors || 0,
+    cotton_tears: 0,
+    missing_sticks: 0,
+    faulty_pickups: 0,
+    other_errors: 0,
     produced_swabs: data.ProducedSwabs || 0,
     packaged_swabs: data.PackagedSwabs || 0,
     produced_boxes: data.ProducedBoxes || 0,
-    produced_boxes_layer_plus: data.ProducedBoxesLayerPlus || 0,
+    produced_boxes_layer_plus: 0,
     discarded_swabs: data.DiscardedSwabs || 0,
     efficiency: data.Efficiency || 0,
     reject_rate: data.Reject || 0,
@@ -424,11 +417,13 @@ function connectMqtt() {
   mqttClient.on("message", async (topic, message) => {
     try {
       const payload = message.toString();
-      if (topic.includes("Status")) {
-        await handleStatusMessage(payload);
-      } else if (topic.includes("Shift") && !topic.includes("Request")) {
+
+      if (topic.includes("Error")) {
+        await handleErrorMessage(payload);
+      } else if (topic.includes("Shift")) {
         await handleShiftMessage(payload);
       }
+      // All other topics (e.g. old Status, RequestShift) are silently ignored
     } catch (err) {
       logger.error(`Message handling error on ${topic}: ${err.message}`);
     }
@@ -463,28 +458,6 @@ function connectMqtt() {
   }, 30000);
 }
 
-function publishRequestShift(machine, shift) {
-  if (!mqttClient || !mqttConnected) {
-    logger.warn("Cannot publish - MQTT not connected");
-    return false;
-  }
-
-  const topic = `${getPublishTopicPrefix()}/RequestShift/${machine}`;
-  const payload = JSON.stringify({ Machine: machine, Shift: shift });
-
-  mqttClient.publish(topic, payload, { qos: 1 }, (err) => {
-    if (err) {
-      logger.error(`Publish error: ${err.message}`);
-    } else {
-      logger.info(`RequestShift published: ${machine} Shift ${shift} on ${topic}`);
-      if (allMachines[machine]) {
-        allMachines[machine].lastRequestShift = new Date();
-      }
-    }
-  });
-  return true;
-}
-
 // ============================================
 // REST API (for frontend)
 // ============================================
@@ -496,9 +469,9 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Root route (used by ngrok health checks)
+// Root route (used by Railway / ngrok health checks)
 app.get("/", (req, res) => {
-  res.json({ service: "FALU PMS Bridge", status: "ok" });
+  res.json({ service: "FALU PMS Bridge", version: "2.0", status: "ok" });
 });
 
 // Health check
@@ -539,13 +512,6 @@ app.delete("/api/machines/:code", (req, res) => {
   res.json({ success: true });
 });
 
-// Request shift data from a machine
-app.post("/api/machines/:code/request-shift", (req, res) => {
-  const { shift } = req.body;
-  const success = publishRequestShift(req.params.code, shift || 0);
-  res.json({ success });
-});
-
 // Get broker settings
 app.get("/api/settings/broker", (req, res) => {
   res.json({
@@ -554,7 +520,6 @@ app.get("/api/settings/broker", (req, res) => {
     username: brokerSettings.username,
     isLocal: brokerSettings.isLocal,
     subscribeTopic: getSubscribeTopic(),
-    publishTopicPrefix: getPublishTopicPrefix(),
   });
 });
 
@@ -628,14 +593,10 @@ app.get("/api/logs/preview/:filename", (req, res) => {
 // ============================================
 // START
 // ============================================
-// Railway injects $PORT — always use it. API_PORT is a local-dev fallback only.
 const PORT = process.env.PORT || process.env.API_PORT || 3001;
 
-// Start the HTTP server immediately so Railway health checks pass right away,
-// then load registered machines and connect to MQTT in the background.
-// This prevents Railway from restarting the service while Supabase is warming up.
 app.listen(PORT, () => {
-  logger.info(`FALU PMS Bridge API running on port ${PORT} (process.env.PORT=${process.env.PORT ?? "unset"})`);
+  logger.info(`FALU PMS Bridge API v2 running on port ${PORT} (process.env.PORT=${process.env.PORT ?? "unset"})`);
   logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
   logger.info(`Topic: ${getSubscribeTopic()}`);
 

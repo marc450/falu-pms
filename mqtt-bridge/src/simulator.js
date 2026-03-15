@@ -1,5 +1,8 @@
 /**
- * FALU PMS - Machine Simulator v2
+ * FALU PMS - Machine Simulator v3 (combined topic)
+ *
+ * Publishes a single combined cloud/Shift message every 5 seconds per machine,
+ * containing both status fields and production data.
  *
  * Realistic simulation featuring:
  *  - Real-clock shift tracking (Shift 1 starts 06:00, 12h each, cycle 1→2→3→1)
@@ -343,45 +346,26 @@ function simulateTick(machine, elapsedMin) {
 }
 
 // ============================================
-// PUBLISH
+// PUBLISH — single combined cloud/Shift message
 // ============================================
-function publishStatus(client, machine) {
-  const isRunning = machine.status === "run";
-  const shift     = machine.shifts[machine.activeShift];
-  const msg = {
-    Machine:    machine.name,
-    Status:     machine.status,
-    Error:      "",  // error messages deferred to later implementation
-    ActShift:   machine.activeShift,
-    Speed:      isRunning ? machine.currentSpeed : 0,
-    Swabs:      shift.producedSwabs,
-    Boxes:      shift.producedBoxes,
-    Efficiency: parseFloat(machine.efficiency.toFixed(1)),
-    Reject:     parseFloat(machine.reject.toFixed(1)),
-  };
-  client.publish(`${topicPrefix}/Status`, JSON.stringify(msg), { qos: 1 });
-}
-
-function publishShiftData(client, machine, shiftNum, save = false) {
+function publishCombinedShift(client, machine, shiftNum, save = false) {
   const shift = machine.shifts[shiftNum];
   if (!shift) return;
+  const isRunning = machine.status === "run";
   const msg = {
-    Machine:                machine.name,
-    Shift:                  shiftNum,
-    ProductionTime:         parseFloat(shift.productionTime.toFixed(2)),
-    IdleTime:               parseFloat(shift.idleTime.toFixed(2)),
-    CottonTears:            shift.cottonTears,
-    MissingSticks:          shift.missingSticks,
-    FoultyPickups:          shift.faultyPickups,
-    OtherErrors:            shift.otherErrors,
-    ProducedSwabs:          shift.producedSwabs,
-    PackagedSwabs:          shift.packagedSwabs,
-    ProducedBoxes:          shift.producedBoxes,
-    ProducedBoxesLayerPlus: shift.producedBoxesLayerPlus,
-    DiscardedSwabs:         shift.discardedSwabs,
-    Efficiency:             parseFloat(shift.efficiency.toFixed(2)),
-    Reject:                 parseFloat(shift.reject.toFixed(2)),
-    Save:                   save,
+    Machine:        machine.name,
+    Status:         machine.status,
+    Speed:          isRunning ? machine.currentSpeed : 0,
+    Shift:          shiftNum,
+    ProductionTime: parseFloat(shift.productionTime.toFixed(2)),
+    IdleTime:       parseFloat(shift.idleTime.toFixed(2)),
+    ProducedSwabs:  shift.producedSwabs,
+    PackagedSwabs:  shift.packagedSwabs,
+    DiscardedSwabs: shift.discardedSwabs,
+    ProducedBoxes:  shift.producedBoxes,
+    Efficiency:     parseFloat(shift.efficiency.toFixed(2)),
+    Reject:         parseFloat(shift.reject.toFixed(2)),
+    Save:           save,
   };
   client.publish(`${topicPrefix}/Shift`, JSON.stringify(msg), { qos: 1 });
 }
@@ -393,7 +377,7 @@ const url = IS_LOCAL
   ? `mqtt://${BROKER_HOST}:${BROKER_PORT}`
   : `mqtts://${BROKER_HOST}:${BROKER_PORT}`;
 
-console.log(`\n=== FALU PMS Machine Simulator v2 ===`);
+console.log(`\n=== FALU PMS Machine Simulator v3 (combined topic) ===`);
 console.log(`Broker:     ${url}`);
 console.log(`Machines:   ${MACHINE_NAMES.join(", ")}`);
 console.log(`Tick:       ${TICK_MS}ms`);
@@ -419,9 +403,6 @@ client.on("connect", async () => {
 
   MACHINE_NAMES.forEach(name => { if (!machines[name]) machines[name] = initMachine(name); });
 
-  // Subscribe to RequestShift topics
-  client.subscribe(`${topicPrefix}/RequestShift/+`, { qos: 1 });
-
   // Guard: only start the tick loop once — reconnects must not spawn a second interval
   if (simulationStarted) {
     console.log("Reconnected — reusing existing simulation loop.\n");
@@ -442,7 +423,7 @@ client.on("connect", async () => {
 
       // ── Shift change detection ────────────────────────────────────────
       if (shiftNumber !== machine.activeShift) {
-        publishShiftData(client, machine, machine.activeShift, true);
+        publishCombinedShift(client, machine, machine.activeShift, true);
         console.log(`[SHIFT END]   ${machine.name} Shift ${machine.activeShift} saved`);
 
         machine.shifts[shiftNumber] = createShiftData();
@@ -456,10 +437,9 @@ client.on("connect", async () => {
         console.log(`[SHIFT START] ${machine.name} now on Shift ${machine.activeShift}`);
       }
 
-      // ── Tick & publish ───────────────────────────────────────────────
+      // ── Tick & publish combined message ────────────────────────────────
       simulateTick(machine, elapsedMinutes);
-      publishStatus(client, machine);
-      publishShiftData(client, machine, machine.activeShift, false);
+      publishCombinedShift(client, machine, machine.activeShift, false);
     }
 
     // ── Persist state periodically ───────────────────────────────────
@@ -469,71 +449,6 @@ client.on("connect", async () => {
   }, TICK_MS);
 
   console.log("Simulation running. Press Ctrl+C to stop.\n");
-});
-
-// ============================================
-// REQUEST SHIFT HANDLER
-// ============================================
-client.on("message", (topic, message) => {
-  if (!topic.includes("RequestShift")) return;
-  try {
-    const machineName = topic.split("/").pop();
-    const req         = JSON.parse(message.toString());
-    const m           = machines[machineName];
-    if (!m) return;
-
-    if (req.Shift === 0) {
-      // Send all three shifts
-      [1, 2, 3].forEach(s => publishShiftData(client, m, s));
-
-      // Aggregate and send total as Shift 4
-      const total = createShiftData();
-      [1, 2, 3].forEach(s => {
-        const sd = m.shifts[s];
-        if (!sd) return;
-        total.productionTime         += sd.productionTime;
-        total.idleTime               += sd.idleTime;
-        total.errorTime              += sd.errorTime;
-        total.cottonTears            += sd.cottonTears;
-        total.missingSticks          += sd.missingSticks;
-        total.faultyPickups          += sd.faultyPickups;
-        total.otherErrors            += sd.otherErrors;
-        total.producedSwabs          += sd.producedSwabs;
-        total.packagedSwabs          += sd.packagedSwabs;
-        total.producedBoxes          += sd.producedBoxes;
-        total.producedBoxesLayerPlus += sd.producedBoxesLayerPlus;
-        total.discardedSwabs         += sd.discardedSwabs;
-      });
-      const tTotal   = total.productionTime + total.idleTime + total.errorTime;
-      total.efficiency = tTotal > 0 ? (total.productionTime / tTotal) * 100 : 0;
-      total.reject     = total.producedSwabs > 0
-                       ? (total.discardedSwabs / total.producedSwabs) * 100 : 0;
-
-      client.publish(`${topicPrefix}/Shift`, JSON.stringify({
-        Machine:                machineName,
-        Shift:                  4,
-        ProductionTime:         parseFloat(total.productionTime.toFixed(2)),
-        IdleTime:               parseFloat(total.idleTime.toFixed(2)),
-        CottonTears:            total.cottonTears,
-        MissingSticks:          total.missingSticks,
-        FoultyPickups:          total.faultyPickups,
-        OtherErrors:            total.otherErrors,
-        ProducedSwabs:          total.producedSwabs,
-        PackagedSwabs:          total.packagedSwabs,
-        ProducedBoxes:          total.producedBoxes,
-        ProducedBoxesLayerPlus: total.producedBoxesLayerPlus,
-        DiscardedSwabs:         total.discardedSwabs,
-        Efficiency:             parseFloat(total.efficiency.toFixed(2)),
-        Reject:                 parseFloat(total.reject.toFixed(2)),
-        Save:                   false,
-      }), { qos: 1 });
-    } else {
-      publishShiftData(client, m, req.Shift);
-    }
-    console.log(`[REQ] Shift data sent for ${machineName} Shift ${req.Shift}`);
-  } catch (err) {
-    console.error(`RequestShift error: ${err.message}`);
-  }
 });
 
 client.on("error", err => console.error(`MQTT Error: ${err.message}`));
