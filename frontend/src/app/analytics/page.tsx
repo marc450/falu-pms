@@ -106,7 +106,17 @@ function ChartCard({ title, legend, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 outline-none" tabIndex={-1}>
+    // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+    <div
+      className="bg-gray-800/50 border border-gray-700 rounded-lg p-4"
+      style={{ outline: "none" }}
+      tabIndex={-1}
+      onMouseDown={e => e.preventDefault()}
+    >
+      <style>{`
+        .recharts-wrapper:focus,
+        .recharts-surface:focus { outline: none !important; }
+      `}</style>
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-white">{title}</h3>
         {legend && <div className="flex items-center gap-3 text-xs text-gray-500">{legend}</div>}
@@ -233,6 +243,7 @@ function PeriodSelector({
                 type="date"
                 value={customStart}
                 onChange={e => setCustomStart(e.target.value)}
+                style={{ colorScheme: "dark" }}
                 className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
               />
             </label>
@@ -242,6 +253,7 @@ function PeriodSelector({
                 type="date"
                 value={customEnd}
                 onChange={e => setCustomEnd(e.target.value)}
+                style={{ colorScheme: "dark" }}
                 className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
               />
             </label>
@@ -269,8 +281,8 @@ export default function Analytics() {
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
   const [totalReadings, setTotalReadings] = useState<number>(0);
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
-  const [buTarget, setBuTarget]           = useState<number | null>(null); // sum of all machines' BU targets
-  const [buMediocre, setBuMediocre]       = useState<number | null>(null);
+  const [buTargetPerShift, setBuTargetPerShift]       = useState<number | null>(null); // sum of all machines' BU targets (per shift)
+  const [buMediocrePerShift, setBuMediocrePerShift]   = useState<number | null>(null);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
@@ -315,17 +327,14 @@ export default function Analytics() {
       };
       setThresholds(computedThresholds);
 
-      // BU targets are per-machine per-shift. The chart shows total park
-      // output per hour, so: sum all machines' targets ÷ shift length in hours.
+      // BU targets are per-machine per-shift. Store the raw per-shift park
+      // total; the chart scales these to the bucket granularity at render time.
       const sum = (arr: (number | null)[]) => {
         const vals = arr.filter((v): v is number => v !== null && v > 0 && !isNaN(v));
         return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) : null;
       };
-      const shiftHours = (savedThresholds.bu.shiftLengthMinutes || 480) / 60;
-      const rawBuTarget   = sum(machines.map(m => m.bu_target));
-      const rawBuMediocre = sum(machines.map(m => m.bu_mediocre));
-      setBuTarget(rawBuTarget !== null ? rawBuTarget / shiftHours : null);
-      setBuMediocre(rawBuMediocre !== null ? rawBuMediocre / shiftHours : null);
+      setBuTargetPerShift(sum(machines.map(m => m.bu_target)));
+      setBuMediocrePerShift(sum(machines.map(m => m.bu_mediocre)));
 
       setLastRefreshed(new Date());
     } catch (e) {
@@ -361,12 +370,28 @@ export default function Analytics() {
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
   const totalBUs   = Math.round(totalSwabs / 7200);
 
-  // Total park BU output per bucket — no per-machine or per-shift normalisation.
-  // Zones are the sum of all machines' bu_target / bu_mediocre.
+  // Total park BU output per bucket.
   const buRows = rows.map(r => ({
     ...r,
     totalBU: Math.round((r.totalSwabs / 7200) * 10) / 10,
   }));
+
+  // BU zone thresholds — scale per-shift park total to match bucket granularity.
+  // Formula: #machines × target_per_shift × (24 / shiftHours) = daily target.
+  // For hourly buckets: daily target / 24 = sum(targets) / shiftHours.
+  // For daily buckets:  daily target = sum(targets) × (24 / shiftHours).
+  const shiftHours = thresholds.bu.shiftLengthMinutes / 60 || 8;
+  const shiftsPerDay = 24 / shiftHours;
+  const buTarget = buTargetPerShift !== null
+    ? (granularity === "hour"
+        ? buTargetPerShift * shiftsPerDay / 24   // per-hour target
+        : buTargetPerShift * shiftsPerDay)        // per-day target
+    : null;
+  const buMediocre = buMediocrePerShift !== null
+    ? (granularity === "hour"
+        ? buMediocrePerShift * shiftsPerDay / 24
+        : buMediocrePerShift * shiftsPerDay)
+    : null;
 
   const ec = applyEfficiencyColor(avgUptime, thresholds);
   const sc = applyScrapColor(avgScrap, thresholds);
@@ -594,9 +619,9 @@ export default function Analytics() {
             title={`Total BU Output ${chartTitle}`}
             legend={buTarget !== null ? (
               <>
-                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget).toLocaleString()} BUs/h)`} />
-                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0).toLocaleString()} BUs/h)`} />
-                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0).toLocaleString()} BUs/h)`} />
+                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/d"})`} />
+                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/d"})`} />
+                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/d"})`} />
               </>
             ) : undefined}
           >
