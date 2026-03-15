@@ -343,7 +343,7 @@ export default function Analytics() {
       {/* ── Header ── */}
       <div className="flex justify-between items-center mb-6">
         <div>
-          <h2 className="text-xl font-bold text-white">Fleet Analytics</h2>
+          <h2 className="text-xl font-bold text-white">Analytics</h2>
           {lastRefreshed && !loading && (
             <p className="text-xs text-gray-600 mt-0.5">
               Updated {format(lastRefreshed, "HH:mm:ss")}
