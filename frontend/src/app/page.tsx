@@ -51,18 +51,26 @@ function calcBuRunRate(
   // Only project for actively running machines
   const s = m.machineStatus?.Status?.toLowerCase();
   if (!s || s === "offline" || s === "idle" || s === "error") return null;
-  const elapsedMs  = Date.now() - shiftStartedAt;
-  const elapsed    = elapsedMs / 60000;               // ms → minutes
-  if (elapsed <= 0) return null;
+
   // Read production from the shift that is actually active, not always shift1.
-  // Using shift1 when the machine is on shift 2 or 3 would carry over the
-  // previous shift's cumulative swabs as the starting point, inflating the projection.
   const activeShift = m.machineStatus?.ActShift ?? 1;
   const activeShiftData = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
   const currentBUs = (activeShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
   const buPerMin   = (m.machineStatus?.Speed ?? 0) / 7200;
-  const remaining  = Math.max(0, shiftLen - elapsed);
-  const projected  = currentBUs + buPerMin * remaining;
+
+  // Use PLC-reported ProductionTime + IdleTime as elapsed shift time.
+  // The wall clock (shiftStartedAt) resets every time the bridge restarts, which
+  // makes elapsed ≈ 0 and inflates the projection to near a full shift.
+  // The PLC counters are unaffected by bridge restarts and reflect actual machine time.
+  // Fall back to wall clock only when no PLC shift data has arrived yet.
+  const plcElapsed = (activeShiftData?.ProductionTime ?? 0) + (activeShiftData?.IdleTime ?? 0);
+  const elapsed    = plcElapsed > 0
+    ? plcElapsed
+    : (Date.now() - shiftStartedAt) / 60000;
+  if (elapsed <= 0) return null;
+
+  const remaining = Math.max(0, shiftLen - elapsed);
+  const projected = currentBUs + buPerMin * remaining;
   return { projected, target, rate: projected / target };
 }
 
