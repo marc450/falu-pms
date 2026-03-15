@@ -23,9 +23,10 @@ import {
   fetchShiftAssignments,
   saveShiftAssignment,
   saveShiftAssignmentsBulk,
+  shiftLengthFromSlots,
   DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot } from "@/lib/supabase";
 
 type DropTarget = {
   cellId: string | null;      // destination cell (null = unassigned)
@@ -830,16 +831,6 @@ function ThresholdsTab() {
     updateMachineTargets(code, { ...current, [field]: val }).catch(console.error);
   };
 
-  // Auto-save shift length on blur — receives the new value directly to avoid stale closure
-  const saveShiftLength = (hours: number) => {
-    saveThresholds({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(hours * 60) } }).catch(console.error);
-  };
-
-  // Auto-save planned downtime on blur
-  const savePlannedDowntime = (mins: number) => {
-    saveThresholds({ ...t, bu: { ...t.bu, plannedDowntimeMinutes: Math.round(mins) } }).catch(console.error);
-  };
-
   if (loading) return (
     <div className="flex items-center gap-2 text-gray-400 py-8">
       <span className="animate-spin text-lg">⟳</span> Loading…
@@ -855,43 +846,6 @@ function ThresholdsTab() {
 
   return (
     <div className="space-y-5">
-
-      {/* ── Shift settings ────────────────────────────────────── */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-sm">
-        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
-          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-clock text-cyan-400"></i>Shift Settings
-          </h4>
-          <p className="text-gray-500 text-xs mt-0.5">Used to calculate BU run rates across all machines</p>
-        </div>
-        <div className="px-5 py-3 divide-y divide-gray-700/50">
-          <ThresholdRow
-            label="Duration"
-            value={t.bu.shiftLengthMinutes / 60}
-            onChange={(v) => setT({ ...t, bu: { ...t.bu, shiftLengthMinutes: Math.round(v * 60) } })}
-            onSave={saveShiftLength}
-            unit="hrs"
-            max={24}
-          />
-          <ThresholdRow
-            label="Planned Downtime"
-            value={t.bu.plannedDowntimeMinutes}
-            onChange={(v) => setT({ ...t, bu: { ...t.bu, plannedDowntimeMinutes: Math.round(v) } })}
-            onSave={savePlannedDowntime}
-            unit="min"
-            max={t.bu.shiftLengthMinutes}
-          />
-          <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-white">Effective production time</span>
-            <div className="flex items-center gap-2">
-              <span className="w-20 text-sm text-cyan-400 text-right">
-                {((t.bu.shiftLengthMinutes - t.bu.plannedDowntimeMinutes) / 60).toFixed(1)}
-              </span>
-              <span className="text-gray-400 text-sm w-8">hrs</span>
-            </div>
-          </div>
-        </div>
-      </div>
 
       {/* ── Per-machine targets ───────────────────────────────── */}
       {machines.length === 0 ? (
@@ -911,19 +865,17 @@ function ThresholdsTab() {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Shifts tab — manage shift teams & weekly calendar assignment
+// Shifts tab — manage shift teams, time slots & weekly calendar
 // ─────────────────────────────────────────────────────────────
 
-/** Return "YYYY-MM-DD" for a Date. */
 function toISODate(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
-/** Get Monday 00:00 of the week containing `d`. */
 function startOfWeek(d: Date): Date {
   const clone = new Date(d);
-  const day = clone.getDay(); // 0=Sun … 6=Sat
-  const diff = day === 0 ? -6 : 1 - day; // shift so Mon=0
+  const day = clone.getDay();
+  const diff = day === 0 ? -6 : 1 - day;
   clone.setDate(clone.getDate() + diff);
   clone.setHours(0, 0, 0, 0);
   return clone;
@@ -932,14 +884,23 @@ function startOfWeek(d: Date): Date {
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
 const TEAM_COLORS: Record<string, string> = {
-  A: "bg-cyan-600",
-  B: "bg-amber-600",
-  C: "bg-emerald-600",
-  D: "bg-purple-600",
+  A: "bg-cyan-600", B: "bg-amber-600", C: "bg-emerald-600", D: "bg-purple-600",
 };
-
 function teamColor(team: string): string {
   return TEAM_COLORS[team] ?? "bg-gray-600";
+}
+
+const SLOT_ICONS = ["bi-sunrise", "bi-sun", "bi-moon-stars", "bi-moon"];
+
+function fmtHour(h: number): string {
+  return `${String(h).padStart(2, "0")}:00`;
+}
+
+/** Compute end hour for a slot (= start hour of next slot, wrapping around). */
+function slotEndHour(slots: TimeSlot[], index: number): number {
+  return index < slots.length - 1
+    ? slots[index + 1].startHour
+    : slots[0].startHour; // wraps to first slot
 }
 
 function ShiftsTab() {
@@ -948,27 +909,24 @@ function ShiftsTab() {
   const [weekStart, setWeekStart] = useState<Date>(() => startOfWeek(new Date()));
   const [loading, setLoading] = useState(true);
   const [newTeamName, setNewTeamName] = useState("");
-  const [editStartHour, setEditStartHour] = useState(false);
+  const [editingSlot, setEditingSlot] = useState<number | null>(null);
 
-  // Build array of 7 dates for the current week
   const weekDates: Date[] = [];
   for (let i = 0; i < 7; i++) {
     const d = new Date(weekStart);
     d.setDate(d.getDate() + i);
     weekDates.push(d);
   }
-
   const weekEnd = weekDates[6];
   const fromStr = toISODate(weekDates[0]);
   const toStr = toISODate(weekEnd);
 
-  // Load config + assignments for visible week
+  const shiftMins = shiftLengthFromSlots(config.slots);
+
+  // Load config + assignments
   useEffect(() => {
     setLoading(true);
-    Promise.all([
-      fetchShiftConfig(),
-      fetchShiftAssignments(fromStr, toStr),
-    ])
+    Promise.all([fetchShiftConfig(), fetchShiftAssignments(fromStr, toStr)])
       .then(([cfg, rows]) => {
         setConfig(cfg);
         const map: Record<string, ShiftAssignment> = {};
@@ -979,35 +937,75 @@ function ShiftsTab() {
       .finally(() => setLoading(false));
   }, [fromStr, toStr]);
 
-  // Navigate weeks
-  const prevWeek = () => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() - 7);
-    setWeekStart(d);
-  };
-  const nextWeek = () => {
-    const d = new Date(weekStart);
-    d.setDate(d.getDate() + 7);
-    setWeekStart(d);
-  };
+  // Week navigation
+  const prevWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() - 7); setWeekStart(d); };
+  const nextWeek = () => { const d = new Date(weekStart); d.setDate(d.getDate() + 7); setWeekStart(d); };
   const goToday = () => setWeekStart(startOfWeek(new Date()));
 
-  // Assign a team to a slot
-  const assign = (dateStr: string, slot: "day" | "night", team: string | null) => {
-    const prev = assignments[dateStr] ?? { shift_date: dateStr, day_team: null, night_team: null };
-    const updated = { ...prev, [slot === "day" ? "day_team" : "night_team"]: team };
-    setAssignments(a => ({ ...a, [dateStr]: updated }));
-    saveShiftAssignment(dateStr, updated.day_team, updated.night_team).catch(console.error);
+  // Persist helper: update config in state + save to DB (syncs shiftLengthMinutes automatically)
+  const persistConfig = (updated: ShiftConfig) => {
+    setConfig(updated);
+    saveShiftConfig(updated).catch(console.error);
   };
 
-  // Fill entire week with a repeating pattern
-  const fillWeek = (pattern: { day: string | null; night: string | null }[]) => {
+  // ── Team management ───────────────────────────────────────
+  const addTeam = () => {
+    const name = newTeamName.trim().toUpperCase();
+    if (!name || config.teams.includes(name)) return;
+    persistConfig({ ...config, teams: [...config.teams, name] });
+    setNewTeamName("");
+  };
+  const removeTeam = (name: string) => {
+    persistConfig({ ...config, teams: config.teams.filter(t => t !== name) });
+  };
+
+  // ── Slot management ───────────────────────────────────────
+  const addSlot = () => {
+    if (config.slots.length >= 4) return;
+    const newCount = config.slots.length + 1;
+    const spacing = Math.round(24 / newCount);
+    const newSlots: TimeSlot[] = Array.from({ length: newCount }, (_, i) => ({
+      name: config.slots[i]?.name ?? `Slot ${i + 1}`,
+      startHour: (config.slots[0]?.startHour ?? 6) + i * spacing,
+    })).map(s => ({ ...s, startHour: s.startHour % 24 }));
+    persistConfig({ ...config, slots: newSlots });
+  };
+
+  const removeSlot = (idx: number) => {
+    if (config.slots.length <= 2) return;
+    const newSlots = config.slots.filter((_, i) => i !== idx);
+    persistConfig({ ...config, slots: newSlots });
+  };
+
+  const updateSlot = (idx: number, patch: Partial<TimeSlot>) => {
+    const newSlots = config.slots.map((s, i) => i === idx ? { ...s, ...patch } : s);
+    persistConfig({ ...config, slots: newSlots });
+    setEditingSlot(null);
+  };
+
+  const savePlannedDowntime = (mins: number) => {
+    persistConfig({ ...config, plannedDowntimeMinutes: Math.max(0, Math.round(mins)) });
+  };
+
+  // ── Assignment management ─────────────────────────────────
+  const assign = (dateStr: string, slotIdx: number, team: string | null) => {
+    const prev = assignments[dateStr] ?? { shift_date: dateStr, slot_teams: config.slots.map(() => null) };
+    const newTeams = [...prev.slot_teams];
+    // Extend array if needed (e.g. old data had fewer slots)
+    while (newTeams.length < config.slots.length) newTeams.push(null);
+    newTeams[slotIdx] = team;
+    const updated: ShiftAssignment = { shift_date: dateStr, slot_teams: newTeams };
+    setAssignments(a => ({ ...a, [dateStr]: updated }));
+    saveShiftAssignment(dateStr, newTeams).catch(console.error);
+  };
+
+  const clearWeek = () => {
+    const emptySlots = config.slots.map(() => null);
     const bulk: ShiftAssignment[] = [];
     const map = { ...assignments };
     for (let i = 0; i < 7; i++) {
       const dateStr = toISODate(weekDates[i]);
-      const p = pattern[i % pattern.length];
-      const a: ShiftAssignment = { shift_date: dateStr, day_team: p.day, night_team: p.night };
+      const a: ShiftAssignment = { shift_date: dateStr, slot_teams: emptySlots };
       map[dateStr] = a;
       bulk.push(a);
     }
@@ -1015,7 +1013,6 @@ function ShiftsTab() {
     saveShiftAssignmentsBulk(bulk).catch(console.error);
   };
 
-  // Copy previous week to current
   const copyPrevWeek = async () => {
     const prevStart = new Date(weekStart);
     prevStart.setDate(prevStart.getDate() - 7);
@@ -1031,8 +1028,7 @@ function ShiftsTab() {
         const src = prevRows.find(r => r.shift_date === prevDateStr);
         const a: ShiftAssignment = {
           shift_date: dateStr,
-          day_team: src?.day_team ?? null,
-          night_team: src?.night_team ?? null,
+          slot_teams: src?.slot_teams ?? config.slots.map(() => null),
         };
         map[dateStr] = a;
         bulk.push(a);
@@ -1041,32 +1037,6 @@ function ShiftsTab() {
       await saveShiftAssignmentsBulk(bulk);
     } catch (e) { console.error(e); }
   };
-
-  // Add / remove team
-  const addTeam = () => {
-    const name = newTeamName.trim().toUpperCase();
-    if (!name || config.teams.includes(name)) return;
-    const updated = { ...config, teams: [...config.teams, name] };
-    setConfig(updated);
-    saveShiftConfig(updated).catch(console.error);
-    setNewTeamName("");
-  };
-  const removeTeam = (name: string) => {
-    const updated = { ...config, teams: config.teams.filter(t => t !== name) };
-    setConfig(updated);
-    saveShiftConfig(updated).catch(console.error);
-  };
-
-  const saveDayShiftStart = (hour: number) => {
-    const clamped = Math.max(0, Math.min(23, Math.round(hour)));
-    const updated = { ...config, dayShiftStartHour: clamped };
-    setConfig(updated);
-    saveShiftConfig(updated).catch(console.error);
-    setEditStartHour(false);
-  };
-
-  const nightStart = (config.dayShiftStartHour + 12) % 24;
-  const fmtHour = (h: number) => `${String(h).padStart(2, "0")}:00`;
 
   const isToday = (d: Date) => toISODate(d) === toISODate(new Date());
 
@@ -1093,11 +1063,7 @@ function ShiftsTab() {
               <span key={team} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold ${teamColor(team)}`}>
                 {team}
                 {config.teams.length > 1 && (
-                  <button
-                    onClick={() => removeTeam(team)}
-                    className="ml-1 opacity-60 hover:opacity-100 transition-opacity"
-                    title={`Remove team ${team}`}
-                  >
+                  <button onClick={() => removeTeam(team)} className="ml-1 opacity-60 hover:opacity-100 transition-opacity" title={`Remove team ${team}`}>
                     <i className="bi bi-x-lg text-xs"></i>
                   </button>
                 )}
@@ -1106,60 +1072,99 @@ function ShiftsTab() {
           </div>
           <div className="flex gap-2">
             <input
-              type="text"
-              value={newTeamName}
+              type="text" value={newTeamName}
               onChange={e => setNewTeamName(e.target.value)}
               onKeyDown={e => e.key === "Enter" && addTeam()}
-              placeholder="New team name…"
-              maxLength={10}
+              placeholder="New team name…" maxLength={10}
               className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-cyan-500"
             />
-            <button
-              onClick={addTeam}
-              disabled={!newTeamName.trim()}
-              className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm rounded transition-colors"
-            >
+            <button onClick={addTeam} disabled={!newTeamName.trim()} className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm rounded transition-colors">
               Add
             </button>
           </div>
         </div>
       </div>
 
-      {/* ── Time slot config ────────────────────────────── */}
+      {/* ── Time slots + shift duration ──────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-lg">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
             <i className="bi bi-clock text-cyan-400"></i>Time Slots
           </h4>
-          <p className="text-gray-500 text-xs mt-0.5">Two 12-hour slots per day</p>
+          <p className="text-gray-500 text-xs mt-0.5">
+            {config.slots.length} slots &times; {(shiftMins / 60).toFixed(0)}h each = 24h
+          </p>
         </div>
         <div className="px-5 py-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-white">Day shift</span>
+          {config.slots.map((slot, idx) => {
+            const end = slotEndHour(config.slots, idx);
+            const icon = SLOT_ICONS[idx % SLOT_ICONS.length];
+            return (
+              <div key={idx} className="flex items-center justify-between py-1.5 border-b border-gray-700/30 last:border-b-0">
+                <div className="flex items-center gap-2">
+                  <i className={`bi ${icon} text-sm text-gray-400`}></i>
+                  {editingSlot === idx ? (
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="text" defaultValue={slot.name} maxLength={15} autoFocus
+                        onBlur={e => updateSlot(idx, { name: e.target.value.trim() || slot.name })}
+                        onKeyDown={e => e.key === "Enter" && updateSlot(idx, { name: (e.target as HTMLInputElement).value.trim() || slot.name })}
+                        className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-28 focus:outline-none"
+                      />
+                      <span className="text-gray-500 text-xs">starts at</span>
+                      <input
+                        type="number" min={0} max={23} defaultValue={slot.startHour}
+                        onBlur={e => updateSlot(idx, { startHour: Math.max(0, Math.min(23, Number(e.target.value))) })}
+                        onKeyDown={e => e.key === "Enter" && updateSlot(idx, { startHour: Math.max(0, Math.min(23, Number((e.target as HTMLInputElement).value))) })}
+                        className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-14 text-right focus:outline-none"
+                      />
+                    </div>
+                  ) : (
+                    <button onClick={() => setEditingSlot(idx)} className="text-sm text-white hover:text-cyan-300 transition-colors">
+                      {slot.name} <span className="text-gray-500 ml-1">{fmtHour(slot.startHour)} – {fmtHour(end)}</span>
+                    </button>
+                  )}
+                </div>
+                {config.slots.length > 2 && editingSlot !== idx && (
+                  <button onClick={() => removeSlot(idx)} className="text-gray-600 hover:text-red-400 transition-colors p-1" title="Remove slot">
+                    <i className="bi bi-x-lg text-xs"></i>
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          {config.slots.length < 4 && (
+            <button onClick={addSlot} className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors pt-1">
+              <i className="bi bi-plus-circle"></i> Add time slot
+            </button>
+          )}
+        </div>
+
+        {/* Shift duration + downtime (derived from slots) */}
+        <div className="px-5 py-3 border-t border-gray-700/50 divide-y divide-gray-700/30">
+          <div className="flex items-center justify-between py-2">
+            <span className="text-sm text-white">Shift duration</span>
+            <span className="text-sm text-cyan-400">{(shiftMins / 60).toFixed(1)} hrs</span>
+          </div>
+          <div className="flex items-center justify-between py-2">
+            <span className="text-sm text-white">Planned downtime</span>
             <div className="flex items-center gap-2">
-              {editStartHour ? (
-                <input
-                  type="number"
-                  min={0} max={23}
-                  defaultValue={config.dayShiftStartHour}
-                  onBlur={e => saveDayShiftStart(Number(e.target.value))}
-                  onKeyDown={e => e.key === "Enter" && saveDayShiftStart(Number((e.target as HTMLInputElement).value))}
-                  autoFocus
-                  className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-16 text-right focus:outline-none"
-                />
-              ) : (
-                <button
-                  onClick={() => setEditStartHour(true)}
-                  className="text-sm text-cyan-400 hover:text-cyan-300 transition-colors"
-                >
-                  {fmtHour(config.dayShiftStartHour)} – {fmtHour(nightStart)}
-                </button>
-              )}
+              <input
+                type="number" min={0} max={shiftMins}
+                value={config.plannedDowntimeMinutes}
+                onChange={e => setConfig(c => ({ ...c, plannedDowntimeMinutes: Math.max(0, Number(e.target.value) || 0) }))}
+                onBlur={e => savePlannedDowntime(Number(e.target.value))}
+                onWheel={e => e.currentTarget.blur()}
+                className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
+              />
+              <span className="text-gray-400 text-sm w-8">min</span>
             </div>
           </div>
-          <div className="flex items-center justify-between">
-            <span className="text-sm text-white">Night shift</span>
-            <span className="text-sm text-gray-400">{fmtHour(nightStart)} – {fmtHour(config.dayShiftStartHour)}</span>
+          <div className="flex items-center justify-between py-2">
+            <span className="text-sm text-white">Effective production time</span>
+            <span className="text-sm text-cyan-400">
+              {((shiftMins - config.plannedDowntimeMinutes) / 60).toFixed(1)} hrs
+            </span>
           </div>
         </div>
       </div>
@@ -1173,11 +1178,9 @@ function ShiftsTab() {
             </h4>
             <p className="text-gray-500 text-xs mt-0.5">Assign teams to each day&apos;s shifts</p>
           </div>
-          <div className="flex items-center gap-1">
-            <button onClick={copyPrevWeek} className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Copy assignments from previous week">
-              <i className="bi bi-clipboard mr-1"></i>Copy prev. week
-            </button>
-          </div>
+          <button onClick={copyPrevWeek} className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Copy from previous week">
+            <i className="bi bi-clipboard mr-1"></i>Copy prev. week
+          </button>
         </div>
 
         {/* Week navigation */}
@@ -1191,21 +1194,19 @@ function ShiftsTab() {
               {" – "}
               {weekEnd.toLocaleDateString("de-DE", { day: "2-digit", month: "short", year: "numeric" })}
             </span>
-            <button onClick={goToday} className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors">
-              Today
-            </button>
+            <button onClick={goToday} className="text-xs text-cyan-400 hover:text-cyan-300 transition-colors">Today</button>
           </div>
           <button onClick={nextWeek} className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors">
             <i className="bi bi-chevron-right"></i>
           </button>
         </div>
 
-        {/* Calendar grid */}
+        {/* Calendar grid — dynamic rows based on slot count */}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[600px]">
             <thead>
               <tr className="border-b border-gray-700/50">
-                <th className="px-3 py-2 text-left text-xs text-gray-500 font-normal w-20"></th>
+                <th className="px-3 py-2 text-left text-xs text-gray-500 font-normal w-24"></th>
                 {weekDates.map((d, i) => (
                   <th key={i} className={`px-2 py-2 text-center text-xs font-medium ${isToday(d) ? "text-cyan-400" : "text-gray-400"}`}>
                     <div>{WEEKDAYS[i]}</div>
@@ -1217,104 +1218,49 @@ function ShiftsTab() {
               </tr>
             </thead>
             <tbody>
-              {/* Day shift row */}
-              <tr className="border-b border-gray-700/30">
-                <td className="px-3 py-2">
-                  <div className="text-xs text-gray-400 flex items-center gap-1.5">
-                    <i className="bi bi-sun text-yellow-400"></i>Day
-                  </div>
-                  <div className="text-[10px] text-gray-600">{fmtHour(config.dayShiftStartHour)}–{fmtHour(nightStart)}</div>
-                </td>
-                {weekDates.map((d, i) => {
-                  const dateStr = toISODate(d);
-                  const a = assignments[dateStr];
-                  return (
-                    <td key={i} className={`px-1 py-2 text-center ${isToday(d) ? "bg-cyan-900/10" : ""}`}>
-                      <select
-                        value={a?.day_team ?? ""}
-                        onChange={e => assign(dateStr, "day", e.target.value || null)}
-                        className={`w-full text-center text-sm font-semibold rounded py-1.5 px-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
-                          a?.day_team
-                            ? `${teamColor(a.day_team)} text-white`
-                            : "bg-gray-800 text-gray-600"
-                        }`}
-                      >
-                        <option value="" className="bg-gray-800 text-gray-400">—</option>
-                        {config.teams.map(t => (
-                          <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
-                        ))}
-                      </select>
+              {config.slots.map((slot, slotIdx) => {
+                const end = slotEndHour(config.slots, slotIdx);
+                const icon = SLOT_ICONS[slotIdx % SLOT_ICONS.length];
+                return (
+                  <tr key={slotIdx} className={slotIdx < config.slots.length - 1 ? "border-b border-gray-700/30" : ""}>
+                    <td className="px-3 py-2">
+                      <div className="text-xs text-gray-400 flex items-center gap-1.5">
+                        <i className={`bi ${icon}`}></i>{slot.name}
+                      </div>
+                      <div className="text-[10px] text-gray-600">{fmtHour(slot.startHour)}–{fmtHour(end)}</div>
                     </td>
-                  );
-                })}
-              </tr>
-
-              {/* Night shift row */}
-              <tr>
-                <td className="px-3 py-2">
-                  <div className="text-xs text-gray-400 flex items-center gap-1.5">
-                    <i className="bi bi-moon text-indigo-400"></i>Night
-                  </div>
-                  <div className="text-[10px] text-gray-600">{fmtHour(nightStart)}–{fmtHour(config.dayShiftStartHour)}</div>
-                </td>
-                {weekDates.map((d, i) => {
-                  const dateStr = toISODate(d);
-                  const a = assignments[dateStr];
-                  return (
-                    <td key={i} className={`px-1 py-2 text-center ${isToday(d) ? "bg-cyan-900/10" : ""}`}>
-                      <select
-                        value={a?.night_team ?? ""}
-                        onChange={e => assign(dateStr, "night", e.target.value || null)}
-                        className={`w-full text-center text-sm font-semibold rounded py-1.5 px-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
-                          a?.night_team
-                            ? `${teamColor(a.night_team)} text-white`
-                            : "bg-gray-800 text-gray-600"
-                        }`}
-                      >
-                        <option value="" className="bg-gray-800 text-gray-400">—</option>
-                        {config.teams.map(t => (
-                          <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
-                        ))}
-                      </select>
-                    </td>
-                  );
-                })}
-              </tr>
+                    {weekDates.map((d, dayIdx) => {
+                      const dateStr = toISODate(d);
+                      const a = assignments[dateStr];
+                      const team = a?.slot_teams?.[slotIdx] ?? null;
+                      return (
+                        <td key={dayIdx} className={`px-1 py-2 text-center ${isToday(d) ? "bg-cyan-900/10" : ""}`}>
+                          <select
+                            value={team ?? ""}
+                            onChange={e => assign(dateStr, slotIdx, e.target.value || null)}
+                            className={`w-full text-center text-sm font-semibold rounded py-1.5 px-1 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
+                              team ? `${teamColor(team)} text-white` : "bg-gray-800 text-gray-600"
+                            }`}
+                          >
+                            <option value="" className="bg-gray-800 text-gray-400">&mdash;</option>
+                            {config.teams.map(t => (
+                              <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
+                            ))}
+                          </select>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
 
-        {/* Quick-fill actions */}
+        {/* Quick actions */}
         <div className="px-5 py-3 border-t border-gray-700/50 flex items-center gap-2 flex-wrap">
-          <span className="text-xs text-gray-500 mr-1">Quick fill:</span>
-          {config.teams.length >= 2 && (
-            <button
-              onClick={() => fillWeek(
-                config.teams.length >= 4
-                  ? [
-                      { day: config.teams[0], night: config.teams[1] },
-                      { day: config.teams[0], night: config.teams[1] },
-                      { day: config.teams[0], night: config.teams[1] },
-                      { day: config.teams[0], night: config.teams[1] },
-                      { day: config.teams[2], night: config.teams[3] },
-                      { day: config.teams[2], night: config.teams[3] },
-                      { day: config.teams[2], night: config.teams[3] },
-                    ]
-                  : [
-                      { day: config.teams[0], night: config.teams[1] },
-                    ]
-              )}
-              className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
-            >
-              {config.teams.length >= 4
-                ? `${config.teams[0]}/${config.teams[1]} weekdays · ${config.teams[2]}/${config.teams[3]} weekends`
-                : `Alternate ${config.teams[0]}/${config.teams[1]}`}
-            </button>
-          )}
-          <button
-            onClick={() => fillWeek([{ day: null, night: null }])}
-            className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors"
-          >
+          <span className="text-xs text-gray-500 mr-1">Quick:</span>
+          <button onClick={clearWeek} className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
             Clear week
           </button>
         </div>

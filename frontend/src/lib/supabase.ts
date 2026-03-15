@@ -505,20 +505,34 @@ export async function fetchHealth() {
 
 // ─── Shift assignments ──────────────────────────────────────────────────────
 
+export interface TimeSlot {
+  name: string;       // e.g. "Day", "Afternoon", "Night"
+  startHour: number;  // 0–23
+}
+
 export interface ShiftConfig {
-  teams: string[];           // e.g. ["A", "B", "C", "D"]
-  dayShiftStartHour: number; // 0–23, e.g. 6 = 06:00
+  teams: string[];                // e.g. ["A", "B", "C", "D"]
+  slots: TimeSlot[];              // ordered time slots (2, 3, or more)
+  plannedDowntimeMinutes: number; // per-shift planned downtime
 }
 
 export const DEFAULT_SHIFT_CONFIG: ShiftConfig = {
   teams: ["A", "B", "C", "D"],
-  dayShiftStartHour: 6,
+  slots: [
+    { name: "Day",   startHour: 6  },
+    { name: "Night", startHour: 18 },
+  ],
+  plannedDowntimeMinutes: 0,
 };
 
+/** Derive per-shift length in minutes from slot count. */
+export function shiftLengthFromSlots(slots: TimeSlot[]): number {
+  return slots.length > 0 ? Math.round(24 * 60 / slots.length) : 480;
+}
+
 export interface ShiftAssignment {
-  shift_date: string;   // "YYYY-MM-DD"
-  day_team: string | null;
-  night_team: string | null;
+  shift_date: string;              // "YYYY-MM-DD"
+  slot_teams: (string | null)[];   // index matches config.slots index
 }
 
 export async function fetchShiftConfig(): Promise<ShiftConfig> {
@@ -531,18 +545,53 @@ export async function fetchShiftConfig(): Promise<ShiftConfig> {
   if (error) throw new Error(error.message);
   if (!data) return DEFAULT_SHIFT_CONFIG;
   const val = data.value as Record<string, unknown>;
+
+  // Backward compat: old format had dayShiftStartHour instead of slots
+  let slots: TimeSlot[];
+  if (Array.isArray(val.slots)) {
+    slots = val.slots as TimeSlot[];
+  } else {
+    const start = (val.dayShiftStartHour as number) ?? 6;
+    slots = [
+      { name: "Day",   startHour: start },
+      { name: "Night", startHour: (start + 12) % 24 },
+    ];
+  }
+
   return {
     teams: (val.teams as string[]) ?? DEFAULT_SHIFT_CONFIG.teams,
-    dayShiftStartHour: (val.dayShiftStartHour as number) ?? DEFAULT_SHIFT_CONFIG.dayShiftStartHour,
+    slots,
+    plannedDowntimeMinutes: (val.plannedDowntimeMinutes as number) ?? 0,
   };
 }
 
+/**
+ * Save shift config and sync shiftLengthMinutes + plannedDowntimeMinutes
+ * into threshold_bu so all BU calculations across the app stay correct.
+ */
 export async function saveShiftConfig(config: ShiftConfig): Promise<void> {
   const sb = getSupabase();
+  const opts = { onConflict: "key" } as const;
+
+  // Save shift config
   const { error } = await sb
     .from("app_settings")
-    .upsert({ key: "shift_config", value: config as unknown as Record<string, unknown> }, { onConflict: "key" });
+    .upsert({ key: "shift_config", value: config as unknown as Record<string, unknown> }, opts);
   if (error) throw new Error(error.message);
+
+  // Sync derived shiftLengthMinutes + plannedDowntimeMinutes into threshold_bu
+  const shiftMins = shiftLengthFromSlots(config.slots);
+  const { data: buRow } = await sb
+    .from("app_settings")
+    .select("value")
+    .eq("key", "threshold_bu")
+    .maybeSingle();
+  const buVal = (buRow?.value as Record<string, unknown>) ?? {};
+  await sb.from("app_settings").upsert({
+    key: "threshold_bu",
+    value: { ...buVal, shiftLengthMinutes: shiftMins, plannedDowntimeMinutes: config.plannedDowntimeMinutes },
+    updated_at: new Date().toISOString(),
+  }, opts);
 }
 
 /** Fetch shift assignments for a date range (inclusive). */
@@ -553,25 +602,41 @@ export async function fetchShiftAssignments(
   const sb = getSupabase();
   const { data, error } = await sb
     .from("shift_assignments")
-    .select("shift_date, day_team, night_team")
+    .select("shift_date, slot_teams, day_team, night_team")
     .gte("shift_date", from)
     .lte("shift_date", to)
     .order("shift_date", { ascending: true });
   if (error) throw new Error(error.message);
-  return (data ?? []) as ShiftAssignment[];
+
+  // Normalize: old rows have day_team/night_team, new rows have slot_teams
+  return (data ?? []).map((r: Record<string, unknown>) => {
+    const raw = r.slot_teams as (string | null)[] | null;
+    const hasSlotTeams = Array.isArray(raw) && raw.length > 0;
+    return {
+      shift_date: r.shift_date as string,
+      slot_teams: hasSlotTeams
+        ? raw!
+        : [r.day_team as string | null, r.night_team as string | null],
+    };
+  });
 }
 
 /** Upsert a single day's shift assignment. */
 export async function saveShiftAssignment(
   shiftDate: string,
-  dayTeam: string | null,
-  nightTeam: string | null,
+  slotTeams: (string | null)[],
 ): Promise<void> {
   const sb = getSupabase();
   const { error } = await sb
     .from("shift_assignments")
     .upsert(
-      { shift_date: shiftDate, day_team: dayTeam, night_team: nightTeam },
+      {
+        shift_date: shiftDate,
+        slot_teams: slotTeams,
+        // Also write to legacy columns for backward compat
+        day_team: slotTeams[0] ?? null,
+        night_team: slotTeams[1] ?? null,
+      },
       { onConflict: "shift_date" },
     );
   if (error) throw new Error(error.message);
@@ -588,8 +653,9 @@ export async function saveShiftAssignmentsBulk(
     .upsert(
       assignments.map(a => ({
         shift_date: a.shift_date,
-        day_team: a.day_team,
-        night_team: a.night_team,
+        slot_teams: a.slot_teams,
+        day_team: a.slot_teams[0] ?? null,
+        night_team: a.slot_teams[1] ?? null,
       })),
       { onConflict: "shift_date" },
     );
