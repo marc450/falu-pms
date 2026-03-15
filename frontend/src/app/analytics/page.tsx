@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useRef } from "react";
 import {
   LineChart, Line, BarChart, Bar,
   XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine,
+  ResponsiveContainer, ReferenceArea,
 } from "recharts";
 import {
   format, parseISO,
@@ -130,14 +130,12 @@ function NoData() {
   );
 }
 
-// ─── Legend dashed line ───────────────────────────────────────────────────────
+// ─── Zone legend ─────────────────────────────────────────────────────────────
 
-function DashLegendLine({ color, label }: { color: string; label: string }) {
+function ZoneLegend({ color, label }: { color: string; label: string }) {
   return (
     <span className="flex items-center gap-1.5">
-      <svg width="18" height="8">
-        <line x1="0" y1="4" x2="18" y2="4" stroke={color} strokeWidth="1.5" strokeDasharray="4 2" />
-      </svg>
+      <span className="w-3 h-3 rounded-sm" style={{ backgroundColor: color, opacity: 0.25 }} />
       {label}
     </span>
   );
@@ -294,10 +292,11 @@ export default function Analytics() {
       setGranularity(result.granularity);
       setTotalReadings(result.totalReadings);
 
-      // Derive reference-line thresholds from per-machine targets (same values
-      // as the live dashboard), falling back to defaults if none are configured.
+      // Derive zone thresholds from per-machine targets (same values as the
+      // live dashboard), falling back to defaults if none are configured.
+      // Filter out null and 0 — a threshold of 0 is never meaningful.
       const avg = (arr: (number | null)[]) => {
-        const vals = arr.filter((v): v is number => v !== null && !isNaN(v));
+        const vals = arr.filter((v): v is number => v !== null && v > 0 && !isNaN(v));
         return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
       };
       const computedThresholds: Thresholds = {
@@ -366,27 +365,27 @@ export default function Analytics() {
         <div>
           <h2 className="text-xl font-bold text-white">Analytics</h2>
           {lastRefreshed && !loading && (
-            <p className="text-xs text-gray-600 mt-0.5">
-              Updated {format(lastRefreshed, "HH:mm:ss")}
-            </p>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <p className="text-xs text-gray-600">
+                Updated {format(lastRefreshed, "HH:mm:ss")}
+              </p>
+              <button
+                onClick={load}
+                disabled={loading}
+                title="Refresh now"
+                className="text-gray-600 hover:text-gray-300 disabled:opacity-40 transition-colors"
+              >
+                <i className={`bi bi-arrow-clockwise text-xs ${loading ? "animate-spin" : ""}`}></i>
+              </button>
+            </div>
           )}
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={load}
-            disabled={loading}
-            title="Refresh now"
-            className="p-1.5 text-gray-500 hover:text-gray-300 disabled:opacity-40 transition-colors"
-          >
-            <i className={`bi bi-arrow-clockwise text-sm ${loading ? "animate-spin" : ""}`}></i>
-          </button>
-          <PeriodSelector
-            activePresetId={activePresetId}
-            dateRange={dateRange}
-            onPresetSelect={handlePresetSelect}
-            onCustomRange={handleCustomRange}
-          />
-        </div>
+        <PeriodSelector
+          activePresetId={activePresetId}
+          dateRange={dateRange}
+          onPresetSelect={handlePresetSelect}
+          onCustomRange={handleCustomRange}
+        />
       </div>
 
       {/* ── Error banner ── */}
@@ -457,14 +456,19 @@ export default function Analytics() {
               title={`Avg Uptime ${chartTitle}`}
               legend={
                 <>
-                  <DashLegendLine color="#4ade80" label={`Good (${thresholds.efficiency.good}%)`} />
-                  <DashLegendLine color="#f59e0b" label={`Mediocre (${thresholds.efficiency.mediocre}%)`} />
+                  <ZoneLegend color="#4ade80" label={`Good (≥${thresholds.efficiency.good}%)`} />
+                  <ZoneLegend color="#eab308" label={`Mediocre (≥${thresholds.efficiency.mediocre}%)`} />
+                  <ZoneLegend color="#ef4444" label={`Poor (<${thresholds.efficiency.mediocre}%)`} />
                 </>
               }
             >
               {!hasData ? <NoData /> : (
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                    {/* Background zones — higher is better for uptime */}
+                    <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.08} />
+                    <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.07} />
+                    <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.07} />
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
@@ -488,14 +492,6 @@ export default function Analytics() {
                       labelFormatter={(l) => fmtLabel(l as string)}
                       formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Uptime"]}
                     />
-                    <ReferenceLine
-                      y={thresholds.efficiency.good}
-                      stroke="#4ade80" strokeDasharray="5 3" strokeOpacity={0.72}
-                    />
-                    <ReferenceLine
-                      y={thresholds.efficiency.mediocre}
-                      stroke="#f59e0b" strokeDasharray="5 3" strokeOpacity={0.72}
-                    />
                     <Line
                       type="monotone"
                       dataKey="avgUptime"
@@ -515,14 +511,19 @@ export default function Analytics() {
               title={`Avg Scrap Rate ${chartTitle}`}
               legend={
                 <>
-                  <DashLegendLine color="#4ade80" label={`Good (≤${thresholds.scrap.good}%)`} />
-                  <DashLegendLine color="#f59e0b" label={`Mediocre (≤${thresholds.scrap.mediocre}%)`} />
+                  <ZoneLegend color="#4ade80" label={`Good (≤${thresholds.scrap.good}%)`} />
+                  <ZoneLegend color="#eab308" label={`Mediocre (≤${thresholds.scrap.mediocre}%)`} />
+                  <ZoneLegend color="#ef4444" label={`Poor (>${thresholds.scrap.mediocre}%)`} />
                 </>
               }
             >
               {!hasData ? <NoData /> : (
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                    {/* Background zones — lower is better for scrap */}
+                    <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.08} />
+                    <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.07} />
+                    <ReferenceArea y1={thresholds.scrap.mediocre} y2={100} fill="#ef4444" fillOpacity={0.07} />
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
@@ -545,14 +546,6 @@ export default function Analytics() {
                       itemStyle={TOOLTIP_ITEM_STYLE}
                       labelFormatter={(l) => fmtLabel(l as string)}
                       formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Scrap"]}
-                    />
-                    <ReferenceLine
-                      y={thresholds.scrap.good}
-                      stroke="#4ade80" strokeDasharray="5 3" strokeOpacity={0.72}
-                    />
-                    <ReferenceLine
-                      y={thresholds.scrap.mediocre}
-                      stroke="#f59e0b" strokeDasharray="5 3" strokeOpacity={0.72}
                     />
                     <Line
                       type="monotone"
