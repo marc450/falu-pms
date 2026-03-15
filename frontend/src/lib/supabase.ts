@@ -384,12 +384,14 @@ export async function fetchFleetTrend(days: number): Promise<FleetTrendRow[]> {
   since.setDate(since.getDate() - days);
 
   const sb = getSupabase();
+  // saved_shift_logs is the purpose-built table for completed shift snapshots:
+  // one row per machine per PLC Save event, no save_flag filter needed.
+  // Simpler and more correct than filtering shift_readings on save_flag.
   const { data, error } = await sb
-    .from("shift_readings")
-    .select("recorded_at, efficiency, reject_rate, produced_boxes, produced_swabs, machine_id")
-    .eq("save_flag", true)
-    .gte("recorded_at", since.toISOString())
-    .order("recorded_at", { ascending: true });
+    .from("saved_shift_logs")
+    .select("saved_at, efficiency, reject_rate, produced_boxes, produced_swabs, machine_code")
+    .gte("saved_at", since.toISOString())
+    .order("saved_at", { ascending: true });
 
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) return [];
@@ -402,18 +404,18 @@ export async function fetchFleetTrend(days: number): Promise<FleetTrendRow[]> {
   const byDate = new Map<string, DayAgg>();
 
   for (const row of data) {
-    const date = (row.recorded_at as string).slice(0, 10);
+    const date = (row.saved_at as string).slice(0, 10);
     let agg = byDate.get(date);
     if (!agg) {
       agg = { uptimeSum: 0, scrapSum: 0, boxes: 0, swabs: 0, count: 0, machines: new Set() };
       byDate.set(date, agg);
     }
-    agg.uptimeSum += (row.efficiency    as number) ?? 0;
-    agg.scrapSum  += (row.reject_rate   as number) ?? 0;
+    agg.uptimeSum += (row.efficiency     as number) ?? 0;
+    agg.scrapSum  += (row.reject_rate    as number) ?? 0;
     agg.boxes     += (row.produced_boxes as number) ?? 0;
     agg.swabs     += (row.produced_swabs as number) ?? 0;
     agg.count     += 1;
-    agg.machines.add(row.machine_id as string);
+    agg.machines.add(row.machine_code as string);
   }
 
   return Array.from(byDate.entries())
