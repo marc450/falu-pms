@@ -106,7 +106,7 @@ function ChartCard({ title, legend, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 outline-none" tabIndex={-1}>
       <div className="flex items-center justify-between mb-4">
         <h3 className="text-sm font-semibold text-white">{title}</h3>
         {legend && <div className="flex items-center gap-3 text-xs text-gray-500">{legend}</div>}
@@ -269,8 +269,8 @@ export default function Analytics() {
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
   const [totalReadings, setTotalReadings] = useState<number>(0);
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
-  const [buZoneGood, setBuZoneGood]       = useState<number | null>(null);
-  const [buZoneMediocre, setBuZoneMediocre] = useState<number | null>(null);
+  const [buTarget, setBuTarget]           = useState<number | null>(null); // avg per-machine BU target (per shift)
+  const [buMediocre, setBuMediocre]       = useState<number | null>(null);
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
@@ -302,8 +302,6 @@ export default function Analytics() {
         const vals = arr.filter((v): v is number => v !== null && v > 0 && !isNaN(v));
         return vals.length > 0 ? vals.reduce((s, v) => s + v, 0) / vals.length : null;
       };
-      const avgBuTarget   = avg(machines.map(m => m.bu_target));
-      const avgBuMediocre = avg(machines.map(m => m.bu_mediocre));
       const computedThresholds: Thresholds = {
         efficiency: {
           good:     avg(machines.map(m => m.efficiency_good))     ?? DEFAULT_THRESHOLDS.efficiency.good,
@@ -317,17 +315,10 @@ export default function Analytics() {
       };
       setThresholds(computedThresholds);
 
-      // Compute BU zone levels for the bar chart.
-      // BU targets are per-machine per-shift. Scale to per-bucket expected output.
-      const shiftHours = computedThresholds.bu.shiftLengthMinutes / 60;
-      const avgMachines = result.rows.length > 0
-        ? result.rows.reduce((s, r) => s + r.machineCount, 0) / result.rows.length
-        : machines.length;
-      const bucketScale = result.granularity === "hour"
-        ? avgMachines / shiftHours             // 1 hour of N machines
-        : avgMachines * (24 / shiftHours);     // full day of N machines
-      setBuZoneGood(avgBuTarget !== null ? Math.round(avgBuTarget * bucketScale) : null);
-      setBuZoneMediocre(avgBuMediocre !== null ? Math.round(avgBuMediocre * bucketScale) : null);
+      // Store raw per-machine BU target averages — the chart normalises data
+      // to per-machine-per-shift so zones sit directly at these values.
+      setBuTarget(avg(machines.map(m => m.bu_target)));
+      setBuMediocre(avg(machines.map(m => m.bu_mediocre)));
 
       setLastRefreshed(new Date());
     } catch (e) {
@@ -363,8 +354,18 @@ export default function Analytics() {
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
   const totalBUs   = Math.round(totalSwabs / 7200);
 
-  // Pre-compute BU per bucket for the bar chart
-  const buRows = rows.map(r => ({ ...r, totalBUs: Math.round(r.totalSwabs / 7200) }));
+  // Per-machine-per-shift BU for each bucket (so zones match configured targets directly).
+  // Hourly: extrapolate 1 h of output → full shift length.
+  // Daily:  divide day's output by shifts-per-day to get per-shift average.
+  const shiftHours = thresholds.bu.shiftLengthMinutes / 60 || 8;
+  const buRows = rows.map(r => {
+    const rawBU       = r.totalSwabs / 7200;
+    const perMachine  = r.machineCount > 0 ? rawBU / r.machineCount : 0;
+    const perShift    = granularity === "hour"
+      ? perMachine * shiftHours          // extrapolate 1 h → full shift
+      : perMachine / (24 / shiftHours);  // daily total → per shift
+    return { ...r, buPerShift: Math.round(perShift * 10) / 10 };
+  });
 
   const ec = applyEfficiencyColor(avgUptime, thresholds);
   const sc = applyScrapColor(avgScrap, thresholds);
@@ -376,8 +377,8 @@ export default function Analytics() {
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
   const scrapMax     = Math.ceil(Math.max(scrapDataMax, thresholds.scrap.mediocre) + 1);
 
-  const buDataMax = hasData ? Math.max(...buRows.map(r => r.totalBUs)) : 0;
-  const buMax     = Math.ceil(Math.max(buDataMax, buZoneGood ?? 0, buZoneMediocre ?? 0) * 1.15);
+  const buDataMax = hasData ? Math.max(...buRows.map(r => r.buPerShift)) : 0;
+  const buMax     = Math.ceil(Math.max(buDataMax, buTarget ?? 0, buMediocre ?? 0) * 1.15);
 
   const chartTitle = granularity === "hour"
     ? "— hourly park average"
@@ -587,24 +588,24 @@ export default function Analytics() {
             </ChartCard>
           </div>
 
-          {/* ── BU output bar chart ── */}
+          {/* ── BU output per machine bar chart ── */}
           <ChartCard
-            title={`BU Output — total across all machines${granularity === "hour" ? " (per hour)" : " (per day)"}`}
-            legend={buZoneGood !== null ? (
+            title="Avg BU per Machine — projected per shift"
+            legend={buTarget !== null ? (
               <>
-                <ZoneLegend color="#4ade80" label={`Good (≥${buZoneGood})`} />
-                <ZoneLegend color="#eab308" label={`Mediocre (≥${buZoneMediocre ?? 0})`} />
-                <ZoneLegend color="#ef4444" label={`Poor (<${buZoneMediocre ?? 0})`} />
+                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget)} BUs)`} />
+                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0)} BUs)`} />
+                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0)} BUs)`} />
               </>
             ) : undefined}
           >
             {!hasData ? <NoData /> : (
               <ResponsiveContainer width="100%" height={180}>
                 <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                  {/* Zones must be direct children — Recharts ignores fragments */}
-                  <ReferenceArea y1={buZoneGood ?? buMax} y2={buMax} fill="#4ade80" fillOpacity={buZoneGood !== null ? 0.08 : 0} />
-                  <ReferenceArea y1={buZoneMediocre ?? 0} y2={buZoneGood ?? 0} fill="#eab308" fillOpacity={buZoneGood !== null ? 0.07 : 0} />
-                  <ReferenceArea y1={0} y2={buZoneMediocre ?? 0} fill="#ef4444" fillOpacity={buZoneMediocre !== null ? 0.07 : 0} />
+                  {/* Zones at raw per-machine targets — no scaling needed */}
+                  <ReferenceArea y1={buTarget ?? buMax} y2={buMax} fill="#4ade80" fillOpacity={buTarget !== null ? 0.08 : 0} />
+                  <ReferenceArea y1={buMediocre ?? 0} y2={buTarget ?? 0} fill="#eab308" fillOpacity={buTarget !== null ? 0.07 : 0} />
+                  <ReferenceArea y1={0} y2={buMediocre ?? 0} fill="#ef4444" fillOpacity={buMediocre !== null ? 0.07 : 0} />
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                   <XAxis
                     dataKey="date"
@@ -626,12 +627,12 @@ export default function Analytics() {
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
                     labelFormatter={(l) => fmtLabel(l as string)}
-                    formatter={(v) => [Number(v ?? 0).toLocaleString(), "BUs"]}
+                    formatter={(v) => [`${Number(v ?? 0).toFixed(1)} BUs`, "Per machine / shift"]}
                     cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
                   <Bar
-                    dataKey="totalBUs"
-                    name="BUs"
+                    dataKey="buPerShift"
+                    name="BU/machine"
                     fill="#22d3ee"
                     radius={[2, 2, 0, 0]}
                     maxBarSize={36}
