@@ -31,19 +31,21 @@ let tickCount = 0;
 
 async function saveState() {
   if (!supabase) return;
+  const { shiftStartMs } = getShiftInfo();
   const rows = Object.values(machines).map(m => ({
-    machine_name:      m.name,
-    active_shift:      m.activeShift,
-    status:            m.status,
-    error_end_min:     m.errorEndMin,
-    speed_tier_idx:    m.speedTierIdx,
-    base_speed:        m.baseSpeed,
-    tier_locked_until: m.tierLockedUntil,
+    machine_name:       m.name,
+    active_shift:       m.activeShift,
+    shift_started_at:   shiftStartMs,
+    status:             m.status,
+    error_end_min:      m.errorEndMin,
+    speed_tier_idx:     m.speedTierIdx,
+    base_speed:         m.baseSpeed,
+    tier_locked_until:  m.tierLockedUntil,
     cleaning_start_min: m.cleaningStartMin,
-    shift_1_data:      m.shifts[1],
-    shift_2_data:      m.shifts[2],
-    shift_3_data:      m.shifts[3],
-    updated_at:        new Date().toISOString(),
+    shift_1_data:       m.shifts[1],
+    shift_2_data:       m.shifts[2],
+    shift_3_data:       m.shifts[3],
+    updated_at:         new Date().toISOString(),
   }));
   const { error } = await supabase
     .from("simulator_state")
@@ -59,13 +61,23 @@ async function loadState() {
     console.log("[STATE] No saved state found — starting fresh.");
     return false;
   }
-  const { shiftNumber } = getShiftInfo();
+  const { shiftNumber, shiftStartMs } = getShiftInfo();
+  // Allow up to 10 minutes of clock drift between save and restore
+  const EPOCH_TOLERANCE_MS = 10 * 60 * 1000;
   let restored = 0;
   for (const row of data) {
     const m = machines[row.machine_name];
     if (!m) continue;
     if (row.active_shift !== shiftNumber) {
       console.log(`[STATE] ${row.machine_name}: saved shift ${row.active_shift} ≠ current ${shiftNumber} — fresh init`);
+      continue;
+    }
+    // Guard against stale data from a previous occurrence of the same shift number
+    // (shifts cycle 1→2→3 every 36 hours, so the same number recurs every 36h).
+    // Rows without a saved epoch (pre-migration) are also treated as stale.
+    const savedEpoch = row.shift_started_at || 0;
+    if (savedEpoch === 0 || Math.abs(savedEpoch - shiftStartMs) > EPOCH_TOLERANCE_MS) {
+      console.log(`[STATE] ${row.machine_name}: shift ${shiftNumber} epoch mismatch (saved ${savedEpoch ? new Date(savedEpoch).toISOString() : "none"} vs current ${new Date(shiftStartMs).toISOString()}) — fresh init`);
       continue;
     }
     m.activeShift        = row.active_shift;
@@ -161,12 +173,15 @@ const TIER_LOCK_MIN   = 45;   // minutes a machine stays in the same speed tier
 // HELPERS
 // ============================================
 function getShiftInfo() {
-  const elapsed  = Date.now() - REFERENCE_MS;
+  const now     = Date.now();
+  const elapsed = now - REFERENCE_MS;
   const cyclePos = ((elapsed % CYCLE_MS) + CYCLE_MS) % CYCLE_MS;
   const idx      = Math.floor(cyclePos / SHIFT_MS);
+  const elapsedInShiftMs = cyclePos - idx * SHIFT_MS;
   return {
     shiftNumber:    idx + 1,
-    elapsedMinutes: (cyclePos - idx * SHIFT_MS) / 60000,
+    elapsedMinutes: elapsedInShiftMs / 60000,
+    shiftStartMs:   now - elapsedInShiftMs,  // absolute timestamp when this shift began
   };
 }
 

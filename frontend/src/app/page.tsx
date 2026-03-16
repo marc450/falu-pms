@@ -7,7 +7,6 @@ import {
   fetchRegisteredMachines,
   fetchProductionCells,
   fetchThresholds,
-  fetchShiftConfig,
   applyEfficiencyColor,
   applyScrapColor,
   applyMachineEfficiencyColor,
@@ -16,9 +15,8 @@ import {
   applySpeedHeaderColor,
   applyBuRunRateColor,
   DEFAULT_THRESHOLDS,
-  DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
-import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat, ShiftConfig, TimeSlot } from "@/lib/supabase";
+import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
 import { PACKING_FORMATS } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 
@@ -638,66 +636,23 @@ function fmtDuration(mins: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-/**
- * Derive elapsed / remaining minutes for the current shift purely from
- * the wall clock and the configured slot start hours — no bridge data needed.
- *
- * Example: slots = [{startHour:6},{startHour:18}], now = 06:47
- *   → activeSlot = 0 (Day), elapsed = 47 min, remaining = 673 min
- *
- * Handles midnight wrap: if the last slot of the day extends past midnight
- * (e.g. Night starts at 22:00, current time is 01:30), elapsed correctly
- * spans the day boundary.
- */
-function calcShiftProgress(now: Date, slots: TimeSlot[]): {
-  elapsedMins: number;
-  remainingMins: number;
-  shiftLengthMins: number;
-  activeSlotIndex: number;
-} | null {
-  if (slots.length === 0) return null;
-
-  const shiftLengthMins = Math.round(24 * 60 / slots.length);
-  const nowMins = now.getHours() * 60 + now.getMinutes() + now.getSeconds() / 60;
-
-  // Sort a copy by startHour so we can do a linear scan
-  const sorted = [...slots]
-    .map((s, i) => ({ startHour: s.startHour, origIndex: i }))
-    .sort((a, b) => a.startHour - b.startHour);
-
-  // Active slot = the latest one whose startHour <= nowMins.
-  // If no slot qualifies (nowMins is before all starts) we wrap around to the
-  // last slot of the previous calendar day.
-  let active = sorted[sorted.length - 1]; // fallback = last slot (midnight wrap)
-  for (const s of sorted) {
-    if (s.startHour * 60 <= nowMins) active = s;
-  }
-
-  let elapsedMins = nowMins - active.startHour * 60;
-  if (elapsedMins < 0) elapsedMins += 24 * 60; // crossed midnight
-
-  const remainingMins = Math.max(0, shiftLengthMins - elapsedMins);
-
-  return { elapsedMins, remainingMins, shiftLengthMins, activeSlotIndex: active.origIndex };
-}
-
 function ShiftProgress({
-  slots,
+  shiftStartedAt,
+  effectiveShiftMins,
   currentShift,
   currentTime,
 }: {
-  slots: TimeSlot[];
+  shiftStartedAt: number;
+  effectiveShiftMins: number;
   currentShift: number;
   currentTime: Date;
 }) {
-  if (currentShift <= 0 || slots.length === 0) return null;
+  if (currentShift <= 0 || effectiveShiftMins <= 0) return null;
 
-  const prog = calcShiftProgress(currentTime, slots);
-  if (!prog) return null;
-
-  const { elapsedMins, remainingMins, shiftLengthMins } = prog;
-  const progress = shiftLengthMins > 0 ? Math.min(1, elapsedMins / shiftLengthMins) : 0;
-  const pct      = Math.round(progress * 100);
+  const elapsedMins   = Math.max(0, (currentTime.getTime() - shiftStartedAt) / 60000);
+  const remainingMins = Math.max(0, effectiveShiftMins - elapsedMins);
+  const progress      = Math.min(1, elapsedMins / effectiveShiftMins);
+  const pct           = Math.round(progress * 100);
 
   // Bar colour: cyan < 75%, yellow 75–90%, red > 90%
   const barColor =
@@ -749,7 +704,6 @@ export default function Dashboard() {
   const [dbError, setDbError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
-  const [shiftConfig, setShiftConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
   const router = useRouter();
   const bridgeFailCount = useRef(0);
 
@@ -826,7 +780,6 @@ export default function Dashboard() {
   useEffect(() => {
     loadData();
     fetchThresholds().then(setThresholds).catch(() => {/* use defaults */});
-    fetchShiftConfig().then(setShiftConfig).catch(() => {/* use defaults */});
     const dataInterval = setInterval(loadData, 2000);
     const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
@@ -895,7 +848,8 @@ export default function Dashboard() {
       {/* ── Shift progress ── */}
       {currentShift > 0 && (
         <ShiftProgress
-          slots={shiftConfig.slots}
+          shiftStartedAt={shiftStartedAt}
+          effectiveShiftMins={effectiveShiftMins}
           currentShift={currentShift}
           currentTime={currentTime}
         />
