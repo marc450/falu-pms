@@ -265,7 +265,7 @@ function CellSection({
   thresholds,
   shiftLengthMinutes,
   shiftStartedAt,
-  defaultOpen = true,
+  defaultOpen = false,
 }: {
   title: string;
   icon: string;
