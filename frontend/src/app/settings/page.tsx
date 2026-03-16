@@ -2,7 +2,6 @@
 
 import { useEffect, useState, useRef } from "react";
 import {
-  fetchBrokerSettings,
   fetchRegisteredMachines,
   fetchProductionCells,
   createProductionCell,
@@ -33,7 +32,7 @@ type DropTarget = {
   beforeCode: string | null;  // insert before this machine (null = append to end)
 };
 
-type Tab = "users" | "machines" | "thresholds" | "shifts" | "mqtt";
+type Tab = "users" | "machines" | "thresholds" | "shifts";
 
 // ─────────────────────────────────────────────────────────────
 // Reusable confirmation modal
@@ -1452,25 +1451,12 @@ function ShiftsTab() {
 // ─────────────────────────────────────────────────────────────
 export default function SettingsPage() {
   const [activeTab, setActiveTab] = useState<Tab>("machines");
-  const [brokerSettings, setBrokerSettings] = useState({
-    host: "",
-    port: 0,
-    username: "",
-    isLocal: false,
-    subscribeTopic: "",
-    publishTopicPrefix: "",
-  });
-
-  useEffect(() => {
-    fetchBrokerSettings().then(setBrokerSettings).catch(console.error);
-  }, []);
 
   const tabs: { id: Tab; label: string; icon: string }[] = [
     { id: "machines",    label: "Machines",    icon: "bi-cpu-fill"       },
     { id: "thresholds",  label: "Targets",     icon: "bi-sliders"        },
     { id: "shifts",      label: "Shifts",      icon: "bi-calendar3"      },
     { id: "users",       label: "Users",       icon: "bi-people-fill"    },
-    { id: "mqtt",        label: "MQTT",        icon: "bi-router-fill"    },
   ];
 
   return (
@@ -1524,51 +1510,6 @@ export default function SettingsPage() {
       {/* ── SHIFTS ── */}
       {activeTab === "shifts" && <ShiftsTab />}
 
-      {/* ── MQTT ── */}
-      {activeTab === "mqtt" && (
-        <div className="bg-gray-800/50 border border-red-700/50 rounded-lg overflow-hidden">
-          <div className="bg-red-700 px-5 py-3">
-            <h4 className="text-white font-semibold">
-              <i className="bi bi-router-fill mr-2"></i>MQTT Broker Settings
-            </h4>
-            <p className="text-red-200 text-xs">
-              Configured via environment variables on the bridge service
-            </p>
-          </div>
-          <div className="p-5 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Host / IP Address</label>
-              <div className="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-300">
-                {brokerSettings.host || "---"}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Port</label>
-              <div className="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-300">
-                {brokerSettings.port || "---"}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Username</label>
-              <div className="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-300">
-                {brokerSettings.username || "---"}
-              </div>
-            </div>
-            <div>
-              <label className="block text-xs text-gray-400 mb-1">Instance Type</label>
-              <div className="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm text-gray-300">
-                {brokerSettings.isLocal ? "Local (plain TCP)" : "Cloud (TLS)"}
-              </div>
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-xs text-gray-400 mb-1">Subscribe Topic</label>
-              <div className="bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm font-mono text-cyan-400">
-                {brokerSettings.subscribeTopic || "---"}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
