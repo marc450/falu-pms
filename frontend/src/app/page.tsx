@@ -8,6 +8,7 @@ import {
   fetchProductionCells,
   fetchThresholds,
   fetchShiftConfig,
+  fetchShiftAssignments,
   applyEfficiencyColor,
   applyScrapColor,
   applyMachineEfficiencyColor,
@@ -707,6 +708,7 @@ export default function Dashboard() {
   const [initialLoading, setInitialLoading] = useState(true);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [shiftConfig, setShiftConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
+  const [todayTeams, setTodayTeams] = useState<(string | null)[]>([]);
   const router = useRouter();
   const bridgeFailCount = useRef(0);
 
@@ -784,6 +786,10 @@ export default function Dashboard() {
     loadData();
     fetchThresholds().then(setThresholds).catch(() => {/* use defaults */});
     fetchShiftConfig().then(setShiftConfig).catch(() => {/* use defaults */});
+    const today = new Date().toISOString().slice(0, 10);
+    fetchShiftAssignments(today, today)
+      .then(rows => { if (rows[0]) setTodayTeams(rows[0].slot_teams); })
+      .catch(() => {/* no assignment for today */});
     const dataInterval = setInterval(loadData, 2000);
     const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
@@ -806,10 +812,14 @@ export default function Dashboard() {
 
   const useCells = cells.length > 0;
 
-  // Resolve slot name from the PLC shift number (1-based → slot index 0-based)
-  const activeSlotName = currentShift > 0
-    ? (shiftConfig.slots[currentShift - 1]?.name ?? `Shift ${currentShift}`)
+  // Resolve slot name and team from the PLC shift number (1-based → slot index 0-based)
+  const activeSlotIndex = currentShift > 0 ? currentShift - 1 : -1;
+  const activeSlotName  = activeSlotIndex >= 0
+    ? (shiftConfig.slots[activeSlotIndex]?.name ?? `Shift ${currentShift}`)
     : null;
+  const activeTeam = activeSlotIndex >= 0 ? (todayTeams[activeSlotIndex] ?? null) : null;
+  // Badge label: show team if assigned, otherwise fall back to slot name
+  const shiftBadgeLabel = activeTeam ?? activeSlotName;
 
   // Net production time available per shift (shift length minus planned downtime)
   const effectiveShiftMins = Math.max(
@@ -827,9 +837,9 @@ export default function Dashboard() {
             <i className="bi bi-calendar3 mr-1"></i>
             {currentTime.toLocaleString("de-DE")}
           </span>
-          {activeSlotName && (
+          {shiftBadgeLabel && (
             <span className="bg-blue-900/40 text-blue-300 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
-              <i className="bi bi-clock mr-1"></i>{activeSlotName}
+              <i className="bi bi-clock mr-1"></i>{shiftBadgeLabel}
             </span>
           )}
           {initialLoading ? (
@@ -855,11 +865,11 @@ export default function Dashboard() {
       )}
 
       {/* ── Shift progress ── */}
-      {activeSlotName && (
+      {shiftBadgeLabel && (
         <ShiftProgress
           shiftStartedAt={shiftStartedAt}
           effectiveShiftMins={effectiveShiftMins}
-          shiftName={activeSlotName}
+          shiftName={shiftBadgeLabel}
           currentTime={currentTime}
         />
       )}
