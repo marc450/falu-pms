@@ -693,6 +693,67 @@ function ShiftProgress({
 }
 
 // ─────────────────────────────────────────────────────────────
+// BU progress bar — actual BUs produced vs total target
+// ─────────────────────────────────────────────────────────────
+function BUProgress({
+  machines,
+}: {
+  machines: Record<string, DashboardMachine>;
+}) {
+  const all = Object.values(machines);
+  let totalCurrent = 0;
+  let totalTarget  = 0;
+
+  for (const m of all) {
+    if (m.buTarget && m.buTarget > 0) totalTarget += m.buTarget;
+    // Sum actual BUs from live swab count
+    const activeShift = m.machineStatus?.ActShift ?? 1;
+    const shiftData   = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
+    const swabs       = shiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
+    totalCurrent += swabs / 7200;
+  }
+
+  if (totalTarget <= 0) return null;
+
+  const progress = Math.min(1, totalCurrent / totalTarget);
+  const pct      = Math.round(progress * 100);
+
+  // Green when on track (>=90%), yellow when close (>=70%), otherwise default gray/cyan
+  const barColor =
+    progress >= 0.9 ? "bg-green-500"
+    : progress >= 0.7 ? "bg-yellow-500"
+    : "bg-purple-500";
+
+  return (
+    <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <i className="bi bi-box-seam"></i>
+          <span>BU output</span>
+        </div>
+        <span className="text-xs text-gray-500">{pct}%</span>
+      </div>
+      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
+        <div
+          className={`h-full rounded-full transition-all duration-1000 ${barColor}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="flex justify-between text-xs">
+        <span className="text-gray-400">
+          <span className="text-white font-medium">{Math.round(totalCurrent)} BUs</span>
+          <span className="text-gray-600 ml-1">produced</span>
+        </span>
+        <span className="text-gray-400">
+          <span className="text-gray-600 mr-1">target</span>
+          <span className="text-white font-medium">{Math.round(totalTarget)} BUs</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
@@ -873,6 +934,9 @@ export default function Dashboard() {
           currentTime={currentTime}
         />
       )}
+
+      {/* ── BU progress ── */}
+      {hasData && <BUProgress machines={machines} />}
 
       {/* ── Park summary tiles ── */}
       {hasData && (
