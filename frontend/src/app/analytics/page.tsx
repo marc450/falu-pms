@@ -90,11 +90,22 @@ function fmtBucketRange(key: string, granularity: "hour" | "day"): [string, stri
 }
 
 // Custom X-axis tick for the BU chart.
-// Hourly: two lines showing start→end time (e.g. "12:00 / 13:00").
+// Hourly: two lines showing start→end time (e.g. "12:00 / 13:00"), or a single angled label when cramped.
 // Daily:  single date label (e.g. "15.12.") — one bar = one day, no end date needed.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function RangeTick({ x, y, payload, granularity }: any) {
+function RangeTick({ x, y, payload, granularity, angled }: any) {
   const [line1, line2] = fmtBucketRange(payload?.value ?? "", granularity);
+  if (angled) {
+    // Collapse to a single label and rotate -40° so labels don't overlap
+    const label = granularity === "day" ? line1 : `${line1}–${line2}`;
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text transform="rotate(-40)" textAnchor="end" fill="#9ca3af" fontSize={10} dy={4} dx={-4}>
+          {label}
+        </text>
+      </g>
+    );
+  }
   if (granularity === "day") {
     return (
       <g transform={`translate(${x},${y})`}>
@@ -471,6 +482,12 @@ export default function Analytics() {
   // Show every tick for ≤ 24 buckets; thin out for longer periods
   const tickInterval = rows.length <= 24 ? 0 : Math.ceil(rows.length / 20) - 1;
 
+  // Angle labels when the number of visible ticks would cause overlap (> 12)
+  const visibleTicks = tickInterval === 0 ? rows.length : Math.ceil(rows.length / (tickInterval + 1));
+  const shouldAngle  = visibleTicks > 12;
+  const angledTick   = { fill: "#9ca3af", fontSize: 11, angle: -40, textAnchor: "end" as const, dy: 4 };
+  const xAxisHeight  = shouldAngle ? 48 : undefined;
+
   // Pre-compute Y-axis ceilings so both domain and ReferenceArea share the same max
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
   const scrapMax     = Math.ceil(Math.max(scrapDataMax, thresholds.scrap.mediocre) + 1);
@@ -588,11 +605,12 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={TICK_STYLE}
+                      tick={shouldAngle ? angledTick : TICK_STYLE}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
                       tickFormatter={fmtTick}
                       interval={tickInterval}
+                      height={xAxisHeight}
                     />
                     <YAxis
                       domain={[0, 100]}
@@ -643,11 +661,12 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={TICK_STYLE}
+                      tick={shouldAngle ? angledTick : TICK_STYLE}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
                       tickFormatter={fmtTick}
                       interval={tickInterval}
+                      height={xAxisHeight}
                     />
                     <YAxis
                       domain={[0, scrapMax]}
@@ -701,9 +720,9 @@ export default function Analytics() {
                     dataKey="date"
                     tickLine={false}
                     axisLine={{ stroke: AXIS_COLOR }}
-                    tick={<RangeTick granularity={granularity} />}
+                    tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                     interval={tickInterval}
-                    height={36}
+                    height={shouldAngle ? 52 : 36}
                   />
                   <YAxis
                     domain={[0, buMax]}
