@@ -874,11 +874,15 @@ function toISODate(d: Date): string {
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 
-const TEAM_COLORS: Record<string, string> = {
-  A: "bg-cyan-600", B: "bg-amber-600", C: "bg-emerald-600", D: "bg-purple-600",
-};
-function teamColor(team: string): string {
-  return TEAM_COLORS[team] ?? "bg-gray-600";
+const TEAM_PALETTE = [
+  "bg-cyan-600", "bg-amber-600", "bg-emerald-600", "bg-purple-600",
+  "bg-rose-600", "bg-teal-600", "bg-orange-500", "bg-indigo-600",
+  "bg-pink-600", "bg-lime-600",
+];
+function teamColor(team: string, teams: string[]): string {
+  const idx = teams.indexOf(team);
+  if (idx < 0) return "bg-gray-600";
+  return TEAM_PALETTE[idx % TEAM_PALETTE.length];
 }
 
 const SLOT_ICONS = ["bi-sunrise", "bi-sun", "bi-moon-stars", "bi-moon"];
@@ -1163,7 +1167,7 @@ function ShiftsTab() {
         <div className="px-5 py-3">
           <div className="flex flex-wrap gap-2 mb-3">
             {config.teams.map(team => (
-              <span key={team} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold ${teamColor(team)}`}>
+              <span key={team} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold ${teamColor(team, config.teams)}`}>
                 {team}
                 {config.teams.length > 1 && (
                   <button onClick={() => removeTeam(team)} className="ml-1 opacity-60 hover:opacity-100 transition-opacity" title={`Remove team ${team}`}>
@@ -1399,7 +1403,7 @@ function ShiftsTab() {
                           onChange={e => assign(dateStr, slotIdx, e.target.value || null)}
                           title={`${slot.name} (${fmtHour(slot.startHour)})`}
                           className={`w-full text-center text-[11px] font-semibold rounded py-0.5 px-0.5 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
-                            team ? `${teamColor(team)} text-white` : "bg-gray-700/50 text-gray-600"
+                            team ? `${teamColor(team, config.teams)} text-white` : "bg-gray-700/50 text-gray-600"
                           }`}
                         >
                           <option value="" className="bg-gray-800 text-gray-400">{slot.name.charAt(0)}</option>
