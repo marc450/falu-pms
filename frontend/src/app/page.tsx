@@ -857,12 +857,21 @@ export default function Dashboard() {
 
   const useCells = cells.length > 0;
 
-  // Resolve slot name and team from the PLC shift number (1-based → slot index 0-based)
-  const activeSlotIndex = currentShift > 0 ? currentShift - 1 : -1;
-  const activeSlotName  = activeSlotIndex >= 0
-    ? (shiftConfig.slots[activeSlotIndex]?.name ?? `Shift ${currentShift}`)
-    : null;
-  const activeTeam = activeSlotIndex >= 0 ? (todayTeams[activeSlotIndex] ?? null) : null;
+  // Resolve the active slot by matching the current hour against configured startHour values.
+  // This is independent of the PLC shift number, which may not match the number of configured slots.
+  const activeSlotIndex = (() => {
+    const slots = shiftConfig.slots;
+    if (slots.length === 0 || currentShift === 0) return -1;
+    const hour = currentTime.getHours();
+    const sorted = [...slots.entries()].sort((a, b) => a[1].startHour - b[1].startHour);
+    let idx = sorted[sorted.length - 1][0]; // default: last slot (started yesterday)
+    for (const [i, slot] of sorted) {
+      if (hour >= slot.startHour) idx = i;
+    }
+    return idx;
+  })();
+  const activeSlotName  = activeSlotIndex >= 0 ? shiftConfig.slots[activeSlotIndex]?.name ?? null : null;
+  const activeTeam      = activeSlotIndex >= 0 ? (todayTeams[activeSlotIndex] ?? null) : null;
   // Badge label: show team if assigned, otherwise fall back to slot name
   const shiftBadgeLabel = activeTeam ?? activeSlotName;
 
