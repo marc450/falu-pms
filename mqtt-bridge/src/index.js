@@ -228,7 +228,51 @@ async function handleShiftMessage(payload) {
     Boxes:    data.ProducedBoxes ?? data.Boxes ?? 0,
     Error:    data.Error || "",
   };
+
+  // Store per-shift snapshot so the Machine Monitor can display all three shifts.
+  // Data for past shifts is kept in memory until the bridge restarts.
+  const shiftKey = `shift${incomingShift}`;
+  m[shiftKey] = {
+    Shift:                  incomingShift,
+    ProductionTime:         data.ProductionTime         ?? 0,
+    IdleTime:               data.IdleTime               ?? 0,
+    ProducedSwabs:          data.ProducedSwabs          ?? 0,
+    PackagedSwabs:          data.PackagedSwabs          ?? 0,
+    DiscardedSwabs:         data.DiscardedSwabs         ?? 0,
+    ProducedBoxes:          data.ProducedBoxes          ?? 0,
+    ProducedBoxesLayerPlus: data.ProducedBoxesLayerPlus ?? 0,
+    CottonTears:            data.CottonTears            ?? 0,
+    MissingSticks:          data.MissingSticks          ?? 0,
+    FoultyPickups:          data.FoultyPickups          ?? 0,
+    OtherErrors:            data.OtherErrors            ?? 0,
+    Efficiency:             data.Efficiency             ?? 0,
+    Reject:                 data.Reject                 ?? 0,
+  };
+
+  // Recompute total across all present shift slots
+  const shiftSlots = [m.shift1, m.shift2, m.shift3].filter(Boolean);
+  m.total = shiftSlots.reduce((acc, s) => ({
+    ProductionTime:         (acc.ProductionTime         ?? 0) + (s.ProductionTime         ?? 0),
+    IdleTime:               (acc.IdleTime               ?? 0) + (s.IdleTime               ?? 0),
+    ProducedSwabs:          (acc.ProducedSwabs          ?? 0) + (s.ProducedSwabs          ?? 0),
+    PackagedSwabs:          (acc.PackagedSwabs          ?? 0) + (s.PackagedSwabs          ?? 0),
+    DiscardedSwabs:         (acc.DiscardedSwabs         ?? 0) + (s.DiscardedSwabs         ?? 0),
+    ProducedBoxes:          (acc.ProducedBoxes          ?? 0) + (s.ProducedBoxes          ?? 0),
+    ProducedBoxesLayerPlus: (acc.ProducedBoxesLayerPlus ?? 0) + (s.ProducedBoxesLayerPlus ?? 0),
+    CottonTears:            (acc.CottonTears            ?? 0) + (s.CottonTears            ?? 0),
+    MissingSticks:          (acc.MissingSticks          ?? 0) + (s.MissingSticks          ?? 0),
+    FoultyPickups:          (acc.FoultyPickups          ?? 0) + (s.FoultyPickups          ?? 0),
+    OtherErrors:            (acc.OtherErrors            ?? 0) + (s.OtherErrors            ?? 0),
+  }), {});
+  // Efficiency and Reject on total: weighted average by ProductionTime
+  const totalProdTime = shiftSlots.reduce((s, sh) => s + (sh.ProductionTime ?? 0), 0);
+  const totalAllTime  = shiftSlots.reduce((s, sh) => s + (sh.ProductionTime ?? 0) + (sh.IdleTime ?? 0), 0);
+  m.total.Efficiency = totalAllTime > 0 ? (totalProdTime / totalAllTime) * 100 : 0;
+  m.total.Reject     = m.total.ProducedSwabs > 0
+    ? (m.total.DiscardedSwabs / m.total.ProducedSwabs) * 100 : 0;
+
   m.lastSync = new Date();
+  m.lastSyncShift = m.lastSync;
   // Also keep legacy lastSyncStatus for the REST API
   m.lastSyncStatus = m.lastSync;
 
@@ -437,6 +481,11 @@ app.get("/api/machines/:code", (req, res) => {
     return res.status(404).json({ error: "Machine not found" });
   }
   res.json(machine);
+});
+
+// Request shift data (no-op with push-based simulator — data arrives automatically)
+app.post("/api/machines/:code/request-shift", (req, res) => {
+  res.json({ success: true });
 });
 
 // Delete a machine from bridge memory (Supabase deletion is handled by the frontend)
