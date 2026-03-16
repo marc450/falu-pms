@@ -628,6 +628,68 @@ function ParkSummaryTiles({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Shift progress bar
+// ─────────────────────────────────────────────────────────────
+function fmtDuration(mins: number): string {
+  const h = Math.floor(mins / 60);
+  const m = Math.floor(mins % 60);
+  return h > 0 ? `${h}h ${m}m` : `${m}m`;
+}
+
+function ShiftProgress({
+  shiftStartedAt,
+  effectiveShiftMins,
+  currentShift,
+  currentTime,
+}: {
+  shiftStartedAt: number;
+  effectiveShiftMins: number;
+  currentShift: number;
+  currentTime: Date;
+}) {
+  if (currentShift <= 0 || effectiveShiftMins <= 0) return null;
+
+  const elapsedMins   = Math.max(0, (currentTime.getTime() - shiftStartedAt) / 60000);
+  const remainingMins = Math.max(0, effectiveShiftMins - elapsedMins);
+  const progress      = Math.min(1, elapsedMins / effectiveShiftMins);
+  const pct           = Math.round(progress * 100);
+
+  // Colour the bar: green < 75%, yellow 75–90%, red > 90%
+  const barColor =
+    progress < 0.75 ? "bg-cyan-500"
+    : progress < 0.90 ? "bg-yellow-500"
+    : "bg-red-500";
+
+  return (
+    <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-3">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-2 text-xs text-gray-400">
+          <i className="bi bi-hourglass-split"></i>
+          <span>Shift {currentShift} progress</span>
+        </div>
+        <span className="text-xs text-gray-500">{pct}%</span>
+      </div>
+      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
+        <div
+          className={`h-full rounded-full transition-all duration-1000 ${barColor}`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <div className="flex justify-between text-xs">
+        <span className="text-gray-400">
+          <span className="text-white font-medium">{fmtDuration(elapsedMins)}</span>
+          <span className="text-gray-600 ml-1">elapsed</span>
+        </span>
+        <span className="text-gray-400">
+          <span className="text-gray-600 mr-1">remaining</span>
+          <span className="text-white font-medium">{fmtDuration(remainingMins)}</span>
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Dashboard
 // ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
@@ -781,6 +843,16 @@ export default function Dashboard() {
           <i className="bi bi-exclamation-circle shrink-0 mt-0.5"></i>
           <div><span className="font-medium">Could not load machines from database:</span> {dbError}</div>
         </div>
+      )}
+
+      {/* ── Shift progress ── */}
+      {currentShift > 0 && (
+        <ShiftProgress
+          shiftStartedAt={shiftStartedAt}
+          effectiveShiftMins={effectiveShiftMins}
+          currentShift={currentShift}
+          currentTime={currentTime}
+        />
       )}
 
       {/* ── Park summary tiles ── */}
