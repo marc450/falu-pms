@@ -683,7 +683,7 @@ function ShiftAndBUProgress({
         <div className="flex items-center justify-between mb-2">
           <div className="flex items-center gap-2 text-xs text-gray-400">
             <i className="bi bi-hourglass-split"></i>
-            <span>Elapsed shift time <span className="text-gray-500">|</span> <span className="text-white">{shiftName}</span></span>
+            <span>Elapsed time <span className="text-gray-500">|</span> <span className="text-white">{shiftName}</span></span>
           </div>
           <span className="text-xs text-gray-500">{shiftPct}%</span>
         </div>
