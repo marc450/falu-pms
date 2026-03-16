@@ -7,6 +7,7 @@ import {
   fetchRegisteredMachines,
   fetchProductionCells,
   fetchThresholds,
+  fetchShiftConfig,
   applyEfficiencyColor,
   applyScrapColor,
   applyMachineEfficiencyColor,
@@ -15,8 +16,9 @@ import {
   applySpeedHeaderColor,
   applyBuRunRateColor,
   DEFAULT_THRESHOLDS,
+  DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
-import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat } from "@/lib/supabase";
+import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat, ShiftConfig } from "@/lib/supabase";
 import { PACKING_FORMATS } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 
@@ -639,15 +641,15 @@ function fmtDuration(mins: number): string {
 function ShiftProgress({
   shiftStartedAt,
   effectiveShiftMins,
-  currentShift,
+  shiftName,
   currentTime,
 }: {
   shiftStartedAt: number;
   effectiveShiftMins: number;
-  currentShift: number;
+  shiftName: string;
   currentTime: Date;
 }) {
-  if (currentShift <= 0 || effectiveShiftMins <= 0) return null;
+  if (!shiftName || effectiveShiftMins <= 0) return null;
 
   const elapsedMins   = Math.max(0, (currentTime.getTime() - shiftStartedAt) / 60000);
   const remainingMins = Math.max(0, effectiveShiftMins - elapsedMins);
@@ -665,7 +667,7 @@ function ShiftProgress({
       <div className="flex items-center justify-between mb-2">
         <div className="flex items-center gap-2 text-xs text-gray-400">
           <i className="bi bi-hourglass-split"></i>
-          <span>Shift {currentShift} progress</span>
+          <span>{shiftName} progress</span>
         </div>
         <span className="text-xs text-gray-500">{pct}%</span>
       </div>
@@ -704,6 +706,7 @@ export default function Dashboard() {
   const [dbError, setDbError] = useState<string | null>(null);
   const [initialLoading, setInitialLoading] = useState(true);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
+  const [shiftConfig, setShiftConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
   const router = useRouter();
   const bridgeFailCount = useRef(0);
 
@@ -780,6 +783,7 @@ export default function Dashboard() {
   useEffect(() => {
     loadData();
     fetchThresholds().then(setThresholds).catch(() => {/* use defaults */});
+    fetchShiftConfig().then(setShiftConfig).catch(() => {/* use defaults */});
     const dataInterval = setInterval(loadData, 2000);
     const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
     return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
@@ -802,6 +806,11 @@ export default function Dashboard() {
 
   const useCells = cells.length > 0;
 
+  // Resolve slot name from the PLC shift number (1-based → slot index 0-based)
+  const activeSlotName = currentShift > 0
+    ? (shiftConfig.slots[currentShift - 1]?.name ?? `Shift ${currentShift}`)
+    : null;
+
   // Net production time available per shift (shift length minus planned downtime)
   const effectiveShiftMins = Math.max(
     1,
@@ -818,9 +827,9 @@ export default function Dashboard() {
             <i className="bi bi-calendar3 mr-1"></i>
             {currentTime.toLocaleString("de-DE")}
           </span>
-          {currentShift > 0 && (
+          {activeSlotName && (
             <span className="bg-blue-900/40 text-blue-300 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
-              <i className="bi bi-clock mr-1"></i>Shift {currentShift}
+              <i className="bi bi-clock mr-1"></i>{activeSlotName}
             </span>
           )}
           {initialLoading ? (
@@ -846,11 +855,11 @@ export default function Dashboard() {
       )}
 
       {/* ── Shift progress ── */}
-      {currentShift > 0 && (
+      {activeSlotName && (
         <ShiftProgress
           shiftStartedAt={shiftStartedAt}
           effectiveShiftMins={effectiveShiftMins}
-          currentShift={currentShift}
+          shiftName={activeSlotName}
           currentTime={currentTime}
         />
       )}
