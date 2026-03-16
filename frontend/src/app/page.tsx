@@ -910,11 +910,11 @@ export default function Dashboard() {
       )}
 
       {/* ── Shift + BU progress ── */}
-      {activeSlotName && (
+      {shiftBadgeLabel && (
         <ShiftAndBUProgress
           shiftStartedAt={shiftStartedAt}
           totalShiftMins={thresholds.bu.shiftLengthMinutes}
-          shiftName={activeSlotName}
+          shiftName={shiftBadgeLabel}
           currentTime={currentTime}
           machines={machines}
         />
