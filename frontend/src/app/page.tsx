@@ -641,20 +641,20 @@ function fmtDuration(mins: number): string {
 
 function ShiftProgress({
   shiftStartedAt,
-  effectiveShiftMins,
+  totalShiftMins,
   shiftName,
   currentTime,
 }: {
   shiftStartedAt: number;
-  effectiveShiftMins: number;
+  totalShiftMins: number;
   shiftName: string;
   currentTime: Date;
 }) {
-  if (!shiftName || effectiveShiftMins <= 0) return null;
+  if (!shiftName || totalShiftMins <= 0) return null;
 
   const elapsedMins   = Math.max(0, (currentTime.getTime() - shiftStartedAt) / 60000);
-  const remainingMins = Math.max(0, effectiveShiftMins - elapsedMins);
-  const progress      = Math.min(1, elapsedMins / effectiveShiftMins);
+  const remainingMins = Math.max(0, totalShiftMins - elapsedMins);
+  const progress      = Math.min(1, elapsedMins / totalShiftMins);
   const pct           = Math.round(progress * 100);
 
   // Bar colour: cyan < 75%, yellow 75–90%, red > 90%
@@ -868,7 +868,7 @@ export default function Dashboard() {
       {shiftBadgeLabel && (
         <ShiftProgress
           shiftStartedAt={shiftStartedAt}
-          effectiveShiftMins={effectiveShiftMins}
+          totalShiftMins={thresholds.bu.shiftLengthMinutes}
           shiftName={shiftBadgeLabel}
           currentTime={currentTime}
         />
