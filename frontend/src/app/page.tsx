@@ -587,7 +587,7 @@ function ParkSummaryTiles({
     : hasAnyBuTarget ? "No live data" : "No targets set";
 
   return (
-    <div className="grid grid-cols-4 gap-3 mb-6">
+    <div className="grid grid-cols-3 gap-3 mb-6">
       <SummaryTile
         icon="bi-activity"
         label="Machines Online"
@@ -618,14 +618,6 @@ function ParkSummaryTiles({
         colorClass={sc.text}
         borderClass={sc.border}
       />
-      <SummaryTile
-        icon="bi-bullseye"
-        label="Total BU Run Rate"
-        value={buValue}
-        sub={buSub}
-        colorClass={buc.text}
-        borderClass={buc.border}
-      />
     </div>
   );
 }
@@ -639,116 +631,108 @@ function fmtDuration(mins: number): string {
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
 }
 
-function ShiftProgress({
+function ShiftAndBUProgress({
   shiftStartedAt,
   totalShiftMins,
   shiftName,
   currentTime,
+  machines,
 }: {
   shiftStartedAt: number;
   totalShiftMins: number;
   shiftName: string;
   currentTime: Date;
+  machines: Record<string, DashboardMachine>;
 }) {
   if (!shiftName || totalShiftMins <= 0) return null;
 
+  // ── Shift elapsed ──
   const elapsedMins   = Math.max(0, (currentTime.getTime() - shiftStartedAt) / 60000);
   const remainingMins = Math.max(0, totalShiftMins - elapsedMins);
-  const progress      = Math.min(1, elapsedMins / totalShiftMins);
-  const pct           = Math.round(progress * 100);
+  const shiftProgress = Math.min(1, elapsedMins / totalShiftMins);
+  const shiftPct      = Math.round(shiftProgress * 100);
 
-  // Bar colour: cyan < 75%, yellow 75–90%, red > 90%
-  const barColor =
-    progress < 0.75 ? "bg-cyan-500"
-    : progress < 0.90 ? "bg-yellow-500"
+  const shiftBarColor =
+    shiftProgress < 0.75 ? "bg-cyan-500"
+    : shiftProgress < 0.90 ? "bg-yellow-500"
     : "bg-red-500";
 
-  return (
-    <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <i className="bi bi-hourglass-split"></i>
-          <span>{shiftName} progress</span>
-        </div>
-        <span className="text-xs text-gray-500">{pct}%</span>
-      </div>
-      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
-        <div
-          className={`h-full rounded-full transition-all duration-1000 ${barColor}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <div className="flex justify-between text-xs">
-        <span className="text-gray-400">
-          <span className="text-white font-medium">{fmtDuration(elapsedMins)}</span>
-          <span className="text-gray-600 ml-1">elapsed</span>
-        </span>
-        <span className="text-gray-400">
-          <span className="text-gray-600 mr-1">remaining</span>
-          <span className="text-white font-medium">{fmtDuration(remainingMins)}</span>
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-// BU progress bar — actual BUs produced vs total target
-// ─────────────────────────────────────────────────────────────
-function BUProgress({
-  machines,
-}: {
-  machines: Record<string, DashboardMachine>;
-}) {
+  // ── BU output ──
   const all = Object.values(machines);
-  let totalCurrent = 0;
-  let totalTarget  = 0;
-
+  let totalCurrentBU = 0;
+  let totalTargetBU  = 0;
   for (const m of all) {
-    if (m.buTarget && m.buTarget > 0) totalTarget += m.buTarget;
-    // Sum actual BUs from live swab count
+    if (m.buTarget && m.buTarget > 0) totalTargetBU += m.buTarget;
     const activeShift = m.machineStatus?.ActShift ?? 1;
     const shiftData   = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
     const swabs       = shiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
-    totalCurrent += swabs / 7200;
+    totalCurrentBU += swabs / 7200;
   }
-
-  if (totalTarget <= 0) return null;
-
-  const progress = Math.min(1, totalCurrent / totalTarget);
-  const pct      = Math.round(progress * 100);
-
-  // Green when on track (>=90%), yellow when close (>=70%), otherwise default gray/cyan
-  const barColor =
-    progress >= 0.9 ? "bg-green-500"
-    : progress >= 0.7 ? "bg-yellow-500"
+  const hasBU      = totalTargetBU > 0;
+  const buProgress = hasBU ? Math.min(1, totalCurrentBU / totalTargetBU) : 0;
+  const buPct      = Math.round(buProgress * 100);
+  const buBarColor =
+    buProgress >= 0.9 ? "bg-green-500"
+    : buProgress >= 0.7 ? "bg-yellow-500"
     : "bg-purple-500";
 
   return (
-    <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-3">
-      <div className="flex items-center justify-between mb-2">
-        <div className="flex items-center gap-2 text-xs text-gray-400">
-          <i className="bi bi-box-seam"></i>
-          <span>BU output</span>
+    <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-4 space-y-4">
+      {/* Shift elapsed */}
+      <div>
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-2 text-xs text-gray-400">
+            <i className="bi bi-hourglass-split"></i>
+            <span>Elapsed shift time <span className="text-gray-500">|</span> <span className="text-white">{shiftName}</span></span>
+          </div>
+          <span className="text-xs text-gray-500">{shiftPct}%</span>
         </div>
-        <span className="text-xs text-gray-500">{pct}%</span>
+        <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
+          <div
+            className={`h-full rounded-full transition-all duration-1000 ${shiftBarColor}`}
+            style={{ width: `${shiftPct}%` }}
+          />
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className="text-gray-400">
+            <span className="text-white font-medium">{fmtDuration(elapsedMins)}</span>
+            <span className="text-gray-600 ml-1">elapsed</span>
+          </span>
+          <span className="text-gray-400">
+            <span className="text-gray-600 mr-1">remaining</span>
+            <span className="text-white font-medium">{fmtDuration(remainingMins)}</span>
+          </span>
+        </div>
       </div>
-      <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
-        <div
-          className={`h-full rounded-full transition-all duration-1000 ${barColor}`}
-          style={{ width: `${pct}%` }}
-        />
-      </div>
-      <div className="flex justify-between text-xs">
-        <span className="text-gray-400">
-          <span className="text-white font-medium">{Math.round(totalCurrent)} BUs</span>
-          <span className="text-gray-600 ml-1">produced</span>
-        </span>
-        <span className="text-gray-400">
-          <span className="text-gray-600 mr-1">target</span>
-          <span className="text-white font-medium">{Math.round(totalTarget)} BUs</span>
-        </span>
-      </div>
+
+      {/* BU output */}
+      {hasBU && (
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-2 text-xs text-gray-400">
+              <i className="bi bi-box-seam"></i>
+              <span>BU output</span>
+            </div>
+            <span className="text-xs text-gray-500">{buPct}%</span>
+          </div>
+          <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
+            <div
+              className={`h-full rounded-full transition-all duration-1000 ${buBarColor}`}
+              style={{ width: `${buPct}%` }}
+            />
+          </div>
+          <div className="flex justify-between text-xs">
+            <span className="text-gray-400">
+              <span className="text-white font-medium">{Math.round(totalCurrentBU)} BUs</span>
+              <span className="text-gray-600 ml-1">produced</span>
+            </span>
+            <span className="text-gray-400">
+              <span className="text-gray-600 mr-1">target</span>
+              <span className="text-white font-medium">{Math.round(totalTargetBU)} BUs</span>
+            </span>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -925,18 +909,16 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Shift progress ── */}
+      {/* ── Shift + BU progress ── */}
       {shiftBadgeLabel && (
-        <ShiftProgress
+        <ShiftAndBUProgress
           shiftStartedAt={shiftStartedAt}
           totalShiftMins={thresholds.bu.shiftLengthMinutes}
           shiftName={shiftBadgeLabel}
           currentTime={currentTime}
+          machines={machines}
         />
       )}
-
-      {/* ── BU progress ── */}
-      {hasData && <BUProgress machines={machines} />}
 
       {/* ── Park summary tiles ── */}
       {hasData && (
