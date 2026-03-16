@@ -31,10 +31,22 @@ export interface MachineStatusMessage {
   Boxes: number;
   Efficiency: number;
   Reject: number;
+  // Full payload fields spread by bridge from combined cloud/Shift message
+  ProductionTime?: number;
+  IdleTime?: number;
+  ProducedSwabs?: number;
+  PackagedSwabs?: number;
+  DiscardedSwabs?: number;
+  ProducedBoxes?: number;
+  ProducedBoxesLayerPlus?: number;
+  CottonTears?: number;
+  MissingSticks?: number;
+  FoultyPickups?: number;
+  OtherErrors?: number;
 }
 
 export interface ShiftDataMessage {
-  Machine: string;
+  Machine?: string;
   Shift: number;
   ProductionTime: number;
   IdleTime: number;
@@ -49,7 +61,7 @@ export interface ShiftDataMessage {
   DiscardedSwabs: number;
   Efficiency: number;
   Reject: number;
-  Save: boolean;
+  Save?: boolean;
 }
 
 export interface MachineData {
@@ -592,6 +604,50 @@ export async function saveShiftConfig(config: ShiftConfig): Promise<void> {
     value: { ...buVal, shiftLengthMinutes: shiftMins, plannedDowntimeMinutes: config.plannedDowntimeMinutes },
     updated_at: new Date().toISOString(),
   }, opts);
+}
+
+export interface SavedShiftLog {
+  shift_number:             number;
+  production_time:          number;
+  idle_time:                number;
+  cotton_tears:             number;
+  missing_sticks:           number;
+  faulty_pickups:           number;
+  other_errors:             number;
+  produced_swabs:           number;
+  packaged_swabs:           number;
+  produced_boxes:           number;
+  produced_boxes_layer_plus: number;
+  discarded_swabs:          number;
+  efficiency:               number;
+  reject_rate:              number;
+  saved_at:                 string;
+}
+
+/**
+ * Fetch the most recent saved shift log for each shift number for a machine.
+ * Returns one row per shift_number (the latest save for that shift).
+ */
+export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShiftLog[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("saved_shift_logs")
+    .select("shift_number, production_time, idle_time, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, reject_rate, saved_at")
+    .eq("machine_code", machineCode)
+    .order("saved_at", { ascending: false })
+    .limit(20); // grab recent rows then deduplicate by shift_number in JS
+  if (error) throw new Error(error.message);
+  if (!data) return [];
+  // Keep only the most recent row per shift_number
+  const seen = new Set<number>();
+  const result: SavedShiftLog[] = [];
+  for (const row of data) {
+    if (!seen.has(row.shift_number)) {
+      seen.add(row.shift_number);
+      result.push(row as SavedShiftLog);
+    }
+  }
+  return result;
 }
 
 /** Fetch shift assignments for a date range (inclusive). */

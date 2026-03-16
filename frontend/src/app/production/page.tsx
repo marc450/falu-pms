@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, fetchMachineTargets, requestShiftData, PACKING_FORMATS } from "@/lib/supabase";
-import type { MachineData, MachineTargets, ShiftDataMessage, PackingFormat } from "@/lib/supabase";
+import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, PACKING_FORMATS } from "@/lib/supabase";
+import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 
 function ProductionContent() {
@@ -11,6 +11,7 @@ function ProductionContent() {
   const machineName = searchParams.get("machine") || "";
   const packingFormat = (searchParams.get("packing") || null) as PackingFormat | null;
   const [machine, setMachine] = useState<MachineData | null>(null);
+  const [savedLogs, setSavedLogs] = useState<SavedShiftLog[]>([]);
   const [targets, setTargets] = useState<MachineTargets | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -26,12 +27,18 @@ function ProductionContent() {
       failCount.current = 0;
     } catch {
       failCount.current += 1;
-      // Only declare offline after 3 consecutive failures (~6 s at 2 s poll rate).
-      // This prevents a single bridge restart or network hiccup from wiping the screen.
       if (failCount.current >= 3) setOffline(true);
     } finally {
       setLoading(false);
     }
+  }, [machineName]);
+
+  const loadSavedLogs = useCallback(async () => {
+    if (!machineName) return;
+    try {
+      const logs = await fetchSavedShiftLogs(machineName);
+      setSavedLogs(logs);
+    } catch { /* non-fatal */ }
   }, [machineName]);
 
   useEffect(() => {
@@ -39,37 +46,101 @@ function ProductionContent() {
       setLoading(false);
       return;
     }
-
-    // Fetch threshold settings once — they only change via admin, not during a shift
     fetchMachineTargets(machineName)
       .then(setTargets)
-      .catch(() => { /* thresholds unavailable — coloring will be suppressed */ });
+      .catch(() => {});
 
     loadData();
+    loadSavedLogs();
 
-    // Send initial request for all shift data
-    requestShiftData(machineName, 0);
-
-    // Poll every 2 seconds for live updates
-    const dataInterval = setInterval(loadData, 2000);
-
-    // Request shift data every 10 seconds
-    const requestInterval = setInterval(() => {
-      const currentShift = machine?.machineStatus?.ActShift || 0;
-      requestShiftData(machineName, currentShift);
-    }, 10000);
+    // Poll live bridge data every 2 s; refresh saved logs every 30 s
+    const dataInterval    = setInterval(loadData, 2000);
+    const savedLogsInterval = setInterval(loadSavedLogs, 30000);
 
     return () => {
       clearInterval(dataInterval);
-      clearInterval(requestInterval);
+      clearInterval(savedLogsInterval);
     };
-  }, [machineName, loadData, machine?.machineStatus?.ActShift]);
+  }, [machineName, loadData, loadSavedLogs]);
 
   const status = getStatusColor(machine?.machineStatus?.Status);
   const activeShift = machine?.machineStatus?.ActShift || 0;
 
   const shiftCellClass = (shiftNum: number) =>
     activeShift === shiftNum ? "font-bold bg-cyan-900/20" : "";
+
+  // Map saved logs by shift number for O(1) lookup
+  const savedByShift = Object.fromEntries(savedLogs.map(l => [l.shift_number, l]));
+
+  // Build a unified ShiftDataMessage for a given shift number:
+  // - active shift → live bridge data (machineStatus fields)
+  // - completed shift → most recent saved_shift_logs row
+  const shiftData = (shiftNum: number): ShiftDataMessage | undefined => {
+    if (shiftNum === activeShift) {
+      const s = machine?.machineStatus;
+      if (!s) return undefined;
+      return {
+        Shift:                  shiftNum,
+        ProductionTime:         s.ProductionTime         ?? 0,
+        IdleTime:               s.IdleTime               ?? 0,
+        ProducedSwabs:          s.ProducedSwabs          ?? s.Swabs ?? 0,
+        PackagedSwabs:          s.PackagedSwabs          ?? 0,
+        DiscardedSwabs:         s.DiscardedSwabs         ?? 0,
+        ProducedBoxes:          s.ProducedBoxes          ?? s.Boxes ?? 0,
+        ProducedBoxesLayerPlus: s.ProducedBoxesLayerPlus ?? 0,
+        CottonTears:            s.CottonTears            ?? 0,
+        MissingSticks:          s.MissingSticks          ?? 0,
+        FoultyPickups:          s.FoultyPickups          ?? 0,
+        OtherErrors:            s.OtherErrors            ?? 0,
+        Efficiency:             s.Efficiency             ?? 0,
+        Reject:                 s.Reject                 ?? 0,
+      };
+    }
+    const log = savedByShift[shiftNum];
+    if (!log) return undefined;
+    return {
+      Shift:                  log.shift_number,
+      ProductionTime:         log.production_time,
+      IdleTime:               log.idle_time,
+      ProducedSwabs:          log.produced_swabs,
+      PackagedSwabs:          log.packaged_swabs,
+      DiscardedSwabs:         log.discarded_swabs,
+      ProducedBoxes:          log.produced_boxes,
+      ProducedBoxesLayerPlus: log.produced_boxes_layer_plus,
+      CottonTears:            log.cotton_tears,
+      MissingSticks:          log.missing_sticks,
+      FoultyPickups:          log.faulty_pickups,
+      OtherErrors:            log.other_errors,
+      Efficiency:             log.efficiency,
+      Reject:                 log.reject_rate,
+    };
+  };
+
+  // Total across all shifts that have data
+  const totalData = (): ShiftDataMessage | undefined => {
+    const slots = [1, 2, 3].map(shiftData).filter((s): s is ShiftDataMessage => !!s);
+    if (slots.length === 0) return undefined;
+    const sum = slots.reduce((acc, s) => ({
+      Shift:                  0,
+      ProductionTime:         acc.ProductionTime         + s.ProductionTime,
+      IdleTime:               acc.IdleTime               + s.IdleTime,
+      ProducedSwabs:          acc.ProducedSwabs          + s.ProducedSwabs,
+      PackagedSwabs:          acc.PackagedSwabs          + s.PackagedSwabs,
+      DiscardedSwabs:         acc.DiscardedSwabs         + s.DiscardedSwabs,
+      ProducedBoxes:          acc.ProducedBoxes          + s.ProducedBoxes,
+      ProducedBoxesLayerPlus: acc.ProducedBoxesLayerPlus + s.ProducedBoxesLayerPlus,
+      CottonTears:            acc.CottonTears            + s.CottonTears,
+      MissingSticks:          acc.MissingSticks          + s.MissingSticks,
+      FoultyPickups:          acc.FoultyPickups          + s.FoultyPickups,
+      OtherErrors:            acc.OtherErrors            + s.OtherErrors,
+      Efficiency:             0,
+      Reject:                 0,
+    }));
+    const totalTime = sum.ProductionTime + sum.IdleTime;
+    sum.Efficiency = totalTime > 0 ? (sum.ProductionTime / totalTime) * 100 : 0;
+    sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
+    return sum;
+  };
 
   const renderShiftValue = (
     shift: ShiftDataMessage | undefined,
@@ -79,14 +150,10 @@ function ProductionContent() {
     if (!shift) return <span className="text-gray-600">---</span>;
     const val = shift[key];
     if (val === undefined || val === null) return <span className="text-gray-600">---</span>;
-
     switch (format) {
-      case "time":
-        return formatMinutesToTime(val as number);
-      case "percent":
-        return `${(val as number).toFixed(1)}%`;
-      default:
-        return (val as number).toLocaleString();
+      case "time":    return formatMinutesToTime(val as number);
+      case "percent": return `${(val as number).toFixed(1)}%`;
+      default:        return (val as number).toLocaleString();
     }
   };
 
@@ -235,17 +302,17 @@ function ProductionContent() {
                 {metrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5">
                     <td className="px-4 py-2.5 font-medium text-gray-200">{metric.label}</td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, machine.shift1)}`}>
-                      {renderShiftValue(machine.shift1, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, shiftData(1))}`}>
+                      {renderShiftValue(shiftData(1), metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, machine.shift2)}`}>
-                      {renderShiftValue(machine.shift2, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, shiftData(2))}`}>
+                      {renderShiftValue(shiftData(2), metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, machine.shift3)}`}>
-                      {renderShiftValue(machine.shift3, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, shiftData(3))}`}>
+                      {renderShiftValue(shiftData(3), metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, machine.total)}`}>
-                      {renderShiftValue(machine.total, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
+                      {renderShiftValue(totalData(), metric.key, metric.format)}
                     </td>
                   </tr>
                 ))}
@@ -258,17 +325,17 @@ function ProductionContent() {
                 {errorMetrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5 bg-gray-900/20">
                     <td className="px-4 py-2.5 font-medium text-gray-300">{metric.label}</td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, machine.shift1)}`}>
-                      {renderShiftValue(machine.shift1, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, shiftData(1))}`}>
+                      {renderShiftValue(shiftData(1), metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, machine.shift2)}`}>
-                      {renderShiftValue(machine.shift2, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, shiftData(2))}`}>
+                      {renderShiftValue(shiftData(2), metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, machine.shift3)}`}>
-                      {renderShiftValue(machine.shift3, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, shiftData(3))}`}>
+                      {renderShiftValue(shiftData(3), metric.key, metric.format)}
                     </td>
-                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, machine.total)}`}>
-                      {renderShiftValue(machine.total, metric.key, metric.format)}
+                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
+                      {renderShiftValue(totalData(), metric.key, metric.format)}
                     </td>
                   </tr>
                 ))}
