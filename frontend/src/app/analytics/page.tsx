@@ -486,34 +486,35 @@ export default function Analytics() {
   // 2-shift target — a shift that hits target should always look "good".
   const shiftHours = thresholds.bu.shiftLengthMinutes / 60 || 8;
 
+  // For daily granularity the bars show a DAILY park total (all shifts combined),
+  // so targets and reference lines must also be scaled to the daily level.
+  // shiftsPerDay = 24 / shiftHours (e.g. 2 for 12h shifts).
+  const shiftsPerDay = Math.max(1, Math.round(24 / shiftHours));
+
   const buRows = rows.map(r => {
     const totalBU = Math.round((r.totalSwabs / 7200) * 10) / 10;
-    // Per-bucket threshold: compare the per-shift average output against
-    // the per-shift target. For hourly buckets, use the production rate.
-    // For daily buckets, divide total by the number of shifts that contributed
-    // data so a partial day isn't penalised against a multi-shift target.
-    const shifts = Math.max(1, r.shiftCount);
-    const perShiftBU = granularity === "hour" ? totalBU : totalBU / shifts;
-    const barTarget = buTargetPerShift !== null
-      ? (granularity === "hour" ? buTargetPerShift / shiftHours : buTargetPerShift)
+    // For coloring each bar: compare daily total against daily target.
+    // For hourly buckets: compare hourly output against hourly target rate.
+    const dayTarget = buTargetPerShift !== null
+      ? (granularity === "hour" ? buTargetPerShift / shiftHours : buTargetPerShift * shiftsPerDay)
       : null;
-    const barMediocre = buMediocrePerShift !== null
-      ? (granularity === "hour" ? buMediocrePerShift / shiftHours : buMediocrePerShift)
+    const dayMediocre = buMediocrePerShift !== null
+      ? (granularity === "hour" ? buMediocrePerShift / shiftHours : buMediocrePerShift * shiftsPerDay)
       : null;
     const barColor =
-      barTarget === null || barMediocre === null ? "#22d3ee"      // no targets → default cyan
-      : perShiftBU >= barTarget                 ? "#4ade80"      // good → green
-      : perShiftBU >= barMediocre               ? "#eab308"      // mediocre → yellow
-      :                                           "#ef4444";     // poor → red
-    return { ...r, totalBU, barTarget, barMediocre, barColor };
+      dayTarget === null || dayMediocre === null ? "#22d3ee"
+      : totalBU >= dayTarget                    ? "#4ade80"
+      : totalBU >= dayMediocre                  ? "#eab308"
+      :                                           "#ef4444";
+    return { ...r, totalBU, barColor };
   });
 
-  // For the legend and reference line, show the per-shift target as baseline
+  // Reference lines on the same scale as the bars
   const buTargetLine = buTargetPerShift !== null
-    ? (granularity === "hour" ? buTargetPerShift / shiftHours : buTargetPerShift)
+    ? (granularity === "hour" ? buTargetPerShift / shiftHours : buTargetPerShift * shiftsPerDay)
     : null;
   const buMediocreLine = buMediocrePerShift !== null
-    ? (granularity === "hour" ? buMediocrePerShift / shiftHours : buMediocrePerShift)
+    ? (granularity === "hour" ? buMediocrePerShift / shiftHours : buMediocrePerShift * shiftsPerDay)
     : null;
 
   // KPI color for Total BU Output — compare actual total against what the park
@@ -792,7 +793,7 @@ export default function Analytics() {
             title={`Total BU Output ${chartTitle}`}
             legend={buTargetLine !== null ? (
               <>
-                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTargetLine).toLocaleString()} BUs/shift)`} />
+                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTargetLine).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/day"})`} />
                 <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
                 <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
               </>
