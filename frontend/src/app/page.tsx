@@ -703,60 +703,49 @@ function ShiftAndBUProgress({
     : "bg-purple-500";
 
   return (
-    <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-4 space-y-4">
-      {/* Shift elapsed */}
-      <div>
-        <div className="flex items-center justify-between mb-2">
-          <div className="flex items-center gap-2 text-xs text-gray-400">
-            <i className="bi bi-hourglass-split"></i>
-            <span>Elapsed time <span className="text-gray-500">|</span> <span className="text-white">{shiftName}</span></span>
-          </div>
-          <span className="text-xs text-gray-500">{shiftPct}%</span>
-        </div>
-        <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
-          <div
-            className={`h-full rounded-full transition-all duration-1000 ${shiftBarColor}`}
-            style={{ width: `${shiftPct}%` }}
-          />
-        </div>
-        <div className="flex justify-between text-xs">
-          <span className="text-gray-400">
-            <span className="text-white font-medium">{fmtDuration(elapsedMins)}</span>
-            <span className="text-gray-600 ml-1">elapsed</span>
-          </span>
-          <span className="text-gray-400">
-            <span className="text-gray-600 mr-1">remaining</span>
-            <span className="text-white font-medium">{fmtDuration(remainingMins)}</span>
-          </span>
-        </div>
-      </div>
+    <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-3 space-y-2">
+      {/* Shift name */}
+      <div className="text-xs font-semibold text-white tracking-wide uppercase">{shiftName}</div>
 
-      {/* BU output */}
-      {hasBU && (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 text-xs text-gray-400">
-              <i className="bi bi-box-seam"></i>
-              <span>BU output</span>
-            </div>
-            <span className="text-xs text-gray-500">{buPct}%</span>
-          </div>
-          <div className="w-full h-1.5 bg-gray-700 rounded-full overflow-hidden mb-2">
+      {/* Elapsed time row */}
+      <div>
+        <div className="flex items-center gap-3 mb-1">
+          <span className="text-xs text-gray-400 w-24 shrink-0">Elapsed time</span>
+          <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all duration-1000 ${buBarColor}`}
-              style={{ width: `${buPct}%` }}
+              className={`h-full rounded-full transition-all duration-1000 ${shiftBarColor}`}
+              style={{ width: `${shiftPct}%` }}
             />
           </div>
-          <div className="flex justify-between text-xs">
-            <span className="text-gray-400">
-              <span className="text-white font-medium">{Math.round(totalCurrentBU)} BUs</span>
-              <span className="text-gray-600 ml-1">produced</span>
-            </span>
-            <span className="text-gray-400">
-              <span className="text-gray-600 mr-1">target</span>
-              <span className="text-white font-medium">{Math.round(totalTargetBU)} BUs</span>
-            </span>
+        </div>
+        <p className="text-xs text-gray-500 pl-[6.75rem]">
+          <span className="text-white font-medium">{fmtDuration(elapsedMins)}/{fmtDuration(totalShiftMins)}</span>
+          {" elapsed"}
+          <span className="mx-1.5 text-gray-600">|</span>
+          <span className="text-white font-medium">{shiftPct}%</span>
+          {" of shift"}
+        </p>
+      </div>
+
+      {/* BU output row */}
+      {hasBU && (
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <span className="text-xs text-gray-400 w-24 shrink-0">BU output</span>
+            <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all duration-1000 ${buBarColor}`}
+                style={{ width: `${buPct}%` }}
+              />
+            </div>
           </div>
+          <p className="text-xs text-gray-500 pl-[6.75rem]">
+            <span className="text-white font-medium">{Math.round(totalCurrentBU)}/{Math.round(totalTargetBU)} BUs</span>
+            {" produced"}
+            <span className="mx-1.5 text-gray-600">|</span>
+            <span className="text-white font-medium">{buPct}%</span>
+            {" of target"}
+          </p>
         </div>
       )}
     </div>
