@@ -448,22 +448,22 @@ function CellSection({
   // Column definitions: label, sort key, min-width
   type ColDef = { label: string; col: CellSortCol; minW: number };
   const colDefs: ColDef[] = [
-    { label: "Machine",              col: "Machine",   minW: 140 },
-    { label: "Status",               col: "Status",    minW: 130 },
-    { label: "Uptime",               col: "Uptime",    minW: 110 },
-    { label: "Scrap Rate",           col: "Scrap",     minW: 110 },
-    { label: "Total BUs",            col: "TotalBU",   minW: 120 },
-    { label: "Expected Output",      col: "BU",        minW: 200 },
-    { label: "Speed",                col: "Speed",     minW: 145 },
-    { label: "Total Idle Time",      col: "IdleTime",  minW: 130 },
-    { label: "Total Error Time",     col: "ErrorTime", minW: 130 },
-    { label: "Last Sync",            col: "Sync",      minW: 115 },
+    { label: "Machine",              col: "Machine",   minW: 100 },
+    { label: "Status",               col: "Status",    minW: 100 },
+    { label: "Uptime",               col: "Uptime",    minW: 70 },
+    { label: "Scrap",                col: "Scrap",     minW: 70 },
+    { label: "Total BUs",            col: "TotalBU",   minW: 80 },
+    { label: "Expected Output",      col: "BU",        minW: 130 },
+    { label: "Speed",                col: "Speed",     minW: 100 },
+    { label: "Idle Time",            col: "IdleTime",  minW: 80 },
+    { label: "Error Time",           col: "ErrorTime", minW: 80 },
+    { label: "Last Sync",            col: "Sync",      minW: 80 },
   ];
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+        <table className="w-full text-sm">
           {/* ── colgroup pins every column to a stable min-width ── */}
           <colgroup>
             {colDefs.map((cd) => (
