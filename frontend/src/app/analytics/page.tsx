@@ -61,19 +61,36 @@ const DEFAULT_PRESET_ID: PresetId = "24h";
 
 // ─── Bucket formatting ────────────────────────────────────────────────────────
 
+const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+/** Format a large number as millions with comma thousands separator: 1,100.5M */
+function fmtMillions(n: number): string {
+  const m = n / 1_000_000;
+  // Use toLocaleString for the comma separator (e.g. 1,100.50M)
+  return `${m.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}M`;
+}
+
+function fmtDateShort(d: Date): string {
+  const day = String(d.getDate()).padStart(2, "0");
+  const mon = MONTH_ABBR[d.getMonth()];
+  const yr  = String(d.getFullYear()).slice(2);
+  return `${day}. ${mon} '${yr}`;
+}
+
 function fmtBucket(key: string, granularity: "hour" | "day"): string {
   try {
-    return granularity === "hour"
-      ? format(parseISO(key + ":00:00"), "HH:mm")
-      : format(parseISO(key), "dd.MM");
+    if (granularity === "hour") return format(parseISO(key + ":00:00"), "HH:mm");
+    return fmtDateShort(parseISO(key));
   } catch { return key; }
 }
 
 function fmtBucketFull(key: string, granularity: "hour" | "day"): string {
   try {
-    return granularity === "hour"
-      ? format(parseISO(key + ":00:00"), "dd.MM.yyyy HH:mm")
-      : format(parseISO(key), "dd.MM.yyyy");
+    if (granularity === "hour") {
+      const d = parseISO(key + ":00:00");
+      return `${fmtDateShort(d)} ${format(d, "HH:mm")}`;
+    }
+    return fmtDateShort(parseISO(key));
   } catch { return key; }
 }
 
@@ -85,9 +102,26 @@ function fmtBucketRange(key: string, granularity: "hour" | "day"): [string, stri
       return [format(d, "HH:mm"), format(next, "HH:mm")];
     }
     const d = parseISO(key);
-    const next = new Date(d.getTime() + 86_400_000);
-    return [format(d, "dd.MM"), format(next, "dd.MM")];
+    return [fmtDateShort(d), ""];
   } catch { return [key, ""]; }
+}
+
+/** For daily granularity, only show the 1st and 15th of each month as ticks. */
+function filterDailyTicks(rows: { date: string }[]): number[] {
+  const indices: number[] = [];
+  for (let i = 0; i < rows.length; i++) {
+    try {
+      const d = parseISO(rows[i].date);
+      const day = d.getDate();
+      if (day === 1 || day === 15) indices.push(i);
+    } catch { /* skip */ }
+  }
+  // If the data spans less than a month, the 1st/15th filter may leave
+  // very few or no ticks. Fall back to showing all ticks in that case.
+  if (indices.length < 2 && rows.length <= 31) {
+    return rows.map((_, i) => i);
+  }
+  return indices;
 }
 
 // Custom X-axis tick for line charts.
@@ -519,13 +553,24 @@ export default function Analytics() {
   const fmtTick  = (key: string) => fmtBucket(key, granularity);
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity);
 
-  // Show every tick for ≤ 24 buckets; thin out for longer periods
-  const tickInterval = rows.length <= 24 ? 0 : Math.ceil(rows.length / 20) - 1;
+  // For daily granularity with many data points, only show 1st and 15th of each month.
+  // For hourly granularity, thin out evenly.
+  const dailyTickIndices = granularity === "day" ? filterDailyTicks(rows) : [];
+  const tickInterval = granularity === "day"
+    ? undefined  // we use custom ticks array instead
+    : (rows.length <= 24 ? 0 : Math.ceil(rows.length / 20) - 1);
 
-  // Angle labels when the number of visible ticks would cause overlap (> 12)
-  const visibleTicks = tickInterval === 0 ? rows.length : Math.ceil(rows.length / (tickInterval + 1));
-  const shouldAngle  = visibleTicks > 12;
-  const xAxisHeight  = shouldAngle ? 48 : undefined;
+  // Custom ticks array for daily charts (recharts XAxis `ticks` prop)
+  const dailyTicks = granularity === "day"
+    ? dailyTickIndices.map(i => rows[i].date)
+    : undefined;
+
+  // Angle labels when many ticks would cause overlap
+  const visibleTicks = granularity === "day"
+    ? dailyTickIndices.length
+    : (tickInterval === 0 ? rows.length : Math.ceil(rows.length / ((tickInterval ?? 0) + 1)));
+  const shouldAngle  = visibleTicks > 14;
+  const xAxisHeight  = shouldAngle ? 56 : undefined;
 
   // Pre-compute Y-axis ceilings so both domain and ReferenceArea share the same max
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
@@ -612,8 +657,8 @@ export default function Analytics() {
             <KpiTile
               icon="bi-diamond"
               label="Total Swabs"
-              value={totalSwabs > 0 ? `${(totalSwabs / 1_000_000).toFixed(2)}M` : "—"}
-              sub={buKpiGood !== null ? `Target: ${(buKpiGood * 7200 / 1_000_000).toFixed(2)}M` : "Swabs produced · selected period"}
+              value={totalSwabs > 0 ? `${fmtMillions(totalSwabs)}` : "—"}
+              sub={buKpiGood !== null ? `Target: ${fmtMillions(buKpiGood * 7200)}` : "Swabs produced · selected period"}
               colorClass={swabsKpiColor.text}
               borderClass={swabsKpiColor.border}
             />
@@ -652,6 +697,7 @@ export default function Analytics() {
                       tickFormatter={shouldAngle ? undefined : fmtTick}
                       interval={tickInterval}
                       height={xAxisHeight}
+                      {...(dailyTicks ? { ticks: dailyTicks } : {})}
                     />
                     <YAxis
                       domain={[0, 100]}
@@ -710,6 +756,7 @@ export default function Analytics() {
                       tickFormatter={shouldAngle ? undefined : fmtTick}
                       interval={tickInterval}
                       height={xAxisHeight}
+                      {...(dailyTicks ? { ticks: dailyTicks } : {})}
                     />
                     <YAxis
                       domain={[0, scrapMax]}
@@ -778,7 +825,8 @@ export default function Analytics() {
                     axisLine={{ stroke: AXIS_COLOR }}
                     tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                     interval={tickInterval}
-                    height={shouldAngle ? 52 : 36}
+                    height={shouldAngle ? 56 : 36}
+                    {...(dailyTicks ? { ticks: dailyTicks } : {})}
                   />
                   <YAxis
                     domain={[0, buMax]}
