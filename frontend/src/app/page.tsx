@@ -965,11 +965,6 @@ export default function Dashboard() {
             <i className="bi bi-calendar3 mr-1"></i>
             {currentTime.toLocaleString("de-DE")}
           </span>
-          {shiftBadgeLabel && (
-            <span className="bg-blue-900/40 text-blue-300 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
-              <i className="bi bi-clock mr-1"></i>{shiftBadgeLabel}
-            </span>
-          )}
           {initialLoading ? (
             <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
               <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
