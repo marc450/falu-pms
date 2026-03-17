@@ -51,5 +51,7 @@
         public DateTime LastSyncStatus { get; set; }
         public DateTime LastSyncShift { get; set; }
         public DateTime LastRequestShift { get; set; }
+        /// <summary>Timestamp of the last status change (idle / error / offline / run).</summary>
+        public DateTime StatusSince { get; set; } = DateTime.MinValue;
     }
 }

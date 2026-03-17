@@ -195,6 +195,12 @@ using Microsoft.Extensions.Configuration;
                 AllMachines[data.Machine] = new MachineData { Machine = data.Machine };
 
             var m = AllMachines[data.Machine];
+
+            // Record the moment the status changes so the UI can show a duration timer
+            var previousStatus = m.MachineStatus?.Status;
+            if (!string.Equals(previousStatus, data.Status, StringComparison.OrdinalIgnoreCase))
+                m.StatusSince = DateTime.Now;
+
             m.MachineStatus = data;
             m.LastSyncStatus = DateTime.Now;
             CurrentShiftNumber = data.ActShift; // Sets the global shift number

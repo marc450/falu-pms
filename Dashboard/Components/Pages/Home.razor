@@ -71,8 +71,17 @@
                     <tr @onclick='() => NavManager.NavigateTo($"/production/{entry.Machine}")' style="cursor: pointer;" class="align-middle">
                         <td class="fw-bold text-info" style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 0;">@entry.Machine</td>
                         <td>
+                            @{
+                                var st = (entry.MachineStatus?.Status ?? "offline").ToLower();
+                                var since = entry.StatusSince;
+                                var showTimer = st != "run" && since > DateTime.MinValue;
+                            }
                             <span class="badge @GetStatusBadgeClass(entry.MachineStatus?.Status)">
                                 @(entry.MachineStatus?.Status ?? "offline")
+                                @if (showTimer)
+                                {
+                                    <text> &nbsp;@FormatStateDuration(since)</text>
+                                }
                             </span>
                         </td>
                         <td>
@@ -285,12 +294,22 @@
     {
         return status?.ToLower() switch
         {
-            "run" => "bg-success",      // green
-            "idle" => "bg-dark",        // black
-            "error" => "bg-danger",     // red
+            "run" => "bg-success",       // green
+            "idle" => "bg-dark",         // black
+            "error" => "bg-danger",      // red
             "offline" => "bg-secondary", // grey
-            _ => "bg-secondary"         // default grey for null or unknown
+            _ => "bg-secondary"
         };
+    }
+
+    private static string FormatStateDuration(DateTime since)
+    {
+        var elapsed = DateTime.Now - since;
+        if (elapsed.TotalSeconds < 60)
+            return $"{(int)elapsed.TotalSeconds}s";
+        if (elapsed.TotalMinutes < 60)
+            return $"{(int)elapsed.TotalMinutes}m {elapsed.Seconds:D2}s";
+        return $"{(int)elapsed.TotalHours}h {elapsed.Minutes:D2}m";
     }
 
     private bool HasReceivedData()
