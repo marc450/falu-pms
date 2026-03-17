@@ -22,9 +22,20 @@ npm-debug.log*
 # IDE
 .vscode/
 .idea/
+.vs/
 *.swp
 *.swo
 .DS_Store
+
+# Visual Studio / C# build artifacts
+[Dd]ebug/
+[Rr]elease/
+[Bb]in/
+[Oo]bj/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
 
 # TypeScript
 *.tsbuildinfo
