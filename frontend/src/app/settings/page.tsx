@@ -1174,10 +1174,10 @@ function ShiftsTab() {
       <div className={`bg-gray-800/50 border rounded-lg overflow-hidden max-w-lg ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-clock text-cyan-400"></i>Shift Slots
+            <i className="bi bi-clock text-cyan-400"></i>Shift Structure
           </h4>
           <p className="text-gray-500 text-xs mt-0.5">
-            Match the shift slots to the shift configuration on the machine HMI. You <em className="text-gray-400 not-italic font-semibold">cannot</em> override the machine&apos;s shift structure here.
+            Match the shift structure to the shift configuration on the machine HMI. You <em className="text-gray-400 not-italic font-semibold">cannot</em> override the machine&apos;s shift structure here.
           </p>
         </div>
         <div className="px-5 py-3 space-y-2">
