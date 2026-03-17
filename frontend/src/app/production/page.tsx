@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, PACKING_FORMATS } from "@/lib/supabase";
-import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat } from "@/lib/supabase";
+import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, PACKING_FORMATS } from "@/lib/supabase";
+import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat, Thresholds } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 
 function ProductionContent() {
@@ -13,6 +13,7 @@ function ProductionContent() {
   const [machine, setMachine] = useState<MachineData | null>(null);
   const [savedLogs, setSavedLogs] = useState<SavedShiftLog[]>([]);
   const [targets, setTargets] = useState<MachineTargets | null>(null);
+  const [thresholds, setThresholds] = useState<Thresholds | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
   const failCount = useRef(0);
@@ -49,6 +50,9 @@ function ProductionContent() {
     fetchMachineTargets(machineName)
       .then(setTargets)
       .catch(() => {});
+    fetchThresholds()
+      .then(setThresholds)
+      .catch(() => {});
 
     loadData();
     loadSavedLogs();
@@ -72,6 +76,18 @@ function ProductionContent() {
   // Map saved logs by shift number for O(1) lookup
   const savedByShift = Object.fromEntries(savedLogs.map(l => [l.shift_number, l]));
 
+  // Planned downtime budget for uptime correction
+  const plannedDowntimeMins = thresholds?.bu.plannedDowntimeMinutes ?? 0;
+
+  // Recalculate efficiency treating planned downtime as a budget.
+  // Idle time up to the budget is expected and does not penalise uptime.
+  // Only idle time beyond the budget (unplanned) counts against the machine.
+  const correctedEfficiency = (productionTime: number, idleTime: number): number => {
+    const unplannedIdle = Math.max(0, idleTime - plannedDowntimeMins);
+    const effectiveTime = productionTime + unplannedIdle;
+    return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : 0;
+  };
+
   // Build a unified ShiftDataMessage for a given shift number:
   // - active shift → live bridge data (machineStatus fields)
   // - completed shift → most recent saved_shift_logs row
@@ -92,7 +108,7 @@ function ProductionContent() {
         MissingSticks:          s.MissingSticks          ?? 0,
         FoultyPickups:          s.FoultyPickups          ?? 0,
         OtherErrors:            s.OtherErrors            ?? 0,
-        Efficiency:             s.Efficiency             ?? 0,
+        Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0),
         Reject:                 s.Reject                 ?? 0,
       };
     }
@@ -111,7 +127,7 @@ function ProductionContent() {
       MissingSticks:          log.missing_sticks,
       FoultyPickups:          log.faulty_pickups,
       OtherErrors:            log.other_errors,
-      Efficiency:             log.efficiency,
+      Efficiency:             correctedEfficiency(log.production_time, log.idle_time),
       Reject:                 log.reject_rate,
     };
   };
@@ -136,8 +152,10 @@ function ProductionContent() {
       Efficiency:             0,
       Reject:                 0,
     }));
-    const totalTime = sum.ProductionTime + sum.IdleTime;
-    sum.Efficiency = totalTime > 0 ? (sum.ProductionTime / totalTime) * 100 : 0;
+    // Apply per-slot downtime budget: each slot's planned idle does not penalise uptime.
+    const totalUnplannedIdle = slots.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
+    const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle;
+    sum.Efficiency = effectiveTotalTime > 0 ? (sum.ProductionTime / effectiveTotalTime) * 100 : 0;
     sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
     return sum;
   };
