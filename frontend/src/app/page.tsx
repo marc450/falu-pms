@@ -41,8 +41,8 @@ type DashboardMachine = MachineData & {
   statusSince?: number;
 };
 
-function formatStateDuration(sinceMs: number): string {
-  const elapsed = Math.floor((Date.now() - sinceMs) / 1000);
+function formatStateDuration(sinceMs: number, nowMs: number): string {
+  const elapsed = Math.max(0, Math.floor((nowMs - sinceMs) / 1000));
   if (elapsed < 60) return `${elapsed}s`;
   if (elapsed < 3600) {
     const m = Math.floor(elapsed / 60);
@@ -170,7 +170,7 @@ function sortMachineList(
 // ─────────────────────────────────────────────────────────────
 // Machine row
 // ─────────────────────────────────────────────────────────────
-function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: DashboardMachine; shiftLengthMinutes: number; shiftStartedAt: number; onClick: () => void }) {
+function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick, now }: { m: DashboardMachine; shiftLengthMinutes: number; shiftStartedAt: number; onClick: () => void; now: number }) {
   const status     = getStatusColor(m.machineStatus?.Status);
   const effColor   = applyMachineEfficiencyColor(m.machineStatus?.Efficiency ?? null, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
   const scpColor   = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
@@ -191,7 +191,7 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
           {formatStatus(m.machineStatus?.Status)}
           {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run") && (
-            <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince)}</span>
+            <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince, now)}</span>
           )}
         </span>
         {m.machineStatus?.Error && (
@@ -283,6 +283,7 @@ function CellSection({
   thresholds,
   shiftLengthMinutes,
   shiftStartedAt,
+  now,
   defaultOpen = false,
 }: {
   title: string;
@@ -293,6 +294,7 @@ function CellSection({
   thresholds: Thresholds;
   shiftLengthMinutes: number;
   shiftStartedAt: number;
+  now: number;
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -512,7 +514,7 @@ function CellSection({
           {open && (
             <tbody className="divide-y divide-gray-700/50">
               {sortedMachines.map((m) => (
-                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} shiftStartedAt={shiftStartedAt} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
+                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} shiftStartedAt={shiftStartedAt} now={now} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
               ))}
               {machines.length === 0 && (
                 <tr>
@@ -1068,6 +1070,7 @@ export default function Dashboard() {
               thresholds={thresholds}
               shiftLengthMinutes={effectiveShiftMins}
               shiftStartedAt={shiftStartedAt}
+              now={currentTime.getTime()}
             />
           ))}
           {unassigned.length > 0 && (
@@ -1080,6 +1083,7 @@ export default function Dashboard() {
               thresholds={thresholds}
               shiftLengthMinutes={effectiveShiftMins}
               shiftStartedAt={shiftStartedAt}
+              now={currentTime.getTime()}
             />
           )}
         </>
@@ -1109,6 +1113,7 @@ export default function Dashboard() {
                     m={m as DashboardMachine}
                     shiftLengthMinutes={effectiveShiftMins}
                     shiftStartedAt={shiftStartedAt}
+                    now={currentTime.getTime()}
                     onClick={() => router.push(`/production?machine=${m.machine}${(m as DashboardMachine).packingFormat ? `&packing=${(m as DashboardMachine).packingFormat}` : ""}`)}
                   />
                 ))}
