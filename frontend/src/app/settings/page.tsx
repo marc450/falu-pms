@@ -1484,7 +1484,6 @@ export default function SettingsPage() {
           <div className="p-10 flex flex-col items-center justify-center text-center text-gray-500">
             <i className="bi bi-people text-5xl mb-3 opacity-30"></i>
             <p className="text-sm">User management coming soon.</p>
-            <p className="text-xs mt-1">For now, create and manage users directly in Supabase.</p>
           </div>
         </div>
       )}
