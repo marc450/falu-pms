@@ -483,11 +483,20 @@ export default function Analytics() {
     : null;
 
   // KPI color for Total BU Output — compare actual total against what the park
-  // should have produced across all buckets that had data.
-  // Each bucket contributes target × shiftCount for that bucket.
-  const totalShiftsInPeriod = buRows.reduce((s, r) => s + Math.max(1, r.shiftCount), 0);
-  const buKpiGood     = buTargetPerShift !== null ? buTargetPerShift * totalShiftsInPeriod : null;
-  const buKpiMediocre = buMediocrePerShift !== null ? buMediocrePerShift * totalShiftsInPeriod : null;
+  // should have produced in the selected period.
+  // For daily granularity, sum each bucket's shiftCount (accurate per day).
+  // For hourly granularity, a single shift spans many hourly buckets, so summing
+  // per-bucket shiftCounts would massively over-count.  Instead, derive the
+  // expected number of shifts from the period's time span.
+  const kpiRange: DateRange = activePresetId !== "custom"
+    ? PRESETS.find(p => p.id === activePresetId)!.getRange()
+    : dateRange;
+  const periodHours = Math.max(1, (kpiRange.end.getTime() - kpiRange.start.getTime()) / 3_600_000);
+  const expectedShiftsInPeriod = granularity === "day"
+    ? buRows.reduce((s, r) => s + Math.max(1, r.shiftCount), 0)
+    : Math.max(1, periodHours / shiftHours);
+  const buKpiGood     = buTargetPerShift !== null ? buTargetPerShift * expectedShiftsInPeriod : null;
+  const buKpiMediocre = buMediocrePerShift !== null ? buMediocrePerShift * expectedShiftsInPeriod : null;
   const buKpiColor    = (() => {
     if (totalBUs <= 0 || buKpiGood === null || buKpiMediocre === null)
       return { text: "text-gray-500", border: "border-gray-700" };
