@@ -1,41 +1,25 @@
--- ============================================================================
--- FUNCTION: get_fleet_trend
--- Current version: migration 016 (07:00 shift boundary)
+-- Migration 016: Fix work-day bucketing to match 07:00 shift start
 -- ============================================================================
 --
--- Arguments:
---   range_start        timestamptz  — start of the query window
---   range_end          timestamptz  — end of the query window
---   bucket_granularity text         — 'hour' or 'day'
+-- Problem in migrations 012–015:
+--   All work-day bucketing used `- interval '6 hours'`, calibrated for a
+--   factory whose shifts start at 06:00.
+--   USC runs 12-hour shifts starting at 07:00 / 19:00.
+--   With the old offset, readings timestamped 06:00–07:00 (the last hour of
+--   the night shift) were rolled to the WRONG work-day bucket.
 --
--- Returns one row per time bucket with:
---   bucket        — ISO string  ('YYYY-MM-DD' for day, 'YYYY-MM-DDTHH24' for hour)
---   avg_uptime    — fleet average machine uptime % (0–100)
---   avg_scrap     — fleet average scrap/reject rate %
---   total_boxes   — total boxes produced (fleet, all machines)
---   total_swabs   — total swabs produced (fleet, all machines)
---   machine_count — number of distinct machines with data in this bucket
---   reading_count — raw reading rows in this bucket
---   shift_count   — number of distinct shifts active in this bucket
+-- Fix:
+--   Replace every `- interval '6 hours'` with `- interval '7 hours'` in
+--   get_fleet_trend.  The work-day boundary now falls at 07:00, so:
+--     00:00–06:59  → previous work-day  (tail of the night shift)
+--     07:00–23:59  → current work-day   (day shift + start of night shift)
 --
--- Design notes:
---   shift_readings stores CUMULATIVE swab/box counts per machine per shift.
+-- test_data.sql is updated in the same commit:
+--   shift 1 now starts at 07:00, shift 2 at 19:00.
 --
---   HOURLY path:  uses LAG() to compute per-reading deltas.  An anchor
---                 reading from just before the query window is fetched for
---                 each (machine, shift) so the first visible reading has a
---                 valid LAG predecessor and does not spike.
---
---   DAILY path:   uses MAX(cumulative) per (work-day, machine, shift).
---                 Work-day starts at 07:00 (USC shift boundary), so readings
---                 between 00:00–06:59 are attributed to the PREVIOUS calendar
---                 day (tail of the night shift that started at 19:00).
---                 The raw window is extended 7 h before range_start to
---                 capture these overnight readings for the first day shown.
---
---   TWO-TABLE UNION:
---                 shift_readings  — last 48 h, cumulative, needs delta/LAG
---                 analytics_readings — older, already incremental, just SUM
+-- downsample_to_analytics is NOT changed: it computes UTC 5-min buckets
+-- and does not perform work-day bucketing.  The bucketing happens in
+-- get_fleet_trend when it reads from analytics_readings.
 -- ============================================================================
 
 CREATE OR REPLACE FUNCTION get_fleet_trend(

@@ -134,7 +134,7 @@ BEGIN
         + (random() - 0.5) * 0.04;
 
       shift_start := d::timestamptz
-        + CASE WHEN s = 1 THEN interval '6 hours' ELSE interval '18 hours' END;
+        + CASE WHEN s = 1 THEN interval '7 hours' ELSE interval '19 hours' END;
 
       FOR m_idx IN 1..machine_count LOOP
         m_id     := machine_ids[m_idx];

@@ -23,36 +23,33 @@ factory's actual local time.
 **File:** `database/migrations/` (new migration required at go-live)
 **Function:** `get_fleet_trend` — currently deployed in Supabase
 
-**Current code (UTC-assumed):**
+**Current code (migration 016, calibrated for USC 07:00 shift start):**
 ```sql
-DATE_TRUNC('day', recorded_at - interval '6 hours')
+DATE_TRUNC('day', recorded_at - interval '7 hours')
 ```
 
 **What it means now:**
-The factory's Shift 2 runs 18:00–06:00. The offset `- 6 hours` was written
-assuming timestamps are in UTC and the factory clock equals UTC.
-Work-day boundary = 06:00 UTC.
+USC runs 12-hour shifts starting at 07:00 / 19:00.
+The offset `- 7 hours` puts the work-day boundary at 07:00 UTC, which is
+correct as long as the simulator/bridge timestamps are stored in UTC and
+the factory clock is also effectively UTC (Railway runs in UTC).
 
-**For a US Eastern factory:**
-Shift 2 ends at 06:00 EST = 11:00 UTC (winter) / 10:00 UTC (summer).
-To attribute readings before 06:00 EST to the previous work-day, the offset
-needs to be `- 11 hours` (winter) or `- 10 hours` (summer).
+**For a US Eastern factory (UTC-5 winter / UTC-4 summer):**
+Shift Night ends at 07:00 EST = 12:00 UTC (winter) / 11:00 UTC (summer).
+A simple hardcoded offset would need to be `- 12 hours` (winter) or
+`- 11 hours` (summer) — wrong for half the year.
 
-**Simplest fix (use winter offset, conservative):**
+**Recommended fix (DST-aware, using Postgres timezone support):**
 ```sql
-DATE_TRUNC('day', recorded_at - interval '11 hours')
+DATE_TRUNC('day', (recorded_at AT TIME ZONE 'America/New_York') - interval '7 hours')
 ```
+This localises the timestamp to Eastern time first, then applies the
+`- 7 hours` shift-boundary offset in local time, so DST transitions are
+handled automatically year-round.
 
-**Proper fix (DST-aware, using Postgres timezone support):**
-```sql
-DATE_TRUNC('day', (recorded_at AT TIME ZONE 'America/New_York') - interval '6 hours')
-```
-This is the recommended approach — it handles DST transitions automatically.
-The `- interval '6 hours'` here is applied to the already-localised time,
-keeping the 06:00 work-day boundary in factory local time year-round.
-
-The same fix applies inside `downsample_to_analytics` for the 5-minute bucket
-calculation if daily rollup accuracy is needed there too.
+`downsample_to_analytics` does NOT need this change — it stores UTC 5-minute
+buckets and work-day attribution happens in `get_fleet_trend` when reading
+from `analytics_readings`.
 
 ---
 
@@ -149,7 +146,7 @@ hourly regardless of the factory timezone.
 
 | Area | Change needed | Priority |
 |---|---|---|
-| `get_fleet_trend` — daily bucket | Replace `- interval '6 hours'` with `AT TIME ZONE 'America/New_York' - interval '6 hours'` | High — affects daily chart correctness |
+| `get_fleet_trend` — daily bucket | Replace `- interval '7 hours'` with `AT TIME ZONE 'America/New_York' - interval '7 hours'` | High — affects daily chart correctness |
 | Hourly label display | Apply factory UTC offset in `fmtBucket` | Medium — cosmetic but confusing without it |
 | `downsample_to_analytics` — bucket alignment | Apply `AT TIME ZONE` to hour truncation | Low — minor alignment only |
 | MQTT bridge shift detection | No code change — verify PLC clock is in ET | Operational check |
@@ -173,9 +170,9 @@ CREATE OR REPLACE FUNCTION get_fleet_trend(
 )
 -- (full function body here — copy from database/functions/get_fleet_trend.sql
 --  and replace every occurrence of:
---    DATE_TRUNC('day', <expr> - interval '6 hours')
+--    DATE_TRUNC('day', <expr> - interval '7 hours')
 --  with:
---    DATE_TRUNC('day', (<expr> AT TIME ZONE 'America/New_York') - interval '6 hours')
+--    DATE_TRUNC('day', (<expr> AT TIME ZONE 'America/New_York') - interval '7 hours')
 -- )
 RETURNS TABLE ( ... )
 ...;
