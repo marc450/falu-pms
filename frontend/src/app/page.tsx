@@ -26,7 +26,7 @@ import { getStatusColor, formatStatus } from "@/lib/utils";
 type SortColumn  = "Machine" | "Status" | "Speed" | "Swabs" | "Boxes" | "Efficiency" | "Reject" | "LastSync";
 type CellSortCol = "Machine" | "Status" | "Uptime" | "Scrap" | "BU" | "Speed" | "Swabs" | "Output" | "Sync";
 
-type DashboardMachine = Omit<MachineData, "statusSince"> & {
+type DashboardMachine = MachineData & {
   cellId?: string | null;
   cellPosition?: number;
   packingFormat?: PackingFormat | null;
@@ -37,7 +37,7 @@ type DashboardMachine = Omit<MachineData, "statusSince"> & {
   buTarget?: number | null;
   buMediocre?: number | null;
   speedTarget?: number | null;
-  /** Unix ms timestamp of the last status transition, parsed from bridge ISO string. */
+  /** Unix ms timestamp of the last status transition (idle / error / offline / run). */
   statusSince?: number;
 };
 
@@ -789,6 +789,7 @@ export default function Dashboard() {
   });
   const router = useRouter();
   const bridgeFailCount = useRef(0);
+  const machinesRef = useRef<Record<string, DashboardMachine>>({});
 
   const loadData = useCallback(async () => {
     let registered: RegisteredMachine[] = [];
@@ -832,10 +833,11 @@ export default function Dashboard() {
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
       for (const [code, live] of Object.entries(state.machines)) {
-        // statusSince comes from the bridge as an ISO string; convert to unix ms
-        const statusSince = live.statusSince
-          ? new Date(live.statusSince).getTime()
-          : undefined;
+        // Read statusSince from bridge (ISO string → unix ms).
+        // The bridge tracks status transitions server-side and persists
+        // to Supabase, so the timer survives page reloads and bridge restarts.
+        const isoSince = (live as any).statusSince;
+        const statusSince = isoSince ? new Date(isoSince).getTime() : Date.now();
 
         merged[code] = {
           ...live,
@@ -852,6 +854,7 @@ export default function Dashboard() {
           statusSince,
         };
       }
+      machinesRef.current = merged;
       setMachines(merged);
     } catch {
       bridgeFailCount.current += 1;
@@ -859,6 +862,7 @@ export default function Dashboard() {
       // This prevents brief network hiccups from flashing the dashboard.
       if (bridgeFailCount.current >= 3) {
         setMqttConnected(false);
+        machinesRef.current = merged;
         setMachines(merged);
       }
       // Otherwise keep the previous machines state (do nothing)

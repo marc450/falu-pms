@@ -115,7 +115,7 @@ function getSubscribeTopic() {
 async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
-    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift")
+    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since")
     .eq("hidden", false)
     .order("machine_code");
 
@@ -142,7 +142,6 @@ async function loadRegisteredMachines() {
           Reject: row.current_reject || 0,
         },
         lastSync: row.last_sync_status || row.last_sync_shift || null,
-        // Persist across frontend reloads: read from DB or default to now
         statusSince: row.status_since || new Date().toISOString(),
       };
     }
@@ -220,13 +219,15 @@ async function handleShiftMessage(payload) {
     logger.info(`Global shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
   }
 
-  // Track when the status changed so the frontend can show a duration timer.
-  // Only update statusSince when the status actually transitions.
+  // ── Status transition detection for statusSince timer ──
   const prevStatus = (m.machineStatus?.Status || "").toLowerCase();
   const nextStatus = (data.Status || "offline").toLowerCase();
   if (prevStatus !== nextStatus) {
     m.statusSince = new Date().toISOString();
-    logger.debug(`${machineCode} status ${prevStatus}→${nextStatus}, statusSince=${m.statusSince}`);
+    logger.info(`Status change for ${machineCode}: ${prevStatus || "(none)"}→${nextStatus} at ${m.statusSince}`);
+  }
+  if (!m.statusSince) {
+    m.statusSince = new Date().toISOString();
   }
 
   // Store as machineStatus, adding backward-compatible aliases so the frontend
@@ -263,7 +264,7 @@ async function handleShiftMessage(payload) {
     last_sync_status: now,
     hidden: false,
   };
-  // Only write status_since when it actually changed (avoids overwriting on every tick)
+  // Persist statusSince on status change
   if (prevStatus !== nextStatus) {
     updatePayload.status_since = m.statusSince;
   }
