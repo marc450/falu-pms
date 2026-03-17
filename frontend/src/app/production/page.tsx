@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, PACKING_FORMATS } from "@/lib/supabase";
-import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat, Thresholds } from "@/lib/supabase";
+import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig, fetchShiftAssignments, PACKING_FORMATS } from "@/lib/supabase";
+import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat, Thresholds, ShiftConfig } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 
 function ProductionContent() {
@@ -14,6 +14,8 @@ function ProductionContent() {
   const [savedLogs, setSavedLogs] = useState<SavedShiftLog[]>([]);
   const [targets, setTargets] = useState<MachineTargets | null>(null);
   const [thresholds, setThresholds] = useState<Thresholds | null>(null);
+  const [shiftConfig, setShiftConfig] = useState<ShiftConfig | null>(null);
+  const [todayTeams, setTodayTeams] = useState<(string | null)[]>([]);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
   const failCount = useRef(0);
@@ -53,6 +55,13 @@ function ProductionContent() {
     fetchThresholds()
       .then(setThresholds)
       .catch(() => {});
+    fetchShiftConfig()
+      .then(setShiftConfig)
+      .catch(() => {});
+    const today = new Date().toISOString().slice(0, 10);
+    fetchShiftAssignments(today, today)
+      .then(rows => { if (rows[0]) setTodayTeams(rows[0].slot_teams); })
+      .catch(() => {});
 
     loadData();
     loadSavedLogs();
@@ -72,6 +81,16 @@ function ProductionContent() {
 
   const shiftCellClass = (shiftNum: number) =>
     activeShift === shiftNum ? "font-bold bg-cyan-900/20" : "";
+
+  // Derive shift column label: team name > slot name > "Shift N"
+  const shiftLabel = (shiftNum: number): string => {
+    const idx = shiftNum - 1; // PLC shift is 1-based, arrays are 0-based
+    const team = todayTeams[idx] ?? null;
+    if (team) return team;
+    const slotName = shiftConfig?.slots?.[idx]?.name ?? null;
+    if (slotName) return slotName;
+    return `Shift ${shiftNum}`;
+  };
 
   // Map saved logs by shift number for O(1) lookup
   const savedByShift = Object.fromEntries(savedLogs.map(l => [l.shift_number, l]));
@@ -305,13 +324,13 @@ function ProductionContent() {
                 <tr className="text-center text-gray-400 border-b border-gray-700">
                   <th className="px-4 py-3 text-left w-1/5 font-medium">Metric</th>
                   <th className={`px-4 py-3 font-medium ${activeShift === 1 ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                    Shift 1
+                    {shiftLabel(1)}
                   </th>
                   <th className={`px-4 py-3 font-medium ${activeShift === 2 ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                    Shift 2
+                    {shiftLabel(2)}
                   </th>
                   <th className={`px-4 py-3 font-medium ${activeShift === 3 ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                    Shift 3
+                    {shiftLabel(3)}
                   </th>
                   <th className="px-4 py-3 font-medium text-cyan-400">Total</th>
                 </tr>
