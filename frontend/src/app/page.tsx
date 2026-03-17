@@ -37,7 +37,22 @@ type DashboardMachine = MachineData & {
   buTarget?: number | null;
   buMediocre?: number | null;
   speedTarget?: number | null;
+  /** Unix ms timestamp of the last status transition (idle / error / offline / run). */
+  statusSince?: number;
 };
+
+function formatStateDuration(sinceMs: number): string {
+  const elapsed = Math.floor((Date.now() - sinceMs) / 1000);
+  if (elapsed < 60) return `${elapsed}s`;
+  if (elapsed < 3600) {
+    const m = Math.floor(elapsed / 60);
+    const s = elapsed % 60;
+    return `${m}m ${String(s).padStart(2, "0")}s`;
+  }
+  const h = Math.floor(elapsed / 3600);
+  const m = Math.floor((elapsed % 3600) / 60);
+  return `${h}h ${String(m).padStart(2, "0")}m`;
+}
 
 // BU run rate: projected BUs at end of shift using user's formula
 // projected = currentBUs + (currentSpeed / 7200) * remaining
@@ -175,6 +190,9 @@ function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick }: { m: Das
         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}>
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
           {formatStatus(m.machineStatus?.Status)}
+          {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run") && (
+            <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince)}</span>
+          )}
         </span>
         {m.machineStatus?.Error && (
           <div
@@ -812,6 +830,15 @@ export default function Dashboard() {
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
       for (const [code, live] of Object.entries(state.machines)) {
+        // Determine statusSince: carry forward if status unchanged, reset on change
+        const prevStatus = machines[code]?.machineStatus?.Status?.toLowerCase();
+        const nextStatus = live.machineStatus?.Status?.toLowerCase();
+        const prevSince  = machines[code]?.statusSince;
+        const statusSince =
+          nextStatus && nextStatus !== prevStatus
+            ? Date.now()
+            : (prevSince ?? Date.now());
+
         merged[code] = {
           ...live,
           cellId:            merged[code]?.cellId ?? null,
@@ -824,6 +851,7 @@ export default function Dashboard() {
           buTarget:          merged[code]?.buTarget ?? null,
           buMediocre:        merged[code]?.buMediocre ?? null,
           speedTarget:       merged[code]?.speedTarget ?? null,
+          statusSince,
         };
       }
       setMachines(merged);
