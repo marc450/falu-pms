@@ -276,10 +276,10 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
         ) : null}
       </td>
       <td className="px-4 py-3 text-white">
-        {!isOffline && idleMins > 0 ? fmtDuration(idleMins) : ""}
+        {!isOffline ? (idleMins > 0 ? fmtDuration(idleMins) : <span className="text-gray-600">-</span>) : ""}
       </td>
       <td className="px-4 py-3 text-white">
-        {!isOffline && errorMins > 0 ? fmtDuration(errorMins) : ""}
+        {!isOffline ? (errorMins > 0 ? fmtDuration(errorMins) : <span className="text-gray-600">-</span>) : ""}
       </td>
       <td className="px-4 py-3 text-gray-400">
         {m.lastSyncStatus
@@ -556,32 +556,23 @@ function CellSection({
                   </div>
                 )}
               </td>
-              {/* Total Idle Time col */}
+              {/* Idle Time col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[7].minW}px` }}>
-                {cellTotalIdleTime > 0 && (
-                  <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[7].label}</span>}
-                    <span className="text-sm font-semibold text-white">
-                      {fmtDuration(cellTotalIdleTime)}
-                    </span>
-                  </div>
-                )}
+                <div className="flex flex-col gap-0.5">
+                  {!open && <span className="text-[10px] text-gray-500">{colDefs[7].label}</span>}
+                  <span className={`text-sm font-semibold ${cellTotalIdleTime > 0 ? "text-white" : "text-gray-600"}`}>
+                    {cellTotalIdleTime > 0 ? fmtDuration(cellTotalIdleTime) : "-"}
+                  </span>
+                </div>
               </td>
-              {/* Total Error Time col */}
+              {/* Error Time col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[8].minW}px` }}>
-                {cellTotalErrorTime > 0 ? (
-                  <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
-                    <span className="text-sm font-semibold text-white">
-                      {fmtDuration(cellTotalErrorTime)}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
-                    <span className="text-sm font-semibold text-gray-600">---</span>
-                  </div>
-                )}
+                <div className="flex flex-col gap-0.5">
+                  {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
+                  <span className={`text-sm font-semibold ${cellTotalErrorTime > 0 ? "text-white" : "text-gray-600"}`}>
+                    {cellTotalErrorTime > 0 ? fmtDuration(cellTotalErrorTime) : "-"}
+                  </span>
+                </div>
               </td>
               {/* Last Sync col → collapse chevron */}
               <td className="px-4 py-3 text-right" style={{ minWidth: `${colDefs[9].minW}px` }}>
