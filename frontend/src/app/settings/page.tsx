@@ -884,7 +884,6 @@ function teamColor(team: string, teams: string[]): string {
   return TEAM_PALETTE[idx % TEAM_PALETTE.length];
 }
 
-const SLOT_ICONS = ["bi-sunrise", "bi-sun", "bi-moon-stars", "bi-moon"];
 
 function fmtHour(h: number): string {
   return `${String(h).padStart(2, "0")}:00`;
@@ -980,19 +979,14 @@ function ShiftsTab() {
   // ── Draft slot management (local only until Save) ─────────
   const markDirty = () => { setSlotsDirty(true); setSlotError(null); setSlotSuccess(false); };
 
-  // Realistic pre-fills for each successive slot (indexed by current slot count before adding)
-  const SLOT_PRESETS: TimeSlot[] = [
-    { name: "Day",       startHour: 6  },
-    { name: "Night",     startHour: 18 },
-    { name: "Afternoon", startHour: 14 },
-    { name: "Morning",   startHour: 2  },
-  ];
+  // Default start hours for each successive slot position
+  const SLOT_START_HOURS = [6, 18, 14, 2];
 
   const addSlot = () => {
     if (draftSlots.length >= 4) return;
-    const preset = SLOT_PRESETS[draftSlots.length] ?? { name: `Shift ${draftSlots.length + 1}`, startHour: 0 };
-    // Keep existing slots intact; append the new preset and re-sort by start hour
-    const newSlots = [...draftSlots, { name: preset.name, startHour: preset.startHour }]
+    const startHour = SLOT_START_HOURS[draftSlots.length] ?? 0;
+    // Names are auto-assigned on save; use a placeholder so the model stays valid
+    const newSlots = [...draftSlots, { name: `Slot ${draftSlots.length + 1}`, startHour }]
       .sort((a, b) => a.startHour - b.startHour);
     setDraftSlots(newSlots);
     markDirty();
@@ -1042,12 +1036,6 @@ function ShiftsTab() {
       return;
     }
 
-    // Check that all slots have names
-    if (draftSlots.some(s => !s.name.trim())) {
-      setSlotError("Every slot needs a name.");
-      return;
-    }
-
     // Validate 24h coverage: each slot = 24 / slotCount hours, start hours must be unique
     const hours = draftSlots.map(s => s.startHour);
     const uniqueHours = new Set(hours);
@@ -1070,8 +1058,10 @@ function ShiftsTab() {
       return;
     }
 
-    // Sort slots by start hour for consistency
-    const sorted = [...draftSlots].sort((a, b) => a.startHour - b.startHour);
+    // Sort slots by start hour and auto-assign sequential names
+    const sorted = [...draftSlots]
+      .sort((a, b) => a.startHour - b.startHour)
+      .map((s, i) => ({ ...s, name: `Slot ${i + 1}` }));
 
     setSaving(true);
     try {
@@ -1212,23 +1202,16 @@ function ShiftsTab() {
           )}
           {draftSlots.map((slot, idx) => {
             const end = slotEndHour(draftSlots, idx);
-            const icon = SLOT_ICONS[idx % SLOT_ICONS.length];
             return (
               <div key={idx} className="flex items-center justify-between py-1.5 border-b border-gray-700/30 last:border-b-0">
                 <div className="flex items-center gap-2">
                   <span className="text-[10px] text-gray-600 font-mono w-5 text-right">#{idx + 1}</span>
-                  <i className={`bi ${icon} text-sm text-gray-400`}></i>
                   {editingSlot === idx ? (
                     <div className="flex items-center gap-2">
-                      <input
-                        type="text" defaultValue={slot.name} maxLength={15} autoFocus
-                        onBlur={e => updateSlot(idx, { name: e.target.value.trim() || slot.name })}
-                        onKeyDown={e => e.key === "Enter" && updateSlot(idx, { name: (e.target as HTMLInputElement).value.trim() || slot.name })}
-                        className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-28 focus:outline-none"
-                      />
+                      <span className="text-sm text-gray-400">Slot {idx + 1}</span>
                       <span className="text-gray-500 text-xs">starts at</span>
                       <input
-                        type="number" min={0} max={23} defaultValue={slot.startHour}
+                        type="number" min={0} max={23} defaultValue={slot.startHour} autoFocus
                         onBlur={e => updateSlot(idx, { startHour: Math.max(0, Math.min(23, Number(e.target.value))) })}
                         onKeyDown={e => e.key === "Enter" && updateSlot(idx, { startHour: Math.max(0, Math.min(23, Number((e.target as HTMLInputElement).value))) })}
                         className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-14 text-right focus:outline-none"
@@ -1239,7 +1222,7 @@ function ShiftsTab() {
                     </div>
                   ) : (
                     <button onClick={() => setEditingSlot(idx)} className="text-sm text-white hover:text-cyan-300 transition-colors">
-                      {slot.name} <span className="text-gray-500 ml-1">{fmtHour(slot.startHour)} &ndash; {fmtHour(end)}</span>
+                      Slot {idx + 1} <span className="text-gray-500 ml-1">{fmtHour(slot.startHour)} &ndash; {fmtHour(end)}</span>
                     </button>
                   )}
                 </div>
@@ -1408,12 +1391,12 @@ function ShiftsTab() {
                           key={slotIdx}
                           value={team ?? ""}
                           onChange={e => assign(dateStr, slotIdx, e.target.value || null)}
-                          title={`${slot.name} (${fmtHour(slot.startHour)})`}
+                          title={`Slot ${slotIdx + 1} (${fmtHour(slot.startHour)})`}
                           className={`w-full text-center text-[11px] font-semibold rounded py-0.5 px-0.5 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
                             team ? `${teamColor(team, config.teams)} text-white` : "bg-gray-700/50 text-gray-600"
                           }`}
                         >
-                          <option value="" className="bg-gray-800 text-gray-400">{slot.name.charAt(0)}</option>
+                          <option value="" className="bg-gray-800 text-gray-400">—</option>
                           {config.teams.map(t => (
                             <option key={t} value={t} className="bg-gray-800 text-white">{t}</option>
                           ))}
@@ -1435,15 +1418,11 @@ function ShiftsTab() {
         {/* Slot legend + quick actions */}
         <div className="px-5 py-3 border-t border-gray-700/50 flex items-center justify-between flex-wrap gap-2">
           <div className="flex items-center gap-3">
-            {config.slots.map((slot, idx) => {
-              const icon = SLOT_ICONS[idx % SLOT_ICONS.length];
-              return (
-                <span key={idx} className="text-xs text-gray-500 flex items-center gap-1">
-                  <i className={`bi ${icon}`}></i>
-                  Row {idx + 1} = {slot.name}
-                </span>
-              );
-            })}
+            {config.slots.map((slot, idx) => (
+              <span key={idx} className="text-xs text-gray-500">
+                Row {idx + 1} = Slot {idx + 1} ({fmtHour(slot.startHour)})
+              </span>
+            ))}
           </div>
           <button onClick={clearMonth} className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
             Clear month
