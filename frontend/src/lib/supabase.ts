@@ -74,8 +74,6 @@ export interface MachineData {
   lastSyncStatus?: string;
   lastSyncShift?: string;
   lastRequestShift?: string;
-  /** ISO timestamp of the last status transition, served by the bridge. */
-  statusSince?: string;
 }
 
 export interface BridgeState {

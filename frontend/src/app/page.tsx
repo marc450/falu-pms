@@ -825,7 +825,7 @@ export default function Dashboard() {
         // Read statusSince from bridge (ISO string → unix ms).
         // The bridge tracks status transitions server-side and persists
         // to Supabase, so the timer survives page reloads and bridge restarts.
-        const isoSince = (live as any).statusSince;
+        const isoSince = (live as any).statusSince as string | undefined;
         const statusSince = isoSince ? new Date(isoSince).getTime() : Date.now();
 
         merged[code] = {
