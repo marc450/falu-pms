@@ -524,24 +524,26 @@ export interface TimeSlot {
 
 export interface ShiftConfig {
   teams: string[];                        // e.g. ["A", "B", "C", "D"]
-  slots: TimeSlot[];                      // derived from shiftDurationHours, stored for calendar + dashboard
+  slots: TimeSlot[];                      // derived from shiftDurationHours + firstShiftStartHour
   shiftDurationHours: 6 | 8 | 12;        // user-selected shift length
+  firstShiftStartHour: number;            // 0–23, start hour of the first slot
   plannedDowntimeMinutes: number;         // per-shift planned downtime
 }
 
-/** Generate evenly-spaced slots from midnight for a given shift duration. */
-export function slotsFromDuration(hours: 6 | 8 | 12): TimeSlot[] {
+/** Generate evenly-spaced slots starting at firstStartHour for a given shift duration. */
+export function slotsFromDuration(hours: 6 | 8 | 12, firstStartHour: number = 0): TimeSlot[] {
   const count = 24 / hours;
   return Array.from({ length: count }, (_, i) => ({
     name:      `Slot ${i + 1}`,
-    startHour: i * hours,
+    startHour: (firstStartHour + i * hours) % 24,
   }));
 }
 
 export const DEFAULT_SHIFT_CONFIG: ShiftConfig = {
   teams: ["A", "B", "C", "D"],
   shiftDurationHours: 12,
-  slots: slotsFromDuration(12),
+  firstShiftStartHour: 6,
+  slots: slotsFromDuration(12, 6),
   plannedDowntimeMinutes: 0,
 };
 
@@ -577,13 +579,26 @@ export async function fetchShiftConfig(): Promise<ShiftConfig> {
           return legacyCount === 4 ? 6 : legacyCount === 3 ? 8 : 12;
         })();
 
-  // Always regenerate slots from the canonical duration so they stay in sync
-  const slots = slotsFromDuration(shiftDurationHours);
+  // Read first shift start hour; back-compat: legacy configs stored startHour in slots[0]
+  const rawFirstStart = val.firstShiftStartHour as number | undefined;
+  const firstShiftStartHour: number =
+    rawFirstStart !== undefined && rawFirstStart >= 0 && rawFirstStart <= 23
+      ? rawFirstStart
+      : (() => {
+          const legacySlots = val.slots as TimeSlot[] | undefined;
+          return Array.isArray(legacySlots) && legacySlots.length > 0
+            ? (legacySlots[0].startHour ?? 6)
+            : 6;
+        })();
+
+  // Always regenerate slots from canonical duration + start hour so they stay in sync
+  const slots = slotsFromDuration(shiftDurationHours, firstShiftStartHour);
 
   return {
     teams:                (val.teams as string[]) ?? DEFAULT_SHIFT_CONFIG.teams,
     slots,
     shiftDurationHours,
+    firstShiftStartHour,
     plannedDowntimeMinutes: (val.plannedDowntimeMinutes as number) ?? 0,
   };
 }

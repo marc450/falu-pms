@@ -901,6 +901,8 @@ function ShiftsTab() {
   const [config, setConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
   // Draft shift structure: edited locally, only persisted on explicit Save
   const [draftDurationHours, setDraftDurationHours] = useState<6 | 8 | 12>(DEFAULT_SHIFT_CONFIG.shiftDurationHours);
+  const [draftFirstStart, setDraftFirstStart] = useState<number>(DEFAULT_SHIFT_CONFIG.firstShiftStartHour);
+  const [draftFirstStartDisplay, setDraftFirstStartDisplay] = useState<string>(String(DEFAULT_SHIFT_CONFIG.firstShiftStartHour));
   const [draftDowntime, setDraftDowntime] = useState<number>(0);
   const [downtimeDisplay, setDowntimeDisplay] = useState("0");
   const [slotsDirty, setSlotsDirty] = useState(false);
@@ -933,9 +935,11 @@ function ShiftsTab() {
   const fromStr = toISODate(firstOfMonth);
   const toStr = toISODate(lastOfMonth);
 
-  const draftShiftMins    = draftDurationHours * 60;
-  const draftSlotsPerDay  = 24 / draftDurationHours;
+  const draftShiftMins     = draftDurationHours * 60;
+  const draftSlotsPerDay   = 24 / draftDurationHours;
   const draftEffectiveMins = Math.max(0, draftShiftMins - draftDowntime);
+  // Live preview of generated slots (not yet saved)
+  const previewSlots       = slotsFromDuration(draftDurationHours, draftFirstStart);
 
   // Load config + assignments (only show full-page spinner on first load)
   const initialLoad = useRef(true);
@@ -945,6 +949,8 @@ function ShiftsTab() {
       .then(([cfg, rows]) => {
         setConfig(cfg);
         setDraftDurationHours(cfg.shiftDurationHours);
+        setDraftFirstStart(cfg.firstShiftStartHour);
+        setDraftFirstStartDisplay(String(cfg.firstShiftStartHour));
         setDraftDowntime(cfg.plannedDowntimeMinutes);
         setDowntimeDisplay(String(cfg.plannedDowntimeMinutes));
         setSlotsDirty(false);
@@ -987,6 +993,26 @@ function ShiftsTab() {
     markDirty();
   };
 
+  const updateDraftFirstStart = (raw: string) => {
+    setDraftFirstStartDisplay(raw);
+    const n = Number(raw);
+    if (raw !== "" && !isNaN(n)) {
+      setDraftFirstStart(Math.max(0, Math.min(23, Math.round(n))));
+    }
+    markDirty();
+  };
+
+  const commitDraftFirstStart = () => {
+    if (draftFirstStartDisplay === "" || isNaN(Number(draftFirstStartDisplay))) {
+      setDraftFirstStart(0);
+      setDraftFirstStartDisplay("0");
+    } else {
+      const clamped = Math.max(0, Math.min(23, Math.round(Number(draftFirstStartDisplay))));
+      setDraftFirstStart(clamped);
+      setDraftFirstStartDisplay(String(clamped));
+    }
+  };
+
   const updateDraftDowntime = (raw: string) => {
     setDowntimeDisplay(raw);
     const n = Number(raw);
@@ -1013,12 +1039,13 @@ function ShiftsTab() {
       return;
     }
 
-    const slots = slotsFromDuration(draftDurationHours);
+    const slots = slotsFromDuration(draftDurationHours, draftFirstStart);
     setSaving(true);
     try {
       const updated: ShiftConfig = {
         ...config,
         shiftDurationHours: draftDurationHours,
+        firstShiftStartHour: draftFirstStart,
         slots,
         plannedDowntimeMinutes: draftDowntime,
       };
@@ -1036,6 +1063,8 @@ function ShiftsTab() {
 
   const discardDraftChanges = () => {
     setDraftDurationHours(config.shiftDurationHours);
+    setDraftFirstStart(config.firstShiftStartHour);
+    setDraftFirstStartDisplay(String(config.firstShiftStartHour));
     setDraftDowntime(config.plannedDowntimeMinutes);
     setDowntimeDisplay(String(config.plannedDowntimeMinutes));
     setSlotsDirty(false);
@@ -1172,10 +1201,36 @@ function ShiftsTab() {
             </div>
           </div>
 
-          {/* Derived: slots per day */}
+          {/* First shift start hour */}
           <div className="flex items-center justify-between py-2 border-t border-gray-700/30">
-            <span className="text-sm text-gray-400">Shifts per 24 hours</span>
-            <span className="text-sm text-cyan-400 font-medium">{draftSlotsPerDay}</span>
+            <span className="text-sm text-white">First shift starts at</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number" min={0} max={23}
+                value={draftFirstStartDisplay}
+                onChange={e => updateDraftFirstStart(e.target.value)}
+                onBlur={commitDraftFirstStart}
+                onWheel={e => e.currentTarget.blur()}
+                className="w-14 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
+              />
+              <span className="text-gray-400 text-sm">:00</span>
+            </div>
+          </div>
+
+          {/* Derived slot schedule preview */}
+          <div className="pt-1 pb-2 border-t border-gray-700/30 space-y-1">
+            <span className="text-[11px] text-gray-600 uppercase tracking-wide">Resulting schedule ({draftSlotsPerDay} shifts/day)</span>
+            {previewSlots.map((s, i) => {
+              const endHour = (s.startHour + draftDurationHours) % 24;
+              return (
+                <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
+                  <span className="text-gray-600 w-10">#{i + 1}</span>
+                  <span className="font-mono">{fmtHour(s.startHour)}</span>
+                  <span className="text-gray-600">&ndash;</span>
+                  <span className="font-mono">{fmtHour(endHour)}</span>
+                </div>
+              );
+            })}
           </div>
         </div>
 
