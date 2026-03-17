@@ -289,8 +289,9 @@ function CellSection({
   const sortedMachines = sortCellMachines(machines, sortCol, sortAsc, shiftLengthMinutes, shiftStartedAt);
 
   // Compute cell-level stats
-  let running = 0, effSum = 0, scrapSum = 0, scrapCount = 0;
+  let running = 0, effSum = 0;
   let swabsTotal = 0, outputTotal = 0;
+  let totalDiscarded = 0, totalProduced = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
   let cellProjected = 0, cellTarget = 0, cellMediocreTarget = 0;
   let effGoodSum = 0, effGoodCount = 0, effMedSum = 0, effMedCount = 0;
@@ -302,9 +303,10 @@ function CellSection({
     if (isRunning) running++;
     // Uptime: all machines count — non-running contribute 0
     effSum += m.machineStatus?.Efficiency ?? 0;
-    // Scrap: all non-offline machines with production history
-    const hasProduction = (m.machineStatus?.Swabs ?? 0) > 0;
-    if (!isOffline && hasProduction && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
+    // Scrap: sum raw discarded/produced swabs across all non-offline machines
+    const produced = m.machineStatus?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
+    const discarded = m.machineStatus?.DiscardedSwabs ?? 0;
+    if (!isOffline && produced > 0) { totalProduced += produced; totalDiscarded += discarded; }
     if (m.machineStatus?.Swabs)      swabsTotal  += m.machineStatus.Swabs;
     if (m.machineStatus?.Boxes)      outputTotal += m.machineStatus.Boxes;
     // Speed: running machines only
@@ -321,7 +323,8 @@ function CellSection({
     if (m.scrapMediocre)      { scrapMedSum  += m.scrapMediocre;      scrapMedCount++;  }
   }
   const avgEff    = machines.length > 0 ? effSum / machines.length : null;
-  const avgScrap  = machines.length > 0 ? (scrapCount > 0 ? scrapSum / scrapCount : 0) : null;
+  // Weighted scrap: sum(discarded) / sum(produced) — not an average of per-machine rates
+  const avgScrap  = totalProduced > 0 ? (totalDiscarded / totalProduced) * 100 : null;
   const avgSpeed  = speedCount > 0 ? speedSum / speedCount : null;
   const avgSpeedTarget = speedTargetCount > 0 ? speedTargetSum / speedTargetCount : null;
   const cellRate  = cellTarget > 0 ? cellProjected / cellTarget : null;
@@ -540,7 +543,8 @@ function ParkSummaryTiles({
   const total = all.length;
   const effectiveShiftMins = Math.max(1, thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0));
 
-  let running = 0, effSum = 0, effCount = 0, scrapSum = 0, scrapCount = 0;
+  let running = 0, effSum = 0, effCount = 0;
+  let totalDiscarded = 0, totalProduced = 0;
   let scrapGoodSum = 0, scrapGoodCount = 0, scrapMedSum = 0, scrapMedCount = 0;
   let floorProjected = 0, floorTarget = 0, floorMediocreTarget = 0;
   for (const m of all) {
@@ -548,10 +552,11 @@ function ParkSummaryTiles({
     const isRunning = s === "run" || s === "running";
     if (isRunning) running++;
     if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
-    // Scrap: all non-offline machines with production history
+    // Scrap: sum raw discarded/produced swabs across all non-offline machines
     const isOffline = s === "offline" || !s;
-    const hasProduction = (m.machineStatus?.Swabs ?? 0) > 0;
-    if (!isOffline && hasProduction && m.machineStatus?.Reject != null) { scrapSum += m.machineStatus.Reject; scrapCount++; }
+    const produced  = m.machineStatus?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
+    const discarded = m.machineStatus?.DiscardedSwabs ?? 0;
+    if (!isOffline && produced > 0) { totalProduced += produced; totalDiscarded += discarded; }
     // Accumulate per-machine scrap targets for color thresholds
     if (m.scrapGood)     { scrapGoodSum += m.scrapGood;     scrapGoodCount++; }
     if (m.scrapMediocre) { scrapMedSum  += m.scrapMediocre; scrapMedCount++;  }
@@ -562,8 +567,9 @@ function ParkSummaryTiles({
     if (m.buMediocre && m.buMediocre > 0) { floorMediocreTarget += m.buMediocre; }
   }
 
-  const avgEff        = effCount        > 0 ? effSum        / effCount        : null;
-  const avgScrap      = scrapCount      > 0 ? scrapSum      / scrapCount      : null;
+  const avgEff        = effCount   > 0 ? effSum / effCount : null;
+  // Weighted scrap: sum(discarded) / sum(produced) — not an average of per-machine rates
+  const avgScrap      = totalProduced > 0 ? (totalDiscarded / totalProduced) * 100 : null;
   const avgScrapGood  = scrapGoodCount  > 0 ? scrapGoodSum  / scrapGoodCount  : null;
   const avgScrapMed   = scrapMedCount   > 0 ? scrapMedSum   / scrapMedCount   : null;
   const floorRate     = floorTarget     > 0 ? floorProjected / floorTarget    : null;
