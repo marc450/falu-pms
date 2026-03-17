@@ -1252,7 +1252,7 @@ function ShiftsTab() {
                 </button>
                 {tooltipVisible && (
                   <div className="absolute left-5 top-1/2 -translate-y-1/2 z-50 w-64 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-300 shadow-xl pointer-events-none">
-                    Scheduled non-production time per shift. Include handovers, cleaning, planned maintenance, and breaks. Subtracted from shift duration to give effective production time.
+                    Scheduled non-production time per shift. Include handovers, cleaning, planned maintenance, and breaks. The effective production time (shift duration minus planned downtime) is used in all production efficiency calculations.
                   </div>
                 )}
               </div>
