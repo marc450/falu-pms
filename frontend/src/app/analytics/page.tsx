@@ -773,7 +773,7 @@ export default function Analytics() {
                     name="BU Output"
                     fill="#22d3ee"
                     radius={[2, 2, 0, 0]}
-                    maxBarSize={36}
+                    barSize={Math.min(64, Math.max(8, Math.round(480 / Math.max(1, buRows.length))))}
                   />
                 </BarChart>
               </ResponsiveContainer>
