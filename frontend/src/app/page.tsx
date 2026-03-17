@@ -720,7 +720,7 @@ function ShiftAndBUProgress({
         </div>
         <p className="text-xs text-gray-500 pl-[6.75rem]">
           <span className="text-white font-medium">{fmtDuration(elapsedMins)}</span>
-          <span className="text-gray-600"> / </span>
+          <span className="text-white"> / </span>
           <span className="text-white font-medium">{fmtDuration(totalShiftMins)}</span>
           {" elapsed"}
           <span className="mx-1.5 text-gray-600">|</span>
@@ -743,7 +743,7 @@ function ShiftAndBUProgress({
           </div>
           <p className="text-xs text-gray-500 pl-[6.75rem]">
             <span className="text-white font-medium">{Math.round(totalCurrentBU).toLocaleString()}</span>
-            <span className="text-gray-600"> / </span>
+            <span className="text-white"> / </span>
             <span className="text-white font-medium">{Math.round(totalTargetBU).toLocaleString()} BUs</span>
             {" produced"}
             <span className="mx-1.5 text-gray-600">|</span>
