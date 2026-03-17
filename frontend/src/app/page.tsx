@@ -877,14 +877,6 @@ export default function Dashboard() {
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [shiftConfig, setShiftConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
   const [todayTeams, setTodayTeams] = useState<(string | null)[]>([]);
-  // Shift mismatch warning: dismissed timestamp persisted in localStorage (4h suppression)
-  const [shiftWarnDismissedAt, setShiftWarnDismissedAt] = useState<number>(() => {
-    if (typeof window !== "undefined") {
-      const v = localStorage.getItem("shiftMismatchDismissedAt");
-      return v ? parseInt(v, 10) : 0;
-    }
-    return 0;
-  });
   const router = useRouter();
   const bridgeFailCount = useRef(0);
   const machinesRef = useRef<Record<string, DashboardMachine>>({});
@@ -1042,31 +1034,6 @@ export default function Dashboard() {
     thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0)
   );
 
-  // Shift mismatch: any online machine whose ActShift doesn't match what the app
-  // expects right now based on the configured slot schedule.
-  // activeSlotIndex is 0-based; PLC ActShift is 1-based → expected = activeSlotIndex + 1.
-  // This catches both "too many shifts" and "shift boundaries at wrong times".
-  // Only run the check once the active slot is known (activeSlotIndex >= 0).
-  const expectedShift = activeSlotIndex >= 0 ? activeSlotIndex + 1 : null;
-  const SHIFT_WARN_DISMISS_MS = 4 * 60 * 60 * 1000;
-  const mismatchedMachines = expectedShift === null ? [] : Object.entries(machines)
-    .filter(([, m]) => {
-      const status = m.machineStatus?.Status?.toLowerCase();
-      if (!status || status === "offline") return false; // skip offline
-      const actShift = m.machineStatus?.ActShift ?? 0;
-      if (actShift === 0) return false;                  // skip no-data
-      return actShift !== expectedShift;
-    })
-    .map(([code, m]) => ({ code, actShift: m.machineStatus?.ActShift ?? 0 }));
-  const showShiftMismatch =
-    mismatchedMachines.length > 0 &&
-    (shiftWarnDismissedAt === 0 || Date.now() - shiftWarnDismissedAt > SHIFT_WARN_DISMISS_MS);
-
-  const dismissShiftMismatch = () => {
-    const now = Date.now();
-    setShiftWarnDismissedAt(now);
-    localStorage.setItem("shiftMismatchDismissedAt", String(now));
-  };
 
   return (
     <div>
@@ -1100,38 +1067,6 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* Shift mismatch warning */}
-      {showShiftMismatch && (
-        <div className="mb-4 bg-amber-900/30 border border-amber-600/50 rounded-lg px-4 py-3 flex items-start gap-3">
-          <i className="bi bi-exclamation-triangle-fill shrink-0 mt-0.5 text-amber-400"></i>
-          <div className="flex-1 text-sm">
-            <p className="font-semibold text-amber-200 mb-1">Shift configuration mismatch</p>
-            <p className="text-amber-300/90 leading-relaxed">
-              {mismatchedMachines.map((m, i) => (
-                <span key={m.code}>
-                  {i > 0 && ", "}
-                  <span className="font-mono font-semibold text-amber-200">{m.code}</span>
-                  {" "}(reporting shift {m.actShift})
-                </span>
-              ))}
-              {mismatchedMachines.length === 1 ? " is" : " are"} out of sync with the current shift schedule.
-              {" "}Based on the configured shift structure, shift <span className="font-semibold text-amber-200">{expectedShift}</span> is expected right now,
-              but {mismatchedMachines.length === 1 ? "this machine is" : "these machines are"} signalling a different shift boundary.
-              {" "}This usually means the machine&apos;s internal shift schedule does not match the rest of the machine park.
-              {" "}Please adapt the machine&apos;s shift settings accordingly.
-              {" "}Refer to the machine manual or contact{" "}
-              <a href="mailto:support@falu.com" className="underline hover:text-amber-200 transition-colors">support@falu.com</a>.
-            </p>
-          </div>
-          <button
-            onClick={dismissShiftMismatch}
-            className="shrink-0 text-amber-600 hover:text-amber-300 transition-colors p-0.5"
-            title="Dismiss for 4 hours"
-          >
-            <i className="bi bi-x-lg text-sm"></i>
-          </button>
-        </div>
-      )}
 
       {/* ── Shift + BU progress ── */}
       {shiftBadgeLabel && shiftStartedAt > 0 && (
