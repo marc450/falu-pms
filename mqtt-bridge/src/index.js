@@ -142,6 +142,8 @@ async function loadRegisteredMachines() {
           Reject: row.current_reject || 0,
         },
         lastSync: row.last_sync_status || row.last_sync_shift || null,
+        // Persist across frontend reloads: read from DB or default to now
+        statusSince: row.status_since || new Date().toISOString(),
       };
     }
   }
@@ -218,6 +220,15 @@ async function handleShiftMessage(payload) {
     logger.info(`Global shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
   }
 
+  // Track when the status changed so the frontend can show a duration timer.
+  // Only update statusSince when the status actually transitions.
+  const prevStatus = (m.machineStatus?.Status || "").toLowerCase();
+  const nextStatus = (data.Status || "offline").toLowerCase();
+  if (prevStatus !== nextStatus) {
+    m.statusSince = new Date().toISOString();
+    logger.debug(`${machineCode} status ${prevStatus}→${nextStatus}, statusSince=${m.statusSince}`);
+  }
+
   // Store as machineStatus, adding backward-compatible aliases so the frontend
   // keeps working with both old (Status-only) and new (combined) payloads.
   m.machineStatus = {
@@ -240,20 +251,25 @@ async function handleShiftMessage(payload) {
 
   // Always update the machines table (status, speed, live counters)
   const now = new Date().toISOString();
+  const updatePayload = {
+    status: (data.Status || "offline").toLowerCase(),
+    error_message: null, // errors now come via cloud/Error
+    active_shift: data.Shift || 1,
+    speed: data.Speed || 0,
+    current_swabs: data.ProducedSwabs || 0,
+    current_boxes: data.ProducedBoxes || 0,
+    current_efficiency: data.Efficiency || 0,
+    current_reject: data.Reject || 0,
+    last_sync_status: now,
+    hidden: false,
+  };
+  // Only write status_since when it actually changed (avoids overwriting on every tick)
+  if (prevStatus !== nextStatus) {
+    updatePayload.status_since = m.statusSince;
+  }
   await supabase
     .from("machines")
-    .update({
-      status: (data.Status || "offline").toLowerCase(),
-      error_message: null, // errors now come via cloud/Error
-      active_shift: data.Shift || 1,
-      speed: data.Speed || 0,
-      current_swabs: data.ProducedSwabs || 0,
-      current_boxes: data.ProducedBoxes || 0,
-      current_efficiency: data.Efficiency || 0,
-      current_reject: data.Reject || 0,
-      last_sync_status: now,
-      hidden: false,
-    })
+    .update(updatePayload)
     .eq("id", machineId);
 
   // Insert a shift_readings row if there's meaningful production data
