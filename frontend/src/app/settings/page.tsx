@@ -23,6 +23,7 @@ import {
   saveShiftAssignment,
   saveShiftAssignmentsBulk,
   shiftLengthFromSlots,
+  slotsFromDuration,
   DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
 import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot } from "@/lib/supabase";
@@ -898,20 +899,20 @@ function slotEndHour(slots: TimeSlot[], index: number): number {
 
 function ShiftsTab() {
   const [config, setConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
-  // Draft slots: edited locally, only persisted on explicit Save
-  const [draftSlots, setDraftSlots] = useState<TimeSlot[]>(DEFAULT_SHIFT_CONFIG.slots);
+  // Draft shift structure: edited locally, only persisted on explicit Save
+  const [draftDurationHours, setDraftDurationHours] = useState<6 | 8 | 12>(DEFAULT_SHIFT_CONFIG.shiftDurationHours);
   const [draftDowntime, setDraftDowntime] = useState<number>(0);
   const [downtimeDisplay, setDowntimeDisplay] = useState("0");
   const [slotsDirty, setSlotsDirty] = useState(false);
   const [slotError, setSlotError] = useState<string | null>(null);
   const [slotSuccess, setSlotSuccess] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [tooltipVisible, setTooltipVisible] = useState(false);
 
   const [assignments, setAssignments] = useState<Record<string, ShiftAssignment>>({});
   const [monthDate, setMonthDate] = useState<Date>(() => new Date()); // tracks current displayed month
   const [loading, setLoading] = useState(true);
   const [newTeamName, setNewTeamName] = useState("");
-  const [editingSlot, setEditingSlot] = useState<number | null>(null);
 
   // Build calendar grid dates for the displayed month
   const year = monthDate.getFullYear();
@@ -932,7 +933,9 @@ function ShiftsTab() {
   const fromStr = toISODate(firstOfMonth);
   const toStr = toISODate(lastOfMonth);
 
-  const draftShiftMins = draftSlots.length > 0 ? Math.round(24 * 60 / draftSlots.length) : 480;
+  const draftShiftMins    = draftDurationHours * 60;
+  const draftSlotsPerDay  = 24 / draftDurationHours;
+  const draftEffectiveMins = Math.max(0, draftShiftMins - draftDowntime);
 
   // Load config + assignments (only show full-page spinner on first load)
   const initialLoad = useRef(true);
@@ -941,7 +944,7 @@ function ShiftsTab() {
     Promise.all([fetchShiftConfig(), fetchShiftAssignments(fromStr, toStr)])
       .then(([cfg, rows]) => {
         setConfig(cfg);
-        setDraftSlots(cfg.slots);
+        setDraftDurationHours(cfg.shiftDurationHours);
         setDraftDowntime(cfg.plannedDowntimeMinutes);
         setDowntimeDisplay(String(cfg.plannedDowntimeMinutes));
         setSlotsDirty(false);
@@ -976,31 +979,11 @@ function ShiftsTab() {
     persistConfig({ ...config, teams: config.teams.filter(t => t !== name) });
   };
 
-  // ── Draft slot management (local only until Save) ─────────
+  // ── Draft shift structure (local only until Save) ──────────
   const markDirty = () => { setSlotsDirty(true); setSlotError(null); setSlotSuccess(false); };
 
-  // Default start hours for each successive slot position
-  const SLOT_START_HOURS = [6, 18, 14, 2];
-
-  const addSlot = () => {
-    if (draftSlots.length >= 4) return;
-    const startHour = SLOT_START_HOURS[draftSlots.length] ?? 0;
-    // Names are auto-assigned on save; use a placeholder so the model stays valid
-    const newSlots = [...draftSlots, { name: `Slot ${draftSlots.length + 1}`, startHour }]
-      .sort((a, b) => a.startHour - b.startHour);
-    setDraftSlots(newSlots);
-    markDirty();
-  };
-
-  const removeSlot = (idx: number) => {
-    if (draftSlots.length <= 1) return;
-    setDraftSlots(draftSlots.filter((_, i) => i !== idx));
-    markDirty();
-  };
-
-  const updateSlot = (idx: number, patch: Partial<TimeSlot>) => {
-    setDraftSlots(draftSlots.map((s, i) => i === idx ? { ...s, ...patch } : s));
-    setEditingSlot(null);
+  const updateDraftDuration = (h: 6 | 8 | 12) => {
+    setDraftDurationHours(h);
     markDirty();
   };
 
@@ -1020,55 +1003,27 @@ function ShiftsTab() {
     }
   };
 
-  const clearAllSlots = () => {
-    setDraftSlots([]);
-    markDirty();
-  };
-
-  // ── Validate and save slot configuration ───────────────────
+  // ── Save shift structure ────────────────────────────────────
   const validateAndSave = async () => {
     setSlotError(null);
     setSlotSuccess(false);
 
-    // Must have at least 1 slot
-    if (draftSlots.length === 0) {
-      setSlotError("You need at least one time slot. Add slots before saving.");
+    if (draftDowntime >= draftShiftMins) {
+      setSlotError(`Planned downtime (${draftDowntime} min) must be less than shift duration (${draftShiftMins} min).`);
       return;
     }
 
-    // Validate 24h coverage: each slot = 24 / slotCount hours, start hours must be unique
-    const hours = draftSlots.map(s => s.startHour);
-    const uniqueHours = new Set(hours);
-    if (uniqueHours.size !== hours.length) {
-      setSlotError("Each slot must have a unique start hour.");
-      return;
-    }
-
-    // Check slots tile 24h evenly
-    const slotLength = 24 / draftSlots.length;
-    if (slotLength !== Math.floor(slotLength)) {
-      setSlotError(`${draftSlots.length} slots do not divide evenly into 24 hours. Use 1, 2, 3, or 4 slots.`);
-      return;
-    }
-
-    // Check downtime is less than shift length
-    const shiftMinsDraft = Math.round(24 * 60 / draftSlots.length);
-    if (draftDowntime >= shiftMinsDraft) {
-      setSlotError(`Planned downtime (${draftDowntime} min) must be less than shift duration (${shiftMinsDraft} min).`);
-      return;
-    }
-
-    // Sort slots by start hour and auto-assign sequential names
-    const sorted = [...draftSlots]
-      .sort((a, b) => a.startHour - b.startHour)
-      .map((s, i) => ({ ...s, name: `Slot ${i + 1}` }));
-
+    const slots = slotsFromDuration(draftDurationHours);
     setSaving(true);
     try {
-      const updated: ShiftConfig = { ...config, slots: sorted, plannedDowntimeMinutes: draftDowntime };
+      const updated: ShiftConfig = {
+        ...config,
+        shiftDurationHours: draftDurationHours,
+        slots,
+        plannedDowntimeMinutes: draftDowntime,
+      };
       await saveShiftConfig(updated);
       setConfig(updated);
-      setDraftSlots(sorted);
       setSlotsDirty(false);
       setSlotSuccess(true);
       setTimeout(() => setSlotSuccess(false), 3000);
@@ -1080,7 +1035,7 @@ function ShiftsTab() {
   };
 
   const discardDraftChanges = () => {
-    setDraftSlots(config.slots);
+    setDraftDurationHours(config.shiftDurationHours);
     setDraftDowntime(config.plannedDowntimeMinutes);
     setDowntimeDisplay(String(config.plannedDowntimeMinutes));
     setSlotsDirty(false);
@@ -1197,68 +1152,59 @@ function ShiftsTab() {
           </p>
         </div>
         <div className="px-5 py-3 space-y-2">
-          {draftSlots.length === 0 && (
-            <p className="text-gray-500 text-sm py-2 italic">No shifts configured. Add at least one slot.</p>
-          )}
-          {draftSlots.map((slot, idx) => {
-            const end = slotEndHour(draftSlots, idx);
-            return (
-              <div key={idx} className="flex items-center justify-between py-1.5 border-b border-gray-700/30 last:border-b-0">
-                <div className="flex items-center gap-2">
-                  <span className="text-[10px] text-gray-600 font-mono w-5 text-right">#{idx + 1}</span>
-                  {editingSlot === idx ? (
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-400">Slot {idx + 1}</span>
-                      <span className="text-gray-500 text-xs">starts at</span>
-                      <input
-                        type="number" min={0} max={23} defaultValue={slot.startHour} autoFocus
-                        onBlur={e => updateSlot(idx, { startHour: Math.max(0, Math.min(23, Number(e.target.value))) })}
-                        onKeyDown={e => e.key === "Enter" && updateSlot(idx, { startHour: Math.max(0, Math.min(23, Number((e.target as HTMLInputElement).value))) })}
-                        className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-14 text-right focus:outline-none"
-                      />
-                      <span className="text-gray-600 text-xs">&ndash;</span>
-                      <span className="text-gray-500 text-xs">ends at</span>
-                      <span className="text-gray-400 text-xs font-mono">{fmtHour(end)}</span>
-                    </div>
-                  ) : (
-                    <button onClick={() => setEditingSlot(idx)} className="text-sm text-white hover:text-cyan-300 transition-colors">
-                      Slot {idx + 1} <span className="text-gray-500 ml-1">{fmtHour(slot.startHour)} &ndash; {fmtHour(end)}</span>
-                    </button>
-                  )}
-                </div>
-                {editingSlot !== idx && (
-                  <button onClick={() => removeSlot(idx)} className="text-gray-600 hover:text-red-400 transition-colors p-1" title="Remove slot">
-                    <i className="bi bi-x-lg text-xs"></i>
-                  </button>
-                )}
-              </div>
-            );
-          })}
-          <div className="flex items-center gap-3 pt-1">
-            {draftSlots.length < 4 && (
-              <button onClick={addSlot} className="flex items-center gap-1.5 text-xs text-cyan-400 hover:text-cyan-300 transition-colors">
-                <i className="bi bi-plus-circle"></i> Add shift
-              </button>
-            )}
-            {draftSlots.length > 0 && (
-              <button onClick={clearAllSlots} className="flex items-center gap-1.5 text-xs text-red-400 hover:text-red-300 transition-colors">
-                <i className="bi bi-trash3"></i> Clear all
-              </button>
-            )}
+          {/* Shift duration selector */}
+          <div className="flex items-center justify-between py-2">
+            <span className="text-sm text-white">Shift duration</span>
+            <div className="flex gap-2">
+              {([6, 8, 12] as const).map(h => (
+                <button
+                  key={h}
+                  onClick={() => updateDraftDuration(h)}
+                  className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                    draftDurationHours === h
+                      ? "bg-cyan-600 text-white"
+                      : "bg-gray-700 text-gray-400 hover:text-white hover:bg-gray-600"
+                  }`}
+                >
+                  {h}h
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Derived: slots per day */}
+          <div className="flex items-center justify-between py-2 border-t border-gray-700/30">
+            <span className="text-sm text-gray-400">Shifts per 24 hours</span>
+            <span className="text-sm text-cyan-400 font-medium">{draftSlotsPerDay}</span>
           </div>
         </div>
 
-        {/* Shift duration + downtime (derived from draft slots) */}
+        {/* Planned downtime + effective time */}
         <div className="px-5 py-3 border-t border-gray-700/50 divide-y divide-gray-700/30">
           <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-white">Shift duration</span>
-            <span className="text-sm text-cyan-400">{draftSlots.length > 0 ? `${(draftShiftMins / 60).toFixed(1)} hrs` : "\u2014"}</span>
-          </div>
-          <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-white">Planned downtime</span>
+            <div className="flex items-center gap-1.5">
+              <span className="text-sm text-white">Planned downtime</span>
+              {/* Info tooltip */}
+              <div className="relative">
+                <button
+                  className="text-gray-600 hover:text-gray-400 transition-colors"
+                  onMouseEnter={() => setTooltipVisible(true)}
+                  onMouseLeave={() => setTooltipVisible(false)}
+                  tabIndex={-1}
+                  type="button"
+                >
+                  <i className="bi bi-info-circle text-xs"></i>
+                </button>
+                {tooltipVisible && (
+                  <div className="absolute left-5 top-1/2 -translate-y-1/2 z-50 w-64 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-300 shadow-xl pointer-events-none">
+                    Scheduled non-production time per shift. Include handovers, cleaning, planned maintenance, and breaks. Subtracted from shift duration to give effective production time.
+                  </div>
+                )}
+              </div>
+            </div>
             <div className="flex items-center gap-2">
               <input
-                type="number" min={0} max={draftShiftMins}
+                type="number" min={0} max={draftShiftMins - 1}
                 value={downtimeDisplay}
                 onChange={e => updateDraftDowntime(e.target.value)}
                 onBlur={commitDraftDowntime}
@@ -1271,7 +1217,7 @@ function ShiftsTab() {
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-white">Effective production time</span>
             <span className="text-sm text-cyan-400">
-              {draftSlots.length > 0 ? `${((draftShiftMins - draftDowntime) / 60).toFixed(1)} hrs` : "\u2014"}
+              {`${(draftEffectiveMins / 60).toFixed(1)} hrs`}
             </span>
           </div>
         </div>

@@ -523,17 +523,25 @@ export interface TimeSlot {
 }
 
 export interface ShiftConfig {
-  teams: string[];                // e.g. ["A", "B", "C", "D"]
-  slots: TimeSlot[];              // ordered time slots (2, 3, or more)
-  plannedDowntimeMinutes: number; // per-shift planned downtime
+  teams: string[];                        // e.g. ["A", "B", "C", "D"]
+  slots: TimeSlot[];                      // derived from shiftDurationHours, stored for calendar + dashboard
+  shiftDurationHours: 6 | 8 | 12;        // user-selected shift length
+  plannedDowntimeMinutes: number;         // per-shift planned downtime
+}
+
+/** Generate evenly-spaced slots from midnight for a given shift duration. */
+export function slotsFromDuration(hours: 6 | 8 | 12): TimeSlot[] {
+  const count = 24 / hours;
+  return Array.from({ length: count }, (_, i) => ({
+    name:      `Slot ${i + 1}`,
+    startHour: i * hours,
+  }));
 }
 
 export const DEFAULT_SHIFT_CONFIG: ShiftConfig = {
   teams: ["A", "B", "C", "D"],
-  slots: [
-    { name: "Day",   startHour: 6  },
-    { name: "Night", startHour: 18 },
-  ],
+  shiftDurationHours: 12,
+  slots: slotsFromDuration(12),
   plannedDowntimeMinutes: 0,
 };
 
@@ -558,21 +566,24 @@ export async function fetchShiftConfig(): Promise<ShiftConfig> {
   if (!data) return DEFAULT_SHIFT_CONFIG;
   const val = data.value as Record<string, unknown>;
 
-  // Backward compat: old format had dayShiftStartHour instead of slots
-  let slots: TimeSlot[];
-  if (Array.isArray(val.slots)) {
-    slots = val.slots as TimeSlot[];
-  } else {
-    const start = (val.dayShiftStartHour as number) ?? 6;
-    slots = [
-      { name: "Day",   startHour: start },
-      { name: "Night", startHour: (start + 12) % 24 },
-    ];
-  }
+  // Derive shiftDurationHours — read stored value or back-calculate from slot count
+  const rawDuration = val.shiftDurationHours as number | undefined;
+  const shiftDurationHours: 6 | 8 | 12 =
+    rawDuration === 6 || rawDuration === 8 || rawDuration === 12
+      ? rawDuration
+      : (() => {
+          // Legacy: infer from slot count (2 slots → 12h, 3 → 8h, 4 → 6h)
+          const legacyCount = Array.isArray(val.slots) ? (val.slots as unknown[]).length : 2;
+          return legacyCount === 4 ? 6 : legacyCount === 3 ? 8 : 12;
+        })();
+
+  // Always regenerate slots from the canonical duration so they stay in sync
+  const slots = slotsFromDuration(shiftDurationHours);
 
   return {
-    teams: (val.teams as string[]) ?? DEFAULT_SHIFT_CONFIG.teams,
+    teams:                (val.teams as string[]) ?? DEFAULT_SHIFT_CONFIG.teams,
     slots,
+    shiftDurationHours,
     plannedDowntimeMinutes: (val.plannedDowntimeMinutes as number) ?? 0,
   };
 }
