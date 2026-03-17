@@ -759,6 +759,15 @@ export default function Dashboard() {
     }
     return 0;
   });
+  // True once the bridge has responded at least once, OR when a cached timestamp
+  // exists from a previous session. This prevents new users (no cache) from
+  // seeing a 100%-filled progress bar before the first bridge poll arrives.
+  const [bridgeLoaded, setBridgeLoaded] = useState<boolean>(() => {
+    if (typeof window !== "undefined") {
+      return !!localStorage.getItem("shiftStartedAt");
+    }
+    return false;
+  });
   const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -811,6 +820,7 @@ export default function Dashboard() {
       bridgeFailCount.current = 0;
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
+      setBridgeLoaded(true);
       if (state.shiftStartedAt) {
         setShiftStartedAt(state.shiftStartedAt);
         localStorage.setItem("shiftStartedAt", String(state.shiftStartedAt));
@@ -935,7 +945,7 @@ export default function Dashboard() {
       )}
 
       {/* ── Shift + BU progress ── */}
-      {shiftBadgeLabel && (
+      {bridgeLoaded && shiftBadgeLabel && (
         <ShiftAndBUProgress
           shiftStartedAt={shiftStartedAt}
           totalShiftMins={thresholds.bu.shiftLengthMinutes}

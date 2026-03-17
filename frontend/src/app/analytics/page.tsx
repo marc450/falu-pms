@@ -89,6 +89,29 @@ function fmtBucketRange(key: string, granularity: "hour" | "day"): [string, stri
   } catch { return [key, ""]; }
 }
 
+// Custom X-axis tick for line charts.
+// When angled=true the label is rotated -40° so densely-packed ticks don't overlap.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function LineTick({ x, y, payload, granularity, angled }: any) {
+  const label = fmtBucket(payload?.value ?? "", granularity);
+  if (angled) {
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text transform="rotate(-40)" textAnchor="end" fill="#9ca3af" fontSize={11} dy={4} dx={-4}>
+          {label}
+        </text>
+      </g>
+    );
+  }
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={11}>
+        {label}
+      </text>
+    </g>
+  );
+}
+
 // Custom X-axis tick for the BU chart.
 // Hourly: two lines showing start→end time (e.g. "12:00 / 13:00"), or a single angled label when cramped.
 // Daily:  single date label (e.g. "15.12.") — one bar = one day, no end date needed.
@@ -485,7 +508,6 @@ export default function Analytics() {
   // Angle labels when the number of visible ticks would cause overlap (> 12)
   const visibleTicks = tickInterval === 0 ? rows.length : Math.ceil(rows.length / (tickInterval + 1));
   const shouldAngle  = visibleTicks > 12;
-  const angledTick   = { fill: "#9ca3af", fontSize: 11, angle: -40, textAnchor: "end" as const, dy: 4 };
   const xAxisHeight  = shouldAngle ? 48 : undefined;
 
   // Pre-compute Y-axis ceilings so both domain and ReferenceArea share the same max
@@ -605,10 +627,12 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={shouldAngle ? angledTick : TICK_STYLE}
+                      tick={shouldAngle
+                        ? (props: any) => <LineTick {...props} granularity={granularity} angled />
+                        : TICK_STYLE}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
-                      tickFormatter={fmtTick}
+                      tickFormatter={shouldAngle ? undefined : fmtTick}
                       interval={tickInterval}
                       height={xAxisHeight}
                     />
@@ -661,10 +685,12 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={shouldAngle ? angledTick : TICK_STYLE}
+                      tick={shouldAngle
+                        ? (props: any) => <LineTick {...props} granularity={granularity} angled />
+                        : TICK_STYLE}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
-                      tickFormatter={fmtTick}
+                      tickFormatter={shouldAngle ? undefined : fmtTick}
                       interval={tickInterval}
                       height={xAxisHeight}
                     />
