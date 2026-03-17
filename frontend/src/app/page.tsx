@@ -61,8 +61,9 @@ function formatStateDuration(sinceMs: number, nowMs: number): string {
 // this is always anchored to the real shift boundary, not PLC counters.
 function calcBuRunRate(
   m: DashboardMachine,
-  shiftLen: number,
+  shiftLengthMinutes: number,
   shiftStartedAt: number,
+  plannedDowntimeMinutes: number = 0,
 ): { projected: number; target: number; rate: number } | null {
   const target = m.buTarget;
   if (!target || target <= 0) return null;
@@ -81,13 +82,19 @@ function calcBuRunRate(
   // makes elapsed ≈ 0 and inflates the projection to near a full shift.
   // The PLC counters are unaffected by bridge restarts and reflect actual machine time.
   // Fall back to wall clock only when no PLC shift data has arrived yet.
-  const plcElapsed = (activeShiftData?.ProductionTime ?? 0) + (activeShiftData?.IdleTime ?? 0);
+  const idleTime   = activeShiftData?.IdleTime ?? 0;
+  const plcElapsed = (activeShiftData?.ProductionTime ?? 0) + idleTime;
   const elapsed    = plcElapsed > 0
     ? plcElapsed
     : (Date.now() - shiftStartedAt) / 60000;
   if (elapsed <= 0) return null;
 
-  const remaining = Math.max(0, shiftLen - elapsed);
+  // Treat planned downtime as a budget that drains as idle time accumulates.
+  // Only subtract downtime that has NOT yet been consumed — avoids double-counting
+  // breaks that are already baked into elapsed time.
+  // Error time is excluded: it is unplanned and should not consume the budget.
+  const remainingDowntimeBudget = Math.max(0, plannedDowntimeMinutes - idleTime);
+  const remaining = Math.max(0, shiftLengthMinutes - elapsed - remainingDowntimeBudget);
   const projected = currentBUs + buPerMin * remaining;
   return { projected, target, rate: projected / target };
 }
@@ -170,12 +177,12 @@ function sortMachineList(
 // ─────────────────────────────────────────────────────────────
 // Machine row
 // ─────────────────────────────────────────────────────────────
-function MachineRow({ m, shiftLengthMinutes, shiftStartedAt, onClick, now }: { m: DashboardMachine; shiftLengthMinutes: number; shiftStartedAt: number; onClick: () => void; now: number }) {
+function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStartedAt, onClick, now }: { m: DashboardMachine; shiftLengthMinutes: number; plannedDowntimeMinutes: number; shiftStartedAt: number; onClick: () => void; now: number }) {
   const status     = getStatusColor(m.machineStatus?.Status);
   const effColor   = applyMachineEfficiencyColor(m.machineStatus?.Efficiency ?? null, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
   const scpColor   = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
   const spdColor   = applyMachineSpeedColor(m.machineStatus?.Speed ?? null, m.speedTarget ?? null);
-  const buRate     = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
+  const buRate     = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMinutes);
   const buColor    = applyBuRunRateColor(buRate?.projected ?? null, buRate?.target ?? null, m.buMediocre ?? null);
   const isOffline  = m.machineStatus?.Status?.toLowerCase() === "offline";
   const hasProduction = (m.machineStatus?.Swabs ?? 0) > 0;
@@ -241,8 +248,9 @@ function sortCellMachines(
   ms: DashboardMachine[],
   col: CellSortCol,
   asc: boolean,
-  shiftLen: number,
+  shiftLengthMinutes: number,
   shiftStartedAt: number,
+  plannedDowntimeMinutes: number = 0,
 ): DashboardMachine[] {
   return [...ms].sort((a, b) => {
     let aVal: string | number = 0;
@@ -260,8 +268,8 @@ function sortCellMachines(
         bVal = b.lastSyncStatus ? new Date(b.lastSyncStatus).getTime() : 0;
         break;
       case "BU": {
-        const ar = calcBuRunRate(a, shiftLen, shiftStartedAt);
-        const br = calcBuRunRate(b, shiftLen, shiftStartedAt);
+        const ar = calcBuRunRate(a, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMinutes);
+        const br = calcBuRunRate(b, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMinutes);
         aVal = ar?.rate ?? 0; bVal = br?.rate ?? 0; break;
       }
     }
@@ -300,13 +308,14 @@ function CellSection({
   const [open, setOpen] = useState(defaultOpen);
   const [sortCol, setSortCol]   = useState<CellSortCol>("Machine");
   const [sortAsc, setSortAsc]   = useState(true);
+  const plannedDowntimeMins = thresholds.bu.plannedDowntimeMinutes ?? 0;
 
   function handleSort(col: CellSortCol) {
     if (sortCol === col) setSortAsc(!sortAsc);
     else { setSortCol(col); setSortAsc(true); }
   }
 
-  const sortedMachines = sortCellMachines(machines, sortCol, sortAsc, shiftLengthMinutes, shiftStartedAt);
+  const sortedMachines = sortCellMachines(machines, sortCol, sortAsc, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMins);
 
   // Compute cell-level stats
   let running = 0, effSum = 0;
@@ -333,7 +342,7 @@ function CellSection({
     if (isRunning && m.machineStatus?.Speed) { speedSum += m.machineStatus.Speed; speedCount++; }
     if (m.speedTarget)               { speedTargetSum += m.speedTarget; speedTargetCount++; }
     // BU Run Rate: running machines get full calc; non-running still add their target (0 projected)
-    const br = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt);
+    const br = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMins);
     if (br) { cellProjected += br.projected; cellTarget += br.target; }
     else if (m.buTarget && m.buTarget > 0) { cellTarget += m.buTarget; }
     if (m.buMediocre && m.buMediocre > 0) { cellMediocreTarget += m.buMediocre; }
@@ -514,7 +523,7 @@ function CellSection({
           {open && (
             <tbody className="divide-y divide-gray-700/50">
               {sortedMachines.map((m) => (
-                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} shiftStartedAt={shiftStartedAt} now={now} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
+                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} plannedDowntimeMinutes={plannedDowntimeMins} shiftStartedAt={shiftStartedAt} now={now} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
               ))}
               {machines.length === 0 && (
                 <tr>
@@ -561,7 +570,8 @@ function ParkSummaryTiles({
 }) {
   const all = Object.values(machines);
   const total = all.length;
-  const effectiveShiftMins = Math.max(1, thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0));
+  const rawShiftMins = thresholds.bu.shiftLengthMinutes;
+  const plannedDowntimeMins = thresholds.bu.plannedDowntimeMinutes ?? 0;
 
   let running = 0, effSum = 0, effCount = 0;
   let totalDiscarded = 0, totalProduced = 0;
@@ -581,7 +591,7 @@ function ParkSummaryTiles({
     if (m.scrapGood)     { scrapGoodSum += m.scrapGood;     scrapGoodCount++; }
     if (m.scrapMediocre) { scrapMedSum  += m.scrapMediocre; scrapMedCount++;  }
     // BU: non-running machines still contribute their target
-    const br = calcBuRunRate(m, effectiveShiftMins, shiftStartedAt);
+    const br = calcBuRunRate(m, rawShiftMins, shiftStartedAt, plannedDowntimeMins);
     if (br) { floorProjected += br.projected; floorTarget += br.target; }
     else if (m.buTarget && m.buTarget > 0) { floorTarget += m.buTarget; }
     if (m.buMediocre && m.buMediocre > 0) { floorMediocreTarget += m.buMediocre; }
@@ -1052,7 +1062,7 @@ export default function Dashboard() {
               machines={machinesForCell(cell.id)}
               onMachineClick={(code, pf) => router.push(`/production?machine=${code}${pf ? `&packing=${pf}` : ""}`)}
               thresholds={thresholds}
-              shiftLengthMinutes={effectiveShiftMins}
+              shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
               shiftStartedAt={shiftStartedAt}
               now={currentTime.getTime()}
             />
@@ -1065,7 +1075,7 @@ export default function Dashboard() {
               machines={unassigned}
               onMachineClick={(code, pf) => router.push(`/production?machine=${code}${pf ? `&packing=${pf}` : ""}`)}
               thresholds={thresholds}
-              shiftLengthMinutes={effectiveShiftMins}
+              shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
               shiftStartedAt={shiftStartedAt}
               now={currentTime.getTime()}
             />
@@ -1095,7 +1105,8 @@ export default function Dashboard() {
                   <MachineRow
                     key={m.machine}
                     m={m as DashboardMachine}
-                    shiftLengthMinutes={effectiveShiftMins}
+                    shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
+                    plannedDowntimeMinutes={thresholds.bu.plannedDowntimeMinutes ?? 0}
                     shiftStartedAt={shiftStartedAt}
                     now={currentTime.getTime()}
                     onClick={() => router.push(`/production?machine=${m.machine}${(m as DashboardMachine).packingFormat ? `&packing=${(m as DashboardMachine).packingFormat}` : ""}`)}
