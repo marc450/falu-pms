@@ -2,9 +2,9 @@
 
 import { useEffect, useState, useCallback, useRef } from "react";
 import {
-  LineChart, Line, BarChart, Bar,
+  LineChart, Line, BarChart, Bar, Cell,
   XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea,
+  ResponsiveContainer, ReferenceArea, ReferenceLine,
 } from "recharts";
 import {
   format, parseISO,
@@ -445,41 +445,50 @@ export default function Analytics() {
   const totalBUs   = Math.round(totalSwabs / 7200);
 
   // Total park BU output per bucket.
-  const buRows = rows.map(r => ({
-    ...r,
-    totalBU: Math.round((r.totalSwabs / 7200) * 10) / 10,
-  }));
-
-  // BU zone thresholds — scale per-shift park total to match bucket granularity.
-  // Formula: #machines × target_per_shift × (24 / shiftHours) = daily target.
-  // For hourly buckets: daily target / 24 = sum(targets) / shiftHours.
-  // For daily buckets:  daily target = sum(targets) × (24 / shiftHours).
+  // For daily granularity, each bar's threshold is scaled by the actual number
+  // of shifts that contributed data to that bucket (shiftCount from the SQL).
+  // This prevents days with only 1 shift from being penalised against a
+  // 2-shift target — a shift that hits target should always look "good".
   const shiftHours = thresholds.bu.shiftLengthMinutes / 60 || 8;
-  const shiftsPerDay = 24 / shiftHours;
-  const buTarget = buTargetPerShift !== null
-    ? (granularity === "hour"
-        ? buTargetPerShift * shiftsPerDay / 24   // per-hour target
-        : buTargetPerShift * shiftsPerDay)        // per-day target
+
+  const buRows = rows.map(r => {
+    const totalBU = Math.round((r.totalSwabs / 7200) * 10) / 10;
+    // Per-bucket threshold: for hourly, use production-rate; for daily, scale by actual shift count.
+    const barTarget = buTargetPerShift !== null
+      ? (granularity === "hour"
+          ? buTargetPerShift / shiftHours
+          : buTargetPerShift * r.shiftCount)
+      : null;
+    const barMediocre = buMediocrePerShift !== null
+      ? (granularity === "hour"
+          ? buMediocrePerShift / shiftHours
+          : buMediocrePerShift * r.shiftCount)
+      : null;
+    const barColor =
+      barTarget === null || barMediocre === null ? "#22d3ee"      // no targets → default cyan
+      : totalBU >= barTarget                    ? "#4ade80"      // good → green
+      : totalBU >= barMediocre                  ? "#eab308"      // mediocre → yellow
+      :                                           "#ef4444";     // poor → red
+    return { ...r, totalBU, barTarget, barMediocre, barColor };
+  });
+
+  // For the legend and reference line, show the per-shift target as baseline
+  const buTargetLine = buTargetPerShift !== null
+    ? (granularity === "hour" ? buTargetPerShift / shiftHours : buTargetPerShift)
     : null;
-  const buMediocre = buMediocrePerShift !== null
-    ? (granularity === "hour"
-        ? buMediocrePerShift * shiftsPerDay / 24
-        : buMediocrePerShift * shiftsPerDay)
+  const buMediocreLine = buMediocrePerShift !== null
+    ? (granularity === "hour" ? buMediocrePerShift / shiftHours : buMediocrePerShift)
     : null;
 
   // KPI color for Total BU Output — compare actual total against what the park
-  // should have produced in the selected period.
-  // Daily target = sum(targets) × (24 / shiftHours).  Period target = daily × days.
-  const effectiveRange: DateRange =
-    activePresetId !== "custom"
-      ? PRESETS.find(p => p.id === activePresetId)!.getRange()
-      : dateRange;
-  const periodHours   = Math.max((effectiveRange.end.getTime() - effectiveRange.start.getTime()) / 3_600_000, 1);
-  const periodDays    = periodHours / 24;
-  const dailyBuGood   = buTargetPerShift !== null ? buTargetPerShift * shiftsPerDay : null;
-  const dailyBuMed    = buMediocrePerShift !== null ? buMediocrePerShift * shiftsPerDay : null;
-  const buKpiGood     = dailyBuGood !== null ? dailyBuGood * periodDays : null;
-  const buKpiMediocre = dailyBuMed !== null ? dailyBuMed * periodDays : null;
+  // should have produced across all buckets that had data.
+  // Instead of assuming full 24/7 production, sum each bucket's scaled target.
+  const totalBuGoodTarget     = buTargetPerShift !== null
+    ? buRows.reduce((s, r) => s + (r.barTarget ?? 0), 0) : null;
+  const totalBuMediocreTarget = buMediocrePerShift !== null
+    ? buRows.reduce((s, r) => s + (r.barMediocre ?? 0), 0) : null;
+  const buKpiGood     = totalBuGoodTarget;
+  const buKpiMediocre = totalBuMediocreTarget;
   const buKpiColor    = (() => {
     if (totalBUs <= 0 || buKpiGood === null || buKpiMediocre === null)
       return { text: "text-gray-500", border: "border-gray-700" };
@@ -515,7 +524,7 @@ export default function Analytics() {
   const scrapMax     = Math.ceil(Math.max(scrapDataMax, thresholds.scrap.mediocre) + 1);
 
   const buDataMax = hasData ? Math.max(...buRows.map(r => r.totalBU)) : 0;
-  const buMax     = Math.ceil(Math.max(buDataMax, buTarget ?? 0, buMediocre ?? 0) * 1.15);
+  const buMax     = Math.ceil(Math.max(buDataMax, buTargetLine ?? 0, buMediocreLine ?? 0) * 1.15);
 
   const chartTitle = granularity === "hour"
     ? "— hourly park total"
@@ -726,22 +735,38 @@ export default function Analytics() {
           {/* ── Total park BU output bar chart ── */}
           <ChartCard
             title={`Total BU Output ${chartTitle}`}
-            legend={buTarget !== null ? (
+            legend={buTargetLine !== null ? (
               <>
-                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTarget).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/d"})`} />
-                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocre ?? 0).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/d"})`} />
-                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocre ?? 0).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/d"})`} />
+                <ZoneLegend color="#4ade80" label={`Good (≥ target${granularity === "day" ? " × shifts" : ""})`} />
+                <ZoneLegend color="#eab308" label={`Mediocre`} />
+                <ZoneLegend color="#ef4444" label={`Poor`} />
+                <span className="text-gray-600 ml-1">
+                  — {granularity === "hour" ? "line" : "dashed"}: {Math.round(buTargetLine).toLocaleString()} BUs/{granularity === "hour" ? "h" : "shift"}
+                </span>
               </>
             ) : undefined}
           >
             {!hasData ? <NoData /> : (
               <ResponsiveContainer width="100%" height={240}>
                 <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 16 }}>
-                  {/* Zones — higher is better; targets = sum of all machines */}
-                  <ReferenceArea y1={buTarget ?? buMax} y2={buMax} fill="#4ade80" fillOpacity={buTarget !== null ? 0.08 : 0} />
-                  <ReferenceArea y1={buMediocre ?? 0} y2={buTarget ?? 0} fill="#eab308" fillOpacity={buTarget !== null ? 0.07 : 0} />
-                  <ReferenceArea y1={0} y2={buMediocre ?? 0} fill="#ef4444" fillOpacity={buMediocre !== null ? 0.07 : 0} />
                   <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                  {/* Reference line at per-shift target (baseline) */}
+                  {buTargetLine !== null && (
+                    <ReferenceLine
+                      y={buTargetLine}
+                      stroke="#4ade80"
+                      strokeDasharray="6 3"
+                      strokeOpacity={0.5}
+                    />
+                  )}
+                  {buMediocreLine !== null && (
+                    <ReferenceLine
+                      y={buMediocreLine}
+                      stroke="#eab308"
+                      strokeDasharray="6 3"
+                      strokeOpacity={0.35}
+                    />
+                  )}
                   <XAxis
                     dataKey="date"
                     tickLine={false}
@@ -771,10 +796,13 @@ export default function Analytics() {
                   <Bar
                     dataKey="totalBU"
                     name="BU Output"
-                    fill="#22d3ee"
                     radius={[2, 2, 0, 0]}
                     barSize={Math.min(64, Math.max(8, Math.round(480 / Math.max(1, buRows.length))))}
-                  />
+                  >
+                    {buRows.map((entry, index) => (
+                      <Cell key={`bu-${index}`} fill={entry.barColor} />
+                    ))}
+                  </Bar>
                 </BarChart>
               </ResponsiveContainer>
             )}

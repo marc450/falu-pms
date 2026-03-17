@@ -394,6 +394,7 @@ export interface FleetTrendRow {
   totalSwabs: number;  // sum of per-(machine_id, shift_number) MAX produced_swabs
   machineCount: number;// unique machines with readings in bucket
   readingCount: number;// total readings in bucket
+  shiftCount: number;  // distinct shift_numbers with data in this bucket
 }
 
 export interface FleetTrendResult {
@@ -411,6 +412,7 @@ interface RpcFleetTrendRow {
   total_swabs:   number;
   machine_count: number;
   reading_count: number;
+  shift_count:   number;
 }
 
 export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResult> {
@@ -446,6 +448,7 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
     totalSwabs:   Number(r.total_swabs)   || 0,
     machineCount: Number(r.machine_count) || 0,
     readingCount: Number(r.reading_count) || 0,
+    shiftCount:   Number(r.shift_count)   || 1,
   }));
 
   const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
