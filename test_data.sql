@@ -1,89 +1,89 @@
 -- ============================================================================
 -- Realistic test data for FALU PMS
--- Generates per-machine, per-shift shift_readings for 6 months
+-- Per-machine, per-shift readings for 6 months
 -- ============================================================================
 --
--- Design principles:
---   * 18 machines across 3 production cells (6 each)
---   * 2 shifts per day: shift 1 = 06:00-18:00, shift 2 = 18:00-06:00
---   * 6 cumulative readings per shift (every ~2 hours, ± jitter)
---   * Performance band: base efficiency 72-86%, typical output 70-95% of target
---   * Hard cap: never exceed +15% of target in a single reading interval
---   * Breakdowns: ~7% chance per machine per shift (reduces to 40-60% efficiency)
---   * Weekends: -5% overall factor
---   * Night shift (shift 2): -3% factor
---   * Each machine has a stable profile (strong, average, weak)
---   * bu_target and bu_mediocre are seeded onto machines so chart lines match
+-- Machine target: 185 BU / 12 h shift  (= 185 × 7 200 = 1 332 000 swabs)
+-- Mediocre:       150 BU / 12 h shift
 --
--- Target per machine per 12h shift:
---   target_swabs = 3,600,000  (= 500 BU at 7,200 swabs/BU)
---   bu_target    = 500 BU per shift per machine
---   bu_mediocre  = 380 BU per shift per machine (~76% of target)
+-- Performance design:
+--   - base efficiency (fraction of shift spent producing): 0.72–0.88
+--   - fleet average ≈ 82 % → ~152 BU/shift/machine → ~228 BU/h fleet
+--   - "Good" reference line = 18 × 185 / 12 ≈ 278 BU/h (just above actual avg)
+--   - Hard cap per 2 h interval: 115 % of interval target (never >213 BU/shift)
+--   - Breakdowns: 7 % chance per machine per shift → drop to 40–60 % efficiency
+--   - Weekends: −5 % day factor
+--   - Night shift (shift 2): −3 % shift factor
+--   - 6 CUMULATIVE readings per 12 h shift (every ~2 h + jitter)
 --
+-- Key formula fix: efficiency is applied only to PRODUCTIVE TIME.
+--   Swab rate while running is close to 100 % of rated speed (+ small noise).
+--   This avoids double-penalising efficiency in the swab count.
 -- ============================================================================
 
 -- Wipe old synthetic data (keeps any real data from today onward)
-DELETE FROM shift_readings    WHERE recorded_at  < CURRENT_DATE;
-DELETE FROM saved_shift_logs  WHERE saved_at      < CURRENT_DATE;
+DELETE FROM shift_readings   WHERE recorded_at < CURRENT_DATE;
+DELETE FROM saved_shift_logs WHERE saved_at     < CURRENT_DATE;
 
--- Seed machine targets so the analytics chart reference lines match
--- Only updates machines that have not been configured yet (bu_target IS NULL or 0)
+-- Restore correct per-machine BU targets
+-- (run unconditionally so a previous bad seed does not persist)
 UPDATE machines
 SET
-  bu_target         = 500,
-  bu_mediocre       = 380,
-  efficiency_good   = COALESCE(NULLIF(efficiency_good,   0), 85),
+  bu_target           = 185,
+  bu_mediocre         = 150,
+  efficiency_good     = COALESCE(NULLIF(efficiency_good,     0), 85),
   efficiency_mediocre = COALESCE(NULLIF(efficiency_mediocre, 0), 70),
-  scrap_good        = COALESCE(NULLIF(scrap_good,   0), 2),
-  scrap_mediocre    = COALESCE(NULLIF(scrap_mediocre, 0), 5)
-WHERE hidden = false
-  AND (bu_target IS NULL OR bu_target = 0);
+  scrap_good          = COALESCE(NULLIF(scrap_good,   0), 2),
+  scrap_mediocre      = COALESCE(NULLIF(scrap_mediocre, 0), 5)
+WHERE hidden = false;
 
 DO $$
 DECLARE
-  -- Machine arrays
-  machine_ids    UUID[];
-  machine_codes  TEXT[];
-  machine_count  INT;
+  machine_ids   UUID[];
+  machine_codes TEXT[];
+  machine_count INT;
 
-  -- Per-machine performance profiles (18 slots; extras get average profile)
-  -- base_eff: fraction of shift spent producing at full speed (0 = all idle)
-  -- A machine with base_eff = 0.82 will produce ~82% of target in a normal shift
-  base_eff   DOUBLE PRECISION[] := ARRAY[
-    0.86, 0.80, 0.84, 0.72, 0.83, 0.78,   -- cell 1: 2 strong, 2 avg, 2 weak
-    0.82, 0.76, 0.85, 0.74, 0.81, 0.77,   -- cell 2
-    0.84, 0.73, 0.80, 0.86, 0.75, 0.79    -- cell 3
+  -- Per-machine efficiency profiles (up to 18 slots; extras use 0.80)
+  -- These represent the fraction of shift time the machine is running.
+  -- Fleet average ≈ 0.82  →  fleet BU ≈ 18 × 185 × 0.82 / 12 ≈ 228 BU/h
+  base_eff DOUBLE PRECISION[] := ARRAY[
+    0.88, 0.82, 0.85, 0.74, 0.83, 0.78,
+    0.86, 0.76, 0.84, 0.73, 0.81, 0.79,
+    0.87, 0.75, 0.80, 0.88, 0.77, 0.82
   ];
 
-  -- base_scrap: baseline reject rate fraction (0.01 = 1%)
+  -- Per-machine baseline scrap rate
   base_scrap DOUBLE PRECISION[] := ARRAY[
     0.012, 0.018, 0.010, 0.026, 0.014, 0.021,
     0.016, 0.023, 0.011, 0.027, 0.017, 0.022,
     0.013, 0.025, 0.019, 0.012, 0.024, 0.020
   ];
 
-  -- Iteration variables
-  m_idx          INT;
-  m_id           UUID;
-  d              DATE;
-  s              INT;
-  r              INT;
-  dow            INT;
+  m_idx       INT;
+  m_id        UUID;
+  d           DATE;
+  s           INT;
+  r           INT;
+  dow         INT;
 
-  -- Shift timing
-  shift_start         TIMESTAMPTZ;
-  shift_len_mins CONSTANT INT := 720;   -- 12 hours
-  readings_per_shift CONSTANT INT := 6;
-  reading_interval_mins INT;
+  shift_start           TIMESTAMPTZ;
+  shift_len_mins CONSTANT INT := 720;         -- 12 h
+  n_readings     CONSTANT INT := 6;           -- readings per shift
+  interval_mins         INT;                  -- minutes per reading interval
 
-  -- Performance factors
+  -- 185 BU × 7 200 swabs/BU = 1 332 000 swabs per shift at 100 % efficiency
+  target_swabs   CONSTANT BIGINT := 1332000;
+  interval_target         BIGINT;             -- target per single reading interval
+
+  mach_eff       DOUBLE PRECISION;
   day_factor     DOUBLE PRECISION;
   shift_factor   DOUBLE PRECISION;
-  mach_eff       DOUBLE PRECISION;
-  is_breakdown   BOOLEAN;
-  breakdown_eff  DOUBLE PRECISION;
+  eff_factor     DOUBLE PRECISION;            -- combined day × shift × machine
 
-  -- Cumulative counters (reset each shift)
+  is_breakdown   BOOLEAN;
+  bd_eff         DOUBLE PRECISION;            -- breakdown severity (0.40–0.60)
+
+  -- Cumulative counters reset each shift
   cum_prod_time  INT;
   cum_idle_time  INT;
   cum_swabs      BIGINT;
@@ -91,31 +91,22 @@ DECLARE
   cum_boxes      BIGINT;
   cum_boxes_lp   BIGINT;
 
-  -- Per-reading increments
+  -- Per-interval increments
   inc_prod_mins  INT;
-  inc_idle_mins  INT;
   inc_swabs      BIGINT;
   inc_discarded  BIGINT;
   inc_boxes      BIGINT;
 
-  -- Derived
-  eff_pct     DOUBLE PRECISION;
-  rej_pct     DOUBLE PRECISION;
-  rec_at      TIMESTAMPTZ;
+  eff_pct        DOUBLE PRECISION;
+  rej_pct        DOUBLE PRECISION;
+  rec_at         TIMESTAMPTZ;
 
-  -- Target: swabs per reading interval at 100% efficiency
-  -- 3,600,000 swabs / 6 readings = 600,000 per interval at 100%
-  target_swabs CONSTANT BIGINT := 3600000;
-  interval_target BIGINT;
-
-  -- Error counts (cumulative, small)
   err_cotton  INT;
   err_sticks  INT;
   err_pickups INT;
   err_other   INT;
 
 BEGIN
-  -- Load machine IDs
   SELECT array_agg(id ORDER BY machine_code),
          array_agg(machine_code ORDER BY machine_code)
     INTO machine_ids, machine_codes
@@ -124,24 +115,22 @@ BEGIN
 
   machine_count := COALESCE(array_length(machine_ids, 1), 0);
   IF machine_count = 0 THEN
-    RAISE NOTICE 'No active machines found — skipping test data generation.';
+    RAISE NOTICE 'No active machines — skipping test data generation.';
     RETURN;
   END IF;
 
-  reading_interval_mins := shift_len_mins / readings_per_shift;  -- 120 min
-  interval_target := target_swabs / readings_per_shift;          -- 600,000
+  interval_mins   := shift_len_mins / n_readings;       -- 120 min per interval
+  interval_target := target_swabs   / n_readings;       -- 222 000 swabs per interval
 
-  -- Generate 6 months: 2025-09-17 through 2026-03-16
+  -- 6 months: 2025-09-17 through 2026-03-16
   FOR d IN SELECT generate_series('2025-09-17'::date, '2026-03-16'::date, '1 day') LOOP
-    dow := EXTRACT(dow FROM d)::int;  -- 0 = Sun, 6 = Sat
+    dow := EXTRACT(dow FROM d)::int;
 
-    -- Day-level factor: weekends lower, small daily random variation
     day_factor := 1.0
       + CASE WHEN dow IN (0, 6) THEN -0.05 ELSE 0 END
-      + (random() - 0.5) * 0.06;   -- +/- 3% daily swing
+      + (random() - 0.5) * 0.06;
 
     FOR s IN 1..2 LOOP
-      -- Shift-level factor: shift 2 (night) slightly weaker
       shift_factor := day_factor
         + CASE WHEN s = 2 THEN -0.03 ELSE 0.01 END
         + (random() - 0.5) * 0.04;
@@ -150,20 +139,16 @@ BEGIN
         + CASE WHEN s = 1 THEN interval '6 hours' ELSE interval '18 hours' END;
 
       FOR m_idx IN 1..machine_count LOOP
-        m_id := machine_ids[m_idx];
+        m_id     := machine_ids[m_idx];
+        mach_eff := CASE WHEN m_idx <= 18 THEN base_eff[m_idx] ELSE 0.80 END;
 
-        -- Machine efficiency profile (fall back to 0.80 for machines beyond 18)
-        mach_eff := CASE
-          WHEN m_idx <= array_length(base_eff, 1) THEN base_eff[m_idx]
-          ELSE 0.80
-        END;
+        -- Combined efficiency for this shift session
+        eff_factor := GREATEST(0.30, LEAST(1.0, mach_eff * shift_factor));
 
-        -- ~7% chance of a breakdown this shift
-        is_breakdown  := random() < 0.07;
-        -- Breakdown severity: efficiency drops to 40-60% of normal
-        breakdown_eff := CASE WHEN is_breakdown THEN 0.40 + random() * 0.20 ELSE 0 END;
+        -- Breakdown: ~7 % chance
+        is_breakdown := random() < 0.07;
+        bd_eff       := CASE WHEN is_breakdown THEN 0.40 + random() * 0.20 ELSE 0 END;
 
-        -- Reset cumulative counters
         cum_prod_time := 0;
         cum_idle_time := 0;
         cum_swabs     := 0;
@@ -171,74 +156,58 @@ BEGIN
         cum_boxes     := 0;
         cum_boxes_lp  := 0;
 
-        FOR r IN 1..readings_per_shift LOOP
+        FOR r IN 1..n_readings LOOP
 
-          -- ── Production time for this interval ─────────────────────────────
-          -- Breakdown happens mid-shift (readings 3-5) with reduced efficiency
+          -- ── Productive time for this interval ───────────────────────────
+          -- Apply efficiency to TIME only (not to swab rate).
+          -- Small noise ±6 % so readings are not perfectly uniform.
           IF is_breakdown AND r BETWEEN 3 AND 5 THEN
-            -- During breakdown: mostly idle, short bursts of production
-            inc_prod_mins := GREATEST(8,
-              (reading_interval_mins * breakdown_eff * (0.7 + random() * 0.6))::int
+            inc_prod_mins := GREATEST(5,
+              (interval_mins * bd_eff * (0.7 + random() * 0.6))::int
             );
           ELSE
-            -- Normal: production time = interval × machine_eff × shift_factor × small noise
-            -- Noise band: 0.88-1.05 (skewed so average ≈ 0.96, not 1.0)
-            inc_prod_mins := GREATEST(30,
-              (reading_interval_mins
-               * mach_eff * shift_factor
-               * (0.88 + random() * 0.17)
-              )::int
+            inc_prod_mins := GREATEST(20,
+              (interval_mins * eff_factor * (0.94 + random() * 0.12))::int
             );
-            -- Cannot exceed the interval
-            inc_prod_mins := LEAST(reading_interval_mins, inc_prod_mins);
+            inc_prod_mins := LEAST(interval_mins, inc_prod_mins);
           END IF;
-
-          inc_idle_mins := reading_interval_mins - inc_prod_mins;
 
           cum_prod_time := cum_prod_time + inc_prod_mins;
-          cum_idle_time := cum_idle_time + inc_idle_mins;
+          cum_idle_time := cum_idle_time + (interval_mins - inc_prod_mins);
 
-          -- ── Swab production for this interval ────────────────────────────
-          -- Base: rate × productive minutes × machine_eff × shift_factor × noise
-          -- Cap each interval at 115% of the proportional target (= 690,000 swabs)
+          -- ── Swab production ──────────────────────────────────────────────
+          -- Rate while running is rated speed ± small noise (97–103 %).
+          -- Efficiency was already captured in productive time above.
           inc_swabs := (
-            (target_swabs::float8 / shift_len_mins)   -- rate per minute
-            * inc_prod_mins
-            * mach_eff * shift_factor
-            * (0.88 + random() * 0.17)                -- 88-105% of expected rate
+            (target_swabs::float8 / shift_len_mins)   -- rated swabs/min
+            * inc_prod_mins                            -- productive minutes
+            * (0.97 + random() * 0.06)                -- speed noise ±3 %
           )::bigint;
 
-          -- Hard cap per interval: +15% of interval_target
-          inc_swabs := LEAST(inc_swabs, (interval_target * 1.15)::bigint);
+          -- Hard cap: +15 % of proportional target per interval
+          inc_swabs := LEAST(inc_swabs, (interval_target::float8 * 1.15)::bigint);
           inc_swabs := GREATEST(0, inc_swabs);
-
-          -- Breakdown slashes production
-          IF is_breakdown AND r BETWEEN 3 AND 5 THEN
-            inc_swabs := (inc_swabs * breakdown_eff)::bigint;
-          END IF;
 
           cum_swabs := cum_swabs + inc_swabs;
 
-          -- ── Scrap ─────────────────────────────────────────────────────────
+          -- ── Scrap ────────────────────────────────────────────────────────
           inc_discarded := GREATEST(0, (
             inc_swabs * (
-              CASE WHEN m_idx <= array_length(base_scrap, 1)
-                   THEN base_scrap[m_idx] ELSE 0.018 END
-              + (random() - 0.25) * 0.008   -- slightly skewed positive
+              CASE WHEN m_idx <= 18 THEN base_scrap[m_idx] ELSE 0.018 END
+              + (random() - 0.25) * 0.008
               + CASE WHEN is_breakdown AND r >= 3 THEN 0.012 ELSE 0 END
             )
           )::bigint);
           cum_discarded := cum_discarded + inc_discarded;
 
-          -- ── Boxes ─────────────────────────────────────────────────────────
-          inc_boxes := GREATEST(0, inc_swabs / 7200);
-          cum_boxes := cum_boxes + inc_boxes;
-          -- ~5% chance of layer-plus boxes in this interval
+          -- ── Boxes ────────────────────────────────────────────────────────
+          inc_boxes    := GREATEST(0, inc_swabs / 7200);
+          cum_boxes    := cum_boxes + inc_boxes;
           IF random() < 0.05 THEN
             cum_boxes_lp := cum_boxes_lp + GREATEST(1, inc_boxes / 10);
           END IF;
 
-          -- ── Efficiency and reject rate ────────────────────────────────────
+          -- ── Efficiency and reject rate ───────────────────────────────────
           eff_pct := CASE
             WHEN cum_prod_time + cum_idle_time > 0
             THEN LEAST(100.0,
@@ -252,22 +221,21 @@ BEGIN
             ELSE 0
           END;
 
-          -- ── Timestamp: spread evenly through shift with small jitter ──────
+          -- ── Timestamp ────────────────────────────────────────────────────
           rec_at := shift_start
-            + (r * reading_interval_mins * interval '1 minute')
-            + ((random() * 4 - 2) * interval '1 minute');   -- +/- 2 min jitter
+            + (r * interval_mins * interval '1 minute')
+            + ((random() * 4 - 2) * interval '1 minute');
 
-          -- ── Error counts (cumulative, grow slowly through shift) ──────────
+          -- ── Cumulative error counts ──────────────────────────────────────
           err_cotton  := FLOOR(random() * r * 0.7)::int;
           err_sticks  := FLOOR(random() * r * 0.4)::int;
           err_pickups := FLOOR(random() * r * 0.5)::int;
           err_other   := FLOOR(random() * r * 0.25)::int;
           IF is_breakdown THEN
-            err_cotton  := err_cotton  + FLOOR(random() * 4)::int;
-            err_other   := err_other   + FLOOR(random() * 3)::int;
+            err_cotton := err_cotton + FLOOR(random() * 4)::int;
+            err_other  := err_other  + FLOOR(random() * 3)::int;
           END IF;
 
-          -- ── Insert reading ────────────────────────────────────────────────
           INSERT INTO shift_readings (
             machine_id, shift_number, recorded_at,
             production_time, idle_time,
@@ -285,12 +253,11 @@ BEGIN
             cum_boxes, cum_boxes_lp,
             cum_discarded,
             ROUND(eff_pct::numeric, 1), ROUND(rej_pct::numeric, 1),
-            r = readings_per_shift    -- save_flag = true on last reading
+            r = n_readings
           );
 
         END LOOP; -- readings
 
-        -- ── Insert saved_shift_log for the completed shift ────────────────
         INSERT INTO saved_shift_logs (
           machine_id, machine_code, shift_number,
           production_time, idle_time,
@@ -301,23 +268,19 @@ BEGIN
           efficiency, reject_rate,
           saved_at
         ) VALUES (
-          m_id,
-          COALESCE(machine_codes[m_idx], 'CB-XX'),
-          s,
+          m_id, COALESCE(machine_codes[m_idx], 'CB-XX'), s,
           cum_prod_time, cum_idle_time,
           err_cotton, err_sticks, err_pickups, err_other,
           cum_swabs, GREATEST(0, cum_swabs - cum_discarded),
           cum_boxes, cum_boxes_lp,
           cum_discarded,
           ROUND(eff_pct::numeric, 1), ROUND(rej_pct::numeric, 1),
-          shift_start + interval '12 hours'
-            - (random() * interval '3 minutes')
+          shift_start + interval '12 hours' - (random() * interval '3 minutes')
         );
 
       END LOOP; -- machines
     END LOOP;   -- shifts
   END LOOP;     -- days
 
-  RAISE NOTICE 'Test data generation complete (% machines, 6 months).',
-    machine_count;
+  RAISE NOTICE 'Test data complete: % machines, 6 months.', machine_count;
 END $$;
