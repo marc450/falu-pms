@@ -759,6 +759,14 @@ export default function Dashboard() {
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [shiftConfig, setShiftConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
   const [todayTeams, setTodayTeams] = useState<(string | null)[]>([]);
+  // Shift mismatch warning: dismissed timestamp persisted in localStorage (4h suppression)
+  const [shiftWarnDismissedAt, setShiftWarnDismissedAt] = useState<number>(() => {
+    if (typeof window !== "undefined") {
+      const v = localStorage.getItem("shiftMismatchDismissedAt");
+      return v ? parseInt(v, 10) : 0;
+    }
+    return 0;
+  });
   const router = useRouter();
   const bridgeFailCount = useRef(0);
 
@@ -902,6 +910,21 @@ export default function Dashboard() {
     thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0)
   );
 
+  // Shift mismatch: machines reporting ActShift higher than the number of configured slots
+  const SHIFT_WARN_DISMISS_MS = 4 * 60 * 60 * 1000;
+  const mismatchedMachines = Object.entries(machines)
+    .filter(([, m]) => (m.machineStatus?.ActShift ?? 0) > shiftConfig.slots.length)
+    .map(([code, m]) => ({ code, actShift: m.machineStatus?.ActShift ?? 0 }));
+  const showShiftMismatch =
+    mismatchedMachines.length > 0 &&
+    (shiftWarnDismissedAt === 0 || Date.now() - shiftWarnDismissedAt > SHIFT_WARN_DISMISS_MS);
+
+  const dismissShiftMismatch = () => {
+    const now = Date.now();
+    setShiftWarnDismissedAt(now);
+    localStorage.setItem("shiftMismatchDismissedAt", String(now));
+  };
+
   return (
     <div>
       {/* Header */}
@@ -936,6 +959,32 @@ export default function Dashboard() {
         <div className="mb-4 bg-red-900/30 border border-red-700/50 text-red-400 text-sm rounded-lg px-4 py-3 flex items-start gap-2">
           <i className="bi bi-exclamation-circle shrink-0 mt-0.5"></i>
           <div><span className="font-medium">Could not load machines from database:</span> {dbError}</div>
+        </div>
+      )}
+
+      {/* Shift mismatch warning */}
+      {showShiftMismatch && (
+        <div className="mb-4 bg-amber-900/30 border border-amber-600/50 rounded-lg px-4 py-3 flex items-start gap-3">
+          <i className="bi bi-exclamation-triangle-fill shrink-0 mt-0.5 text-amber-400"></i>
+          <div className="flex-1 text-sm">
+            <p className="font-semibold text-amber-200 mb-1">Shift configuration mismatch</p>
+            <p className="text-amber-300/90 leading-relaxed">
+              {mismatchedMachines.map(m => (
+                <span key={m.code} className="font-mono font-semibold text-amber-200">{m.code}</span>
+              )).reduce<React.ReactNode[]>((acc, el, i) => i === 0 ? [el] : [...acc, ", ", el], [])}
+              {mismatchedMachines.length === 1 ? " is" : " are"} reporting shift {mismatchedMachines.map(m => m.actShift).join("/")} but only {shiftConfig.slots.length} shift{shiftConfig.slots.length !== 1 ? "s are" : " is"} configured in this application.
+              {" "}Please adapt the machine&apos;s shift settings to match the rest of the machine park.
+              {" "}Refer to the machine manual or contact{" "}
+              <a href="mailto:support@falu.com" className="underline hover:text-amber-200 transition-colors">support@falu.com</a>.
+            </p>
+          </div>
+          <button
+            onClick={dismissShiftMismatch}
+            className="shrink-0 text-amber-600 hover:text-amber-300 transition-colors p-0.5"
+            title="Dismiss for 4 hours"
+          >
+            <i className="bi bi-x-lg text-sm"></i>
+          </button>
         </div>
       )}
 
