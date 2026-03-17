@@ -445,29 +445,30 @@ function CellSection({
     : formatSet.size === 0 ? "Blisters"
     : "Output";
 
-  // Column definitions: label, sort key, min-width
-  type ColDef = { label: string; col: CellSortCol; minW: number };
+  // Column definitions: label, sort key, percentage width
+  // Percentages must sum to 100.
+  type ColDef = { label: string; col: CellSortCol; pct: number };
   const colDefs: ColDef[] = [
-    { label: "Machine",              col: "Machine",   minW: 100 },
-    { label: "Status",               col: "Status",    minW: 100 },
-    { label: "Uptime",               col: "Uptime",    minW: 70 },
-    { label: "Scrap",                col: "Scrap",     minW: 70 },
-    { label: "Total BUs",            col: "TotalBU",   minW: 80 },
-    { label: "Expected Output",      col: "BU",        minW: 130 },
-    { label: "Speed",                col: "Speed",     minW: 100 },
-    { label: "Idle Time",            col: "IdleTime",  minW: 80 },
-    { label: "Error Time",           col: "ErrorTime", minW: 80 },
-    { label: "Last Sync",            col: "Sync",      minW: 80 },
+    { label: "Machine",              col: "Machine",   pct: 10 },
+    { label: "Status",               col: "Status",    pct: 12 },
+    { label: "Uptime",               col: "Uptime",    pct: 8 },
+    { label: "Scrap",                col: "Scrap",     pct: 8 },
+    { label: "Total BUs",            col: "TotalBU",   pct: 10 },
+    { label: "Expected Output",      col: "BU",        pct: 15 },
+    { label: "Speed",                col: "Speed",     pct: 12 },
+    { label: "Idle Time",            col: "IdleTime",  pct: 9 },
+    { label: "Error Time",           col: "ErrorTime", pct: 9 },
+    { label: "Last Sync",            col: "Sync",      pct: 7 },
   ];
 
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          {/* ── colgroup pins every column to a stable min-width ── */}
+        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+          {/* ── colgroup pins every column to a fixed percentage width ── */}
           <colgroup>
             {colDefs.map((cd) => (
-              <col key={cd.col} style={{ minWidth: `${cd.minW}px` }} />
+              <col key={cd.col} style={{ width: `${cd.pct}%` }} />
             ))}
           </colgroup>
 
@@ -478,7 +479,7 @@ function CellSection({
               className="bg-gray-800 border-b border-gray-700 cursor-pointer hover:bg-gray-750 transition-colors"
             >
               {/* Machine col → cell name */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[0].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 <div className={!open ? "flex flex-col gap-0.5" : "flex items-center gap-2"}>
                   {!open && <span className="text-[10px] invisible">·</span>}
                   <div className="flex items-center gap-2">
@@ -488,7 +489,7 @@ function CellSection({
                 </div>
               </td>
               {/* Status col → running count, traffic-light colored */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[1].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
                   {!open && <span className="text-[10px] text-gray-500">{colDefs[1].label}</span>}
                   <span className={`text-xs font-semibold ${
@@ -502,7 +503,7 @@ function CellSection({
                 </div>
               </td>
               {/* Uptime col */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[2].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 {avgEff !== null && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[2].label}</span>}
@@ -511,7 +512,7 @@ function CellSection({
                 )}
               </td>
               {/* Scrap Rate col */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[3].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 {avgScrap !== null && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[3].label}</span>}
@@ -520,7 +521,7 @@ function CellSection({
                 )}
               </td>
               {/* Total BUs col */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[4].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 {cellTotalBUs > 0 && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[4].label}</span>}
@@ -532,7 +533,7 @@ function CellSection({
                 )}
               </td>
               {/* Expected Output col */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[5].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 {cellTarget > 0 ? (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[5].label}</span>}
@@ -545,7 +546,7 @@ function CellSection({
                 ) : null}
               </td>
               {/* Speed col → avg speed with color if targets configured */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[6].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 {avgSpeed !== null && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[6].label}</span>}
@@ -557,7 +558,7 @@ function CellSection({
                 )}
               </td>
               {/* Idle Time col */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[7].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
                   {!open && <span className="text-[10px] text-gray-500">{colDefs[7].label}</span>}
                   <span className={`text-sm font-semibold ${cellTotalIdleTime > 0 ? "text-white" : "text-gray-600"}`}>
@@ -566,7 +567,7 @@ function CellSection({
                 </div>
               </td>
               {/* Error Time col */}
-              <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[8].minW}px` }}>
+              <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
                   {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
                   <span className={`text-sm font-semibold ${cellTotalErrorTime > 0 ? "text-white" : "text-gray-600"}`}>
@@ -575,7 +576,7 @@ function CellSection({
                 </div>
               </td>
               {/* Last Sync col → collapse chevron */}
-              <td className="px-4 py-3 text-right" style={{ minWidth: `${colDefs[9].minW}px` }}>
+              <td className="px-4 py-3 text-right">
                 <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
               </td>
             </tr>
@@ -587,7 +588,6 @@ function CellSection({
                   <th
                     key={cd.col}
                     onClick={(e) => { e.stopPropagation(); handleSort(cd.col); }}
-                    style={{ minWidth: `${cd.minW}px` }}
                     className={`px-4 py-2 text-left text-xs font-medium cursor-pointer select-none transition-colors
                       hover:text-cyan-400 hover:bg-cyan-900/10
                       ${sortCol === cd.col ? "text-white" : "text-gray-500"}`}
