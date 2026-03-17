@@ -74,6 +74,12 @@ export interface MachineData {
   lastSyncStatus?: string;
   lastSyncShift?: string;
   lastRequestShift?: string;
+  /** Unix ms timestamp of the last status transition (from bridge). */
+  statusSince?: number;
+  /** Accumulated idle time in minutes for current shift (completed stints, from bridge). */
+  idleTimeCalc?: number;
+  /** Accumulated error time in minutes for current shift (completed stints, from bridge). */
+  errorTimeCalc?: number;
 }
 
 export interface BridgeState {

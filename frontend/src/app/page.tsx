@@ -37,12 +37,7 @@ type DashboardMachine = MachineData & {
   buTarget?: number | null;
   buMediocre?: number | null;
   speedTarget?: number | null;
-  /** Unix ms timestamp of the last status transition (idle / error / offline / run). */
-  statusSince?: number;
-  /** Accumulated idle time in minutes (completed stints, from bridge). */
-  idleTimeCalc?: number;
-  /** Accumulated error time in minutes (completed stints, from bridge). */
-  errorTimeCalc?: number;
+  // statusSince, idleTimeCalc, errorTimeCalc inherited from MachineData
 };
 
 function formatStateDuration(sinceMs: number, nowMs: number): string {
@@ -113,8 +108,12 @@ function calcCorrectedEfficiency(m: DashboardMachine, plannedDowntimeMinutes: nu
   const productionTime  = activeShiftData?.ProductionTime ?? m.machineStatus?.ProductionTime ?? 0;
   const idleTime        = activeShiftData?.IdleTime       ?? m.machineStatus?.IdleTime       ?? 0;
   if (productionTime === 0 && idleTime === 0) return null;
-  const unplannedIdle  = Math.max(0, idleTime - plannedDowntimeMinutes);
-  const effectiveTime  = productionTime + unplannedIdle;
+  // Separate error time from idle time so the downtime budget only forgives
+  // genuine idle (scheduled breaks). Error time always counts against uptime.
+  const { errorMins } = calcIdleErrorTime(m, Date.now());
+  const idleOnly      = Math.max(0, idleTime - errorMins);
+  const unplannedIdle = Math.max(0, idleOnly - plannedDowntimeMinutes);
+  const effectiveTime = productionTime + unplannedIdle + errorMins;
   return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : null;
 }
 

@@ -100,12 +100,23 @@ function ProductionContent() {
 
   // Recalculate efficiency treating planned downtime as a budget.
   // Idle time up to the budget is expected and does not penalise uptime.
-  // Only idle time beyond the budget (unplanned) counts against the machine.
-  const correctedEfficiency = (productionTime: number, idleTime: number): number => {
-    const unplannedIdle = Math.max(0, idleTime - plannedDowntimeMins);
-    const effectiveTime = productionTime + unplannedIdle;
+  // Error time always counts against uptime (never absorbed by the budget).
+  const correctedEfficiency = (productionTime: number, idleTime: number, errorMins: number = 0): number => {
+    const idleOnly      = Math.max(0, idleTime - errorMins);
+    const unplannedIdle = Math.max(0, idleOnly - plannedDowntimeMins);
+    const effectiveTime = productionTime + unplannedIdle + errorMins;
     return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : 0;
   };
+
+  // Derive bridge-tracked error minutes for the active shift (completed stints
+  // plus the current ongoing stint if the machine is in error state).
+  const activeShiftErrorMins = (() => {
+    const status = (machine?.machineStatus?.Status || "").toLowerCase();
+    const currentStint = machine?.statusSince
+      ? Math.max(0, (Date.now() - machine.statusSince) / 60000)
+      : 0;
+    return (machine?.errorTimeCalc ?? 0) + (status === "error" ? currentStint : 0);
+  })();
 
   // Build a unified ShiftDataMessage for a given shift number:
   // - active shift → live bridge data (machineStatus fields)
@@ -127,7 +138,7 @@ function ProductionContent() {
         MissingSticks:          s.MissingSticks          ?? 0,
         FoultyPickups:          s.FoultyPickups          ?? 0,
         OtherErrors:            s.OtherErrors            ?? 0,
-        Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0),
+        Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0, activeShiftErrorMins),
         Reject:                 s.Reject                 ?? 0,
       };
     }
