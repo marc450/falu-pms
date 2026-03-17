@@ -751,23 +751,6 @@ export default function Dashboard() {
   const [cells, setCells] = useState<ProductionCell[]>([]);
   const [mqttConnected, setMqttConnected] = useState(false);
   const [currentShift, setCurrentShift] = useState<number>(0);
-  const [shiftStartedAt, setShiftStartedAt] = useState<number>(() => {
-    // Restore cached value so the progress bar survives page reloads without flashing to 0
-    if (typeof window !== "undefined") {
-      const cached = localStorage.getItem("shiftStartedAt");
-      if (cached) return parseInt(cached, 10);
-    }
-    return 0;
-  });
-  // True once the bridge has responded at least once, OR when a cached timestamp
-  // exists from a previous session. This prevents new users (no cache) from
-  // seeing a 100%-filled progress bar before the first bridge poll arrives.
-  const [bridgeLoaded, setBridgeLoaded] = useState<boolean>(() => {
-    if (typeof window !== "undefined") {
-      return !!localStorage.getItem("shiftStartedAt");
-    }
-    return false;
-  });
   const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -820,11 +803,6 @@ export default function Dashboard() {
       bridgeFailCount.current = 0;
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
-      setBridgeLoaded(true);
-      if (state.shiftStartedAt) {
-        setShiftStartedAt(state.shiftStartedAt);
-        localStorage.setItem("shiftStartedAt", String(state.shiftStartedAt));
-      }
       for (const [code, live] of Object.entries(state.machines)) {
         merged[code] = {
           ...live,
@@ -901,6 +879,23 @@ export default function Dashboard() {
   // Badge label: show team if assigned, otherwise fall back to slot name
   const shiftBadgeLabel = activeTeam ?? activeSlotName;
 
+  // Derive shift start wall-clock time from the active slot's configured startHour.
+  // This is always accurate regardless of bridge restarts or deployments, because
+  // the shift boundary is defined by the admin-configured startHour, not by when
+  // the bridge first detected a PLC shift-number change.
+  // Cross-midnight handled: if the computed start is in the future the shift began yesterday.
+  const shiftStartedAt = (() => {
+    if (activeSlotIndex < 0) return 0;
+    const slot = shiftConfig.slots[activeSlotIndex];
+    if (!slot) return 0;
+    const d = new Date(currentTime);
+    d.setHours(slot.startHour, 0, 0, 0);
+    if (d.getTime() > currentTime.getTime()) {
+      d.setDate(d.getDate() - 1);
+    }
+    return d.getTime();
+  })();
+
   // Net production time available per shift (shift length minus planned downtime)
   const effectiveShiftMins = Math.max(
     1,
@@ -945,7 +940,7 @@ export default function Dashboard() {
       )}
 
       {/* ── Shift + BU progress ── */}
-      {bridgeLoaded && shiftBadgeLabel && (
+      {shiftBadgeLabel && shiftStartedAt > 0 && (
         <ShiftAndBUProgress
           shiftStartedAt={shiftStartedAt}
           totalShiftMins={thresholds.bu.shiftLengthMinutes}
