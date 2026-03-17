@@ -143,6 +143,8 @@ async function loadRegisteredMachines() {
         },
         lastSync: row.last_sync_status || row.last_sync_shift || null,
         statusSince: row.status_since || new Date().toISOString(),
+        idleTimeCalc: 0,
+        errorTimeCalc: 0,
       };
     }
   }
@@ -202,7 +204,7 @@ async function handleShiftMessage(payload) {
 
   // ── Update in-memory state ──
   if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode };
+    allMachines[machineCode] = { machine: machineCode, idleTimeCalc: 0, errorTimeCalc: 0 };
   }
   const m = allMachines[machineCode];
 
@@ -210,7 +212,9 @@ async function handleShiftMessage(payload) {
   const prevShift = m.machineStatus?.Shift;
   const incomingShift = data.Shift || currentShiftNumber;
   if (prevShift !== undefined && incomingShift && prevShift !== incomingShift) {
-    logger.info(`Machine ${machineCode} shift ${prevShift}→${incomingShift}`);
+    logger.info(`Machine ${machineCode} shift ${prevShift}→${incomingShift} — resetting idle/error accumulators`);
+    m.idleTimeCalc  = 0;
+    m.errorTimeCalc = 0;
   }
   if (incomingShift !== currentShiftNumber) {
     currentShiftNumber = incomingShift;
@@ -223,6 +227,15 @@ async function handleShiftMessage(payload) {
   const prevStatus = (m.machineStatus?.Status || "").toLowerCase();
   const nextStatus = (data.Status || "offline").toLowerCase();
   if (prevStatus !== nextStatus) {
+    // Accumulate time spent in the previous status into idle/error buckets
+    if (m.statusSince && (prevStatus === "idle" || prevStatus === "error")) {
+      const durationMins = (Date.now() - new Date(m.statusSince).getTime()) / 60000;
+      if (durationMins > 0) {
+        if (prevStatus === "idle")  m.idleTimeCalc  = (m.idleTimeCalc  || 0) + durationMins;
+        if (prevStatus === "error") m.errorTimeCalc = (m.errorTimeCalc || 0) + durationMins;
+        logger.debug(`Accumulated ${durationMins.toFixed(1)} min of ${prevStatus} for ${machineCode} (idle=${(m.idleTimeCalc||0).toFixed(1)}, error=${(m.errorTimeCalc||0).toFixed(1)})`);
+      }
+    }
     m.statusSince = new Date().toISOString();
     logger.info(`Status change for ${machineCode}: ${prevStatus || "(none)"}→${nextStatus} at ${m.statusSince}`);
   }
@@ -348,7 +361,7 @@ async function handleErrorMessage(payload) {
 
   // Update in-memory state
   if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode };
+    allMachines[machineCode] = { machine: machineCode, idleTimeCalc: 0, errorTimeCalc: 0 };
   }
   allMachines[machineCode].activeErrors = errorCodes;
 

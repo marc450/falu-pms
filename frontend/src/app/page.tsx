@@ -39,6 +39,10 @@ type DashboardMachine = MachineData & {
   speedTarget?: number | null;
   /** Unix ms timestamp of the last status transition (idle / error / offline / run). */
   statusSince?: number;
+  /** Accumulated idle time in minutes (completed stints, from bridge). */
+  idleTimeCalc?: number;
+  /** Accumulated error time in minutes (completed stints, from bridge). */
+  errorTimeCalc?: number;
 };
 
 function formatStateDuration(sinceMs: number, nowMs: number): string {
@@ -67,9 +71,10 @@ function calcBuRunRate(
 ): { projected: number; target: number; rate: number } | null {
   const target = m.buTarget;
   if (!target || target <= 0) return null;
-  // Only project for actively running machines
+  // Show expected output for all non-offline machines (including idle/error).
+  // When idle or in error, speed is 0 so projected = currentBUs (no growth).
   const s = m.machineStatus?.Status?.toLowerCase();
-  if (!s || s === "offline" || s === "idle" || s === "error") return null;
+  if (!s || s === "offline") return null;
 
   // Read production from the shift that is actually active, not always shift1.
   const activeShift = m.machineStatus?.ActShift ?? 1;
@@ -111,6 +116,17 @@ function calcCorrectedEfficiency(m: DashboardMachine, plannedDowntimeMinutes: nu
   const unplannedIdle  = Math.max(0, idleTime - plannedDowntimeMinutes);
   const effectiveTime  = productionTime + unplannedIdle;
   return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : null;
+}
+
+// Calculate total idle and error time for a machine.
+// The bridge accumulates completed stints; the frontend adds the current
+// ongoing stint so the display updates live without waiting for a transition.
+function calcIdleErrorTime(m: DashboardMachine, now: number): { idleMins: number; errorMins: number } {
+  const status = (m.machineStatus?.Status || "").toLowerCase();
+  const currentStintMins = m.statusSince ? Math.max(0, (now - m.statusSince) / 60000) : 0;
+  const idleMins  = (m.idleTimeCalc  ?? 0) + (status === "idle"  ? currentStintMins : 0);
+  const errorMins = (m.errorTimeCalc ?? 0) + (status === "error" ? currentStintMins : 0);
+  return { idleMins, errorMins };
 }
 
 function offlinePlaceholder(row: RegisteredMachine): MachineData {
@@ -174,8 +190,16 @@ function sortMachineList(
       case "Machine":    aVal = a.machine; bVal = b.machine; break;
       case "Status":     aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
       case "Speed":      aVal = a.machineStatus?.Speed || 0; bVal = b.machineStatus?.Speed || 0; break;
-      case "IdleTime":   aVal = a.machineStatus?.IdleTime || 0; bVal = b.machineStatus?.IdleTime || 0; break;
-      case "ErrorTime":  aVal = 0; bVal = 0; break;
+      case "IdleTime": {
+        const aT = calcIdleErrorTime(a as DashboardMachine, Date.now());
+        const bT = calcIdleErrorTime(b as DashboardMachine, Date.now());
+        aVal = aT.idleMins; bVal = bT.idleMins; break;
+      }
+      case "ErrorTime": {
+        const aT2 = calcIdleErrorTime(a as DashboardMachine, Date.now());
+        const bT2 = calcIdleErrorTime(b as DashboardMachine, Date.now());
+        aVal = aT2.errorMins; bVal = bT2.errorMins; break;
+      }
       case "Efficiency": aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
       case "Reject":     aVal = a.machineStatus?.Reject || 0; bVal = b.machineStatus?.Reject || 0; break;
       case "LastSync":
@@ -204,7 +228,7 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
   const activeShiftNum  = m.machineStatus?.ActShift ?? 1;
   const activeShiftData = activeShiftNum === 2 ? m.shift2 : activeShiftNum === 3 ? m.shift3 : m.shift1;
   const currentBUs  = (activeShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
-  const idleTimeMins = activeShiftData?.IdleTime ?? m.machineStatus?.IdleTime ?? 0;
+  const { idleMins, errorMins } = calcIdleErrorTime(m, now);
 
   // In rows: suppress green — only yellow and red signal problems; good = plain white
   const toRowColor = (c: string) => c === "text-green-400" ? "text-white" : c;
@@ -252,10 +276,10 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
         ) : null}
       </td>
       <td className="px-4 py-3 text-white">
-        {!isOffline && idleTimeMins > 0 ? fmtDuration(idleTimeMins) : ""}
+        {!isOffline && idleMins > 0 ? fmtDuration(idleMins) : ""}
       </td>
-      <td className="px-4 py-3 text-gray-600">
-        {"---"}
+      <td className="px-4 py-3 text-white">
+        {!isOffline && errorMins > 0 ? fmtDuration(errorMins) : ""}
       </td>
       <td className="px-4 py-3 text-gray-400">
         {m.lastSyncStatus
@@ -294,13 +318,15 @@ function sortCellMachines(
       }
       case "Speed":     aVal = a.machineStatus?.Speed      || 0; bVal = b.machineStatus?.Speed      || 0; break;
       case "IdleTime": {
-        const aShift2 = (a.machineStatus?.ActShift ?? 1); const aSD2 = aShift2 === 2 ? a.shift2 : aShift2 === 3 ? a.shift3 : a.shift1;
-        const bShift2 = (b.machineStatus?.ActShift ?? 1); const bSD2 = bShift2 === 2 ? b.shift2 : bShift2 === 3 ? b.shift3 : b.shift1;
-        aVal = aSD2?.IdleTime ?? a.machineStatus?.IdleTime ?? 0;
-        bVal = bSD2?.IdleTime ?? b.machineStatus?.IdleTime ?? 0;
-        break;
+        const aTimes = calcIdleErrorTime(a, Date.now());
+        const bTimes = calcIdleErrorTime(b, Date.now());
+        aVal = aTimes.idleMins; bVal = bTimes.idleMins; break;
       }
-      case "ErrorTime": aVal = 0; bVal = 0; break;
+      case "ErrorTime": {
+        const aTimes2 = calcIdleErrorTime(a, Date.now());
+        const bTimes2 = calcIdleErrorTime(b, Date.now());
+        aVal = aTimes2.errorMins; bVal = bTimes2.errorMins; break;
+      }
       case "Sync":
         aVal = a.lastSyncStatus ? new Date(a.lastSyncStatus).getTime() : 0;
         bVal = b.lastSyncStatus ? new Date(b.lastSyncStatus).getTime() : 0;
@@ -357,7 +383,7 @@ function CellSection({
 
   // Compute cell-level stats
   let running = 0, effSum = 0, effCount = 0;
-  let cellTotalBUs = 0, cellTotalIdleTime = 0;
+  let cellTotalBUs = 0, cellTotalIdleTime = 0, cellTotalErrorTime = 0;
   let totalDiscarded = 0, totalProduced = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
   let cellProjected = 0, cellTarget = 0, cellMediocreTarget = 0;
@@ -378,8 +404,10 @@ function CellSection({
     const mActShift = m.machineStatus?.ActShift ?? 1;
     const mShiftData = mActShift === 2 ? m.shift2 : mActShift === 3 ? m.shift3 : m.shift1;
     if (!isOffline) {
-      cellTotalBUs      += (mShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
-      cellTotalIdleTime += mShiftData?.IdleTime ?? m.machineStatus?.IdleTime ?? 0;
+      cellTotalBUs += (mShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
+      const mTimes = calcIdleErrorTime(m, Date.now());
+      cellTotalIdleTime  += mTimes.idleMins;
+      cellTotalErrorTime += mTimes.errorMins;
     }
     // Speed: running machines only
     if (isRunning && m.machineStatus?.Speed) { speedSum += m.machineStatus.Speed; speedCount++; }
@@ -541,10 +569,19 @@ function CellSection({
               </td>
               {/* Total Error Time col */}
               <td className="px-4 py-3 whitespace-nowrap" style={{ minWidth: `${colDefs[8].minW}px` }}>
-                <div className="flex flex-col gap-0.5">
-                  {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
-                  <span className="text-sm font-semibold text-gray-600">---</span>
-                </div>
+                {cellTotalErrorTime > 0 ? (
+                  <div className="flex flex-col gap-0.5">
+                    {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
+                    <span className="text-sm font-semibold text-white">
+                      {fmtDuration(cellTotalErrorTime)}
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-0.5">
+                    {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
+                    <span className="text-sm font-semibold text-gray-600">---</span>
+                  </div>
+                )}
               </td>
               {/* Last Sync col → collapse chevron */}
               <td className="px-4 py-3 text-right" style={{ minWidth: `${colDefs[9].minW}px` }}>
@@ -893,6 +930,8 @@ export default function Dashboard() {
         // to Supabase, so the timer survives page reloads and bridge restarts.
         const isoSince = (live as any).statusSince as string | undefined;
         const statusSince = isoSince ? new Date(isoSince).getTime() : Date.now();
+        const idleTimeCalc  = (live as any).idleTimeCalc  as number | undefined;
+        const errorTimeCalc = (live as any).errorTimeCalc as number | undefined;
 
         merged[code] = {
           ...live,
@@ -907,6 +946,8 @@ export default function Dashboard() {
           buMediocre:        merged[code]?.buMediocre ?? null,
           speedTarget:       merged[code]?.speedTarget ?? null,
           statusSince,
+          idleTimeCalc:  idleTimeCalc  ?? 0,
+          errorTimeCalc: errorTimeCalc ?? 0,
         };
       }
       machinesRef.current = merged;
