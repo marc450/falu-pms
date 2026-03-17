@@ -980,15 +980,20 @@ function ShiftsTab() {
   // ── Draft slot management (local only until Save) ─────────
   const markDirty = () => { setSlotsDirty(true); setSlotError(null); setSlotSuccess(false); };
 
+  // Realistic pre-fills for each successive slot (indexed by current slot count before adding)
+  const SLOT_PRESETS: TimeSlot[] = [
+    { name: "Day",       startHour: 6  },
+    { name: "Night",     startHour: 18 },
+    { name: "Afternoon", startHour: 14 },
+    { name: "Morning",   startHour: 2  },
+  ];
+
   const addSlot = () => {
     if (draftSlots.length >= 4) return;
-    const newCount = draftSlots.length + 1;
-    const spacing = Math.round(24 / newCount);
-    const firstStart = draftSlots[0]?.startHour ?? 6;
-    const newSlots: TimeSlot[] = Array.from({ length: newCount }, (_, i) => ({
-      name: draftSlots[i]?.name ?? `Shift ${i + 1}`,
-      startHour: (firstStart + i * spacing) % 24,
-    }));
+    const preset = SLOT_PRESETS[draftSlots.length] ?? { name: `Shift ${draftSlots.length + 1}`, startHour: 0 };
+    // Keep existing slots intact; append the new preset and re-sort by start hour
+    const newSlots = [...draftSlots, { name: preset.name, startHour: preset.startHour }]
+      .sort((a, b) => a.startHour - b.startHour);
     setDraftSlots(newSlots);
     markDirty();
   };
@@ -1195,10 +1200,10 @@ function ShiftsTab() {
       <div className={`bg-gray-800/50 border rounded-lg overflow-hidden max-w-lg ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-clock text-cyan-400"></i>Shift Setup
+            <i className="bi bi-clock text-cyan-400"></i>Shift Slots
           </h4>
           <p className="text-gray-500 text-xs mt-0.5">
-            Match this to the shift configuration on the machine HMI. You cannot override the machine's shift structure here—only label and assign teams to the shifts it reports.
+            Match the shift slots to the shift configuration on the machine HMI. You <em className="text-gray-400 not-italic font-semibold">cannot</em> override the machine&apos;s shift structure here.
           </p>
         </div>
         <div className="px-5 py-3 space-y-2">
@@ -1228,6 +1233,9 @@ function ShiftsTab() {
                         onKeyDown={e => e.key === "Enter" && updateSlot(idx, { startHour: Math.max(0, Math.min(23, Number((e.target as HTMLInputElement).value))) })}
                         className="bg-gray-900 border border-cyan-500 rounded px-2 py-1 text-sm text-white w-14 text-right focus:outline-none"
                       />
+                      <span className="text-gray-600 text-xs">&ndash;</span>
+                      <span className="text-gray-500 text-xs">ends at</span>
+                      <span className="text-gray-400 text-xs font-mono">{fmtHour(end)}</span>
                     </div>
                   ) : (
                     <button onClick={() => setEditingSlot(idx)} className="text-sm text-white hover:text-cyan-300 transition-colors">
