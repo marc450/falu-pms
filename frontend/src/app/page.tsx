@@ -99,6 +99,20 @@ function calcBuRunRate(
   return { projected, target, rate: projected / target };
 }
 
+// Recalculate uptime using the same downtime budget logic as calcBuRunRate.
+// Planned idle time (up to the budget) is excluded from the denominator so
+// scheduled breaks do not penalise the efficiency figure.
+function calcCorrectedEfficiency(m: DashboardMachine, plannedDowntimeMinutes: number): number | null {
+  const activeShift    = m.machineStatus?.ActShift ?? 1;
+  const activeShiftData = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
+  const productionTime  = activeShiftData?.ProductionTime ?? m.machineStatus?.ProductionTime ?? 0;
+  const idleTime        = activeShiftData?.IdleTime       ?? m.machineStatus?.IdleTime       ?? 0;
+  if (productionTime === 0 && idleTime === 0) return null;
+  const unplannedIdle  = Math.max(0, idleTime - plannedDowntimeMinutes);
+  const effectiveTime  = productionTime + unplannedIdle;
+  return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : null;
+}
+
 function offlinePlaceholder(row: RegisteredMachine): MachineData {
   return {
     machine: row.machine_code,
@@ -179,7 +193,8 @@ function sortMachineList(
 // ─────────────────────────────────────────────────────────────
 function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStartedAt, onClick, now }: { m: DashboardMachine; shiftLengthMinutes: number; plannedDowntimeMinutes: number; shiftStartedAt: number; onClick: () => void; now: number }) {
   const status     = getStatusColor(m.machineStatus?.Status);
-  const effColor   = applyMachineEfficiencyColor(m.machineStatus?.Efficiency ?? null, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
+  const corrEff    = calcCorrectedEfficiency(m, plannedDowntimeMinutes);
+  const effColor   = applyMachineEfficiencyColor(corrEff, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
   const scpColor   = applyMachineScrapColor(m.machineStatus?.Reject ?? null, m.scrapGood ?? null, m.scrapMediocre ?? null);
   const spdColor   = applyMachineSpeedColor(m.machineStatus?.Speed ?? null, m.speedTarget ?? null);
   const buRate     = calcBuRunRate(m, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMinutes);
@@ -211,7 +226,7 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
         )}
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
-        {!isOffline && hasProduction ? `${(m.machineStatus?.Efficiency ?? 0).toFixed(1)}%` : ""}
+        {!isOffline && hasProduction && corrEff !== null ? `${corrEff.toFixed(1)}%` : ""}
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(scpColor.text)}`}>
         {!isOffline && hasProduction ? `${(m.machineStatus?.Reject ?? 0).toFixed(1)}%` : ""}
@@ -318,7 +333,7 @@ function CellSection({
   const sortedMachines = sortCellMachines(machines, sortCol, sortAsc, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMins);
 
   // Compute cell-level stats
-  let running = 0, effSum = 0;
+  let running = 0, effSum = 0, effCount = 0;
   let swabsTotal = 0, outputTotal = 0;
   let totalDiscarded = 0, totalProduced = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
@@ -330,8 +345,9 @@ function CellSection({
     const isRunning = s === "run" || s === "running";
     const isOffline = s === "offline" || !s;
     if (isRunning) running++;
-    // Uptime: all machines count — non-running contribute 0
-    effSum += m.machineStatus?.Efficiency ?? 0;
+    // Uptime: use corrected efficiency (planned idle excluded from denominator)
+    const corrEff = calcCorrectedEfficiency(m, plannedDowntimeMins);
+    if (corrEff !== null) { effSum += corrEff; effCount++; }
     // Scrap: sum raw discarded/produced swabs across all non-offline machines
     const produced = m.machineStatus?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
     const discarded = m.machineStatus?.DiscardedSwabs ?? 0;
@@ -351,7 +367,7 @@ function CellSection({
     if (m.scrapGood)          { scrapGoodSum += m.scrapGood;          scrapGoodCount++; }
     if (m.scrapMediocre)      { scrapMedSum  += m.scrapMediocre;      scrapMedCount++;  }
   }
-  const avgEff    = machines.length > 0 ? effSum / machines.length : null;
+  const avgEff    = effCount > 0 ? effSum / effCount : null;
   // Weighted scrap: sum(discarded) / sum(produced) — not an average of per-machine rates
   const avgScrap  = totalProduced > 0 ? (totalDiscarded / totalProduced) * 100 : null;
   const avgSpeed  = speedCount > 0 ? speedSum / speedCount : null;
@@ -581,7 +597,8 @@ function ParkSummaryTiles({
     const s = m.machineStatus?.Status?.toLowerCase();
     const isRunning = s === "run" || s === "running";
     if (isRunning) running++;
-    if (m.machineStatus?.Efficiency) { effSum += m.machineStatus.Efficiency; effCount++; }
+    const corrEff = calcCorrectedEfficiency(m, plannedDowntimeMins);
+    if (corrEff !== null) { effSum += corrEff; effCount++; }
     // Scrap: sum raw discarded/produced swabs across all non-offline machines
     const isOffline = s === "offline" || !s;
     const produced  = m.machineStatus?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
