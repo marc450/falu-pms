@@ -115,7 +115,7 @@ function getSubscribeTopic() {
 async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
-    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since")
+    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since, idle_time_calc, error_time_calc")
     .eq("hidden", false)
     .order("machine_code");
 
@@ -143,8 +143,8 @@ async function loadRegisteredMachines() {
         },
         lastSync: row.last_sync_status || row.last_sync_shift || null,
         statusSince: row.status_since || new Date().toISOString(),
-        idleTimeCalc: 0,
-        errorTimeCalc: 0,
+        idleTimeCalc: row.idle_time_calc || 0,
+        errorTimeCalc: row.error_time_calc || 0,
       };
     }
   }
@@ -215,6 +215,11 @@ async function handleShiftMessage(payload) {
     logger.info(`Machine ${machineCode} shift ${prevShift}→${incomingShift} — resetting idle/error accumulators`);
     m.idleTimeCalc  = 0;
     m.errorTimeCalc = 0;
+    // Persist reset to DB so a restart doesn't restore stale values
+    const machineIdForReset = machineIdCache[machineCode];
+    if (machineIdForReset) {
+      supabase.from("machines").update({ idle_time_calc: 0, error_time_calc: 0 }).eq("id", machineIdForReset).then(() => {});
+    }
   }
   if (incomingShift !== currentShiftNumber) {
     currentShiftNumber = incomingShift;
@@ -277,9 +282,11 @@ async function handleShiftMessage(payload) {
     last_sync_status: now,
     hidden: false,
   };
-  // Persist statusSince on status change
+  // Persist statusSince and idle/error accumulators on status change
   if (prevStatus !== nextStatus) {
     updatePayload.status_since = m.statusSince;
+    updatePayload.idle_time_calc = m.idleTimeCalc || 0;
+    updatePayload.error_time_calc = m.errorTimeCalc || 0;
   }
   await supabase
     .from("machines")
