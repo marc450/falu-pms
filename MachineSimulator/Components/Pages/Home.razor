@@ -3,6 +3,7 @@
 @inject MqttSimService Mqtt
 @inject SimSettingsService Settings
 @implements IDisposable
+@using System.Timers
 
 <div class="container-fluid">
 
@@ -107,9 +108,12 @@
                             </div>
                         </div>
 
-                        <!-- Shift selector -->
+                        <!-- Shift selector (manual override for testing) -->
                         <div class="d-flex align-items-center mb-2 gap-2">
-                            <small class="text-muted" style="min-width:55px">Act.Shift:</small>
+                            <small class="text-muted" style="min-width:55px">
+                                Act.Shift:
+                                <br /><span class="text-warning" style="font-size:.65rem" title="Shift rotates automatically. Use these buttons to test only.">⚠ test</span>
+                            </small>
                             <div class="btn-group flex-fill">
                                 @for (int sn = 1; sn <= 3; sn++)
                                 {
@@ -195,9 +199,20 @@
                     </div>
 
                     <!-- Card footer -->
-                    <div class="card-footer py-1 d-flex justify-content-between text-muted small">
-                        <span>Active shift: <strong class="text-info">@machine.ActShift</strong></span>
-                        <span>@(Sim.SendingEnabled ? "🟢 Sending" : "⚫ Paused")</span>
+                    <div class="card-footer py-1 text-muted small">
+                        <div class="d-flex justify-content-between">
+                            <span>
+                                <i class="bi bi-clock me-1"></i>
+                                Scheduled shift: <strong class="text-info">@SimulatorService.ComputeCurrentShift()</strong>
+                                &nbsp;|&nbsp;
+                                Active: <strong class="text-info">@machine.ActShift</strong>
+                            </span>
+                            <span>@(Sim.SendingEnabled ? "🟢 Sending" : "⚫ Paused")</span>
+                        </div>
+                        <div class="text-center" style="font-size:.7rem; opacity:.7">
+                            Next shift change: <strong>@SimulatorService.NextShiftChangeTime().ToString("HH:mm")</strong>
+                            &nbsp;(in @FormatCountdown(SimulatorService.NextShiftChangeTime()))
+                        </div>
                     </div>
                 </div>
             </div>
@@ -207,11 +222,18 @@
 
 @code {
     private string newMachineName = "";
+    private System.Timers.Timer? _clockTimer;
 
     protected override void OnInitialized()
     {
-        Sim.OnDataChanged      += RefreshUI;
+        Sim.OnDataChanged        += RefreshUI;
         Mqtt.OnConnectionChanged += RefreshUI;
+
+        // Refresh the countdown every second so it stays live
+        _clockTimer = new System.Timers.Timer(1000);
+        _clockTimer.Elapsed += (_, _) => InvokeAsync(StateHasChanged);
+        _clockTimer.AutoReset = true;
+        _clockTimer.Start();
     }
 
     private void RefreshUI() => InvokeAsync(StateHasChanged);
@@ -231,6 +253,15 @@
     private void ToggleSending() => Sim.EnableSending(!Sim.SendingEnabled);
 
     // ── Helpers ──────────────────────────────────────────────────────────────────
+
+    private static string FormatCountdown(DateTime target)
+    {
+        var rem = target - DateTime.Now;
+        if (rem <= TimeSpan.Zero) return "now";
+        if (rem.TotalHours >= 1)
+            return $"{(int)rem.TotalHours}h {rem.Minutes:D2}m";
+        return $"{rem.Minutes}m {rem.Seconds:D2}s";
+    }
 
     private string GetStatusBadge(string status) => status switch
     {
@@ -281,5 +312,7 @@
     {
         Sim.OnDataChanged        -= RefreshUI;
         Mqtt.OnConnectionChanged -= RefreshUI;
+        _clockTimer?.Stop();
+        _clockTimer?.Dispose();
     }
 }

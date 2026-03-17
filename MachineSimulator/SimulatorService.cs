@@ -4,6 +4,33 @@ namespace MachineSimulator
 {
     public class SimulatorService : IDisposable
     {
+        // ── Shift schedule constants ───────────────────────────────────────────────
+        // Shifts cycle: 1 (07:00–19:00) → 2 (19:00–07:00) → 3 (07:00–19:00) → repeat
+        // The anchor is any historical Monday 07:00 — used purely as a modulo origin.
+        private static readonly DateTime ShiftAnchor =
+            new DateTime(2000, 1, 3, 7, 0, 0, DateTimeKind.Local); // 2000-01-03 was a Monday
+
+        private const int ShiftDurationHours = 12;
+        private const int ShiftCycleLength   = 3; // shifts before repeating
+
+        // ── Returns the current shift number (1, 2, or 3) based on wall-clock time ─
+        public static int ComputeCurrentShift()
+        {
+            var elapsed = DateTime.Now - ShiftAnchor;
+            if (elapsed.TotalHours < 0) elapsed = TimeSpan.Zero;
+            var block = (long)(elapsed.TotalHours / ShiftDurationHours);
+            return (int)(block % ShiftCycleLength) + 1; // 1-based
+        }
+
+        // ── Returns the DateTime when the next shift boundary occurs ──────────────
+        public static DateTime NextShiftChangeTime()
+        {
+            var elapsed = DateTime.Now - ShiftAnchor;
+            if (elapsed.TotalHours < 0) elapsed = TimeSpan.Zero;
+            var block = (long)(elapsed.TotalHours / ShiftDurationHours);
+            return ShiftAnchor.AddHours((block + 1) * ShiftDurationHours);
+        }
+
         private readonly SimSettingsService _settings;
         private readonly Random _rng = new();
         private System.Timers.Timer? _timer;
@@ -27,6 +54,11 @@ namespace MachineSimulator
             foreach (var name in settings.GetSettings().MachineNames)
                 Machines.Add(CreateMachine(name));
 
+            // Initialise each machine to the currently scheduled shift
+            var currentShift = ComputeCurrentShift();
+            foreach (var m in Machines)
+                m.ActShift = currentShift;
+
             SendingEnabled = settings.GetSettings().SendingEnabled;
             RestartTimer();
         }
@@ -47,7 +79,9 @@ namespace MachineSimulator
                 Machines.Any(m => m.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
                 return;
 
-            Machines.Add(CreateMachine(name));
+            var m = CreateMachine(name);
+            m.ActShift = ComputeCurrentShift();
+            Machines.Add(m);
             PersistMachines();
             OnDataChanged?.Invoke();
         }
@@ -117,6 +151,32 @@ namespace MachineSimulator
             }
         }
 
+        // ─────────────────────────── Shift rotation ───────────────────────────────
+
+        // Called every tick: if the scheduled shift has changed, save outgoing
+        // shift data, reset its counters, and move to the new shift.
+        private void CheckAndRotateShift(SimMachine m)
+        {
+            var scheduled = ComputeCurrentShift();
+            if (m.ActShift == scheduled) return;
+
+            var outgoingShift = m.ActShift;
+
+            // Publish save for the outgoing shift and current total
+            if (SendingEnabled)
+            {
+                OnShiftReady?.Invoke(BuildShift(m, outgoingShift, m.GetShift(outgoingShift), save: true));
+                OnShiftReady?.Invoke(BuildShift(m, 4, m.Total, save: false));
+            }
+
+            Console.WriteLine($"[Sim] {m.Name}: Shift {outgoingShift} → {scheduled} at {DateTime.Now:HH:mm:ss}");
+
+            // Reset the incoming shift's counters so it starts fresh
+            m.GetShift(scheduled).Reset();
+
+            m.ActShift = scheduled;
+        }
+
         // ─────────────────────────── Timer & simulation ───────────────────────────
 
         public void RestartTimer()
@@ -132,6 +192,9 @@ namespace MachineSimulator
 
         private void Tick()
         {
+            foreach (var m in Machines)
+                CheckAndRotateShift(m);
+
             foreach (var m in Machines)
                 Simulate(m);
 

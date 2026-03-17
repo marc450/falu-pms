@@ -58,6 +58,23 @@ namespace MachineSimulator
         public long DisgardedSwaps { get; set; }
         public double Efficiency { get; set; }
         public double Reject { get; set; }
+
+        public void Reset()
+        {
+            ProductionTime       = 0;
+            IdleTime             = 0;
+            CottonTears          = 0;
+            MissingSticks        = 0;
+            FoultyPickups        = 0;
+            OtherErrors          = 0;
+            ProducedSwaps        = 0;
+            PackagedSwaps        = 0;
+            ProducedBoxes        = 0;
+            ProducedBoxesLayerPlus = 0;
+            DisgardedSwaps       = 0;
+            Efficiency           = 0;
+            Reject               = 0;
+        }
     }
 
     // One simulated machine
