@@ -276,10 +276,10 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
         ) : null}
       </td>
       <td className="px-4 py-3 text-white">
-        {!isOffline ? (idleMins > 0 ? fmtDuration(idleMins) : <span className="text-gray-600">-</span>) : ""}
+        {!isOffline ? (Math.round(idleMins) > 0 ? fmtDuration(idleMins) : <span className="text-gray-600">&ndash;</span>) : ""}
       </td>
       <td className="px-4 py-3 text-white">
-        {!isOffline ? (errorMins > 0 ? fmtDuration(errorMins) : <span className="text-gray-600">-</span>) : ""}
+        {!isOffline ? (Math.round(errorMins) > 0 ? fmtDuration(errorMins) : <span className="text-gray-600">&ndash;</span>) : ""}
       </td>
       <td className="px-4 py-3 text-gray-400">
         {m.lastSyncStatus
@@ -561,8 +561,8 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
                   {!open && <span className="text-[10px] text-gray-500">{colDefs[7].label}</span>}
-                  <span className={`text-sm font-semibold ${cellTotalIdleTime > 0 ? "text-white" : "text-gray-600"}`}>
-                    {cellTotalIdleTime > 0 ? fmtDuration(cellTotalIdleTime) : "-"}
+                  <span className={`text-sm font-semibold ${Math.round(cellTotalIdleTime) > 0 ? "text-white" : "text-gray-600"}`}>
+                    {Math.round(cellTotalIdleTime) > 0 ? fmtDuration(cellTotalIdleTime) : "\u2013"}
                   </span>
                 </div>
               </td>
@@ -570,8 +570,8 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
                   {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
-                  <span className={`text-sm font-semibold ${cellTotalErrorTime > 0 ? "text-white" : "text-gray-600"}`}>
-                    {cellTotalErrorTime > 0 ? fmtDuration(cellTotalErrorTime) : "-"}
+                  <span className={`text-sm font-semibold ${Math.round(cellTotalErrorTime) > 0 ? "text-white" : "text-gray-600"}`}>
+                    {Math.round(cellTotalErrorTime) > 0 ? fmtDuration(cellTotalErrorTime) : "\u2013"}
                   </span>
                 </div>
               </td>
@@ -699,7 +699,7 @@ function ParkSummaryTiles({
     ? `${Math.round(floorProjected)} / ${Math.round(floorTarget)}`
     : "—";
   const buSub = floorRate !== null
-    ? `BUs / shift`
+    ? `${Math.round(floorRate * 100)}% of target`
     : hasAnyBuTarget ? "No live data" : "No targets set";
 
   return (
@@ -797,7 +797,7 @@ function ShiftAndBUProgress({
   }
   const hasBU      = totalTargetBU > 0;
   const buProgress = hasBU ? Math.min(1, totalCurrentBU / totalTargetBU) : 0;
-  const buPct      = Math.round(buProgress * 100);
+  const buPct      = hasBU ? Math.round((totalCurrentBU / totalTargetBU) * 100) : 0;
 
   // BU bar color derived from expected output thresholds (same as KPI tile)
   const buc = applyBuRunRateColor(floorProjected, totalTargetBU, floorMediocreTarget > 0 ? floorMediocreTarget : null);
@@ -842,7 +842,7 @@ function ShiftAndBUProgress({
             <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
               <div
                 className={`h-full rounded-full transition-all duration-1000 ${buBarColor}`}
-                style={{ width: `${buPct}%` }}
+                style={{ width: `${Math.min(100, buPct)}%` }}
               />
             </div>
           </div>
