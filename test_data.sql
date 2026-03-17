@@ -25,8 +25,10 @@
 --   Weekend factor: −5 %    Night-shift factor: −3 %
 -- ============================================================================
 
-DELETE FROM shift_readings   WHERE recorded_at < CURRENT_DATE;
-DELETE FROM saved_shift_logs WHERE saved_at     < CURRENT_DATE;
+-- Wipe ALL historical data so no old test runs accumulate on top of each other.
+-- The live bridge will regenerate today's readings automatically after this runs.
+DELETE FROM shift_readings;
+DELETE FROM saved_shift_logs;
 
 -- Restore correct per-machine BU targets (run unconditionally)
 UPDATE machines
