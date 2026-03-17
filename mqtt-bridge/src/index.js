@@ -306,7 +306,8 @@ async function handleShiftMessage(payload) {
       status: (data.Status || "run").toLowerCase(),
       speed: data.Speed || 0,
       production_time: data.ProductionTime || 0,
-      idle_time: data.IdleTime || 0,
+      idle_time:       data.IdleTime       || 0,
+      error_time:      Math.round(m.errorTimeCalc || 0),  // bridge accumulator — persisted so history survives shift reset
       cotton_tears: 0,           // no longer in payload — will come via cloud/Error
       missing_sticks: 0,
       faulty_pickups: 0,
@@ -336,6 +337,7 @@ async function handleShiftMessage(payload) {
       shift_number:             data.Shift,
       production_time:          Math.round(data.ProductionTime  || 0),
       idle_time:                Math.round(data.IdleTime        || 0),
+      error_time:               Math.round(m.errorTimeCalc      || 0),  // bridge accumulator
       cotton_tears:             data.CottonTears               || 0,
       missing_sticks:           data.MissingSticks             || 0,
       faulty_pickups:           data.FoultyPickups             || 0,
