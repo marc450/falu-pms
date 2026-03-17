@@ -751,7 +751,14 @@ export default function Dashboard() {
   const [cells, setCells] = useState<ProductionCell[]>([]);
   const [mqttConnected, setMqttConnected] = useState(false);
   const [currentShift, setCurrentShift] = useState<number>(0);
-  const [shiftStartedAt, setShiftStartedAt] = useState<number>(Date.now());
+  const [shiftStartedAt, setShiftStartedAt] = useState<number>(() => {
+    // Restore cached value so the progress bar survives page reloads without flashing to 0
+    if (typeof window !== "undefined") {
+      const cached = localStorage.getItem("shiftStartedAt");
+      if (cached) return parseInt(cached, 10);
+    }
+    return 0;
+  });
   const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
@@ -804,7 +811,10 @@ export default function Dashboard() {
       bridgeFailCount.current = 0;
       setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
-      if (state.shiftStartedAt) setShiftStartedAt(state.shiftStartedAt);
+      if (state.shiftStartedAt) {
+        setShiftStartedAt(state.shiftStartedAt);
+        localStorage.setItem("shiftStartedAt", String(state.shiftStartedAt));
+      }
       for (const [code, live] of Object.entries(state.machines)) {
         merged[code] = {
           ...live,
