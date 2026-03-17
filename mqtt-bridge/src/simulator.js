@@ -149,35 +149,24 @@ const ERROR_DURATIONS = [
 // ============================================
 // SPEED CONFIG
 // ============================================
-//
-// Target: fleet of 18 machines (8 CB + 10 CT) produces ~278 BU/h
-//   = 185 BU/shift/machine at the Good threshold.
-// Net running time per 12 h shift:
-//   720 min  −  90 min breaks  −  30 min cleaning  −  ~30 min idle/errors
-//   = ~570 min  (79 %)
-// Required speed:
-//   185 BU × 7 200 swabs/BU ÷ 570 min ≈ 2 337 pcs/min
-// CB runs slightly faster (2 350–2 500 avg 2 425), CT slightly slower
-// (2 200–2 350 avg 2 275).  Fleet average at tier 0:
-//   (8 × 2 425 + 10 × 2 275) × 570 swabs ÷ 7 200 = 3 337 BU/shift → 278 BU/h ✓
 const SPEED_CONFIG = {
   CB: {
     tiers: [
-      { cumProb: 0.90, min: 2350, max: 2500 },   // normal running
-      { cumProb: 0.95, min: 1850, max: 2349 },   // degraded (minor issue)
-      { cumProb: 1.00, min: 1200, max: 1849 },   // poor (major issue)
+      { cumProb: 0.90, min: 2689, max: 2850 },
+      { cumProb: 0.95, min: 2300, max: 2688 },
+      { cumProb: 1.00, min: 1800, max: 2299 },
     ],
   },
   CT: {
     tiers: [
-      { cumProb: 0.90, min: 2200, max: 2350 },   // normal running
-      { cumProb: 0.95, min: 1700, max: 2199 },   // degraded
-      { cumProb: 1.00, min: 1000, max: 1699 },   // poor
+      { cumProb: 0.90, min: 2389, max: 2650 },
+      { cumProb: 0.95, min: 2300, max: 2388 },
+      { cumProb: 1.00, min: 1500, max: 2299 },
     ],
   },
 };
 
-const SPEED_VARIATION = 100;  // ±pcs/min applied each tick within tier bounds
+const SPEED_VARIATION = 150;  // ±pcs/min applied each tick within tier bounds
 const TIER_LOCK_MIN   = 45;   // minutes a machine stays in the same speed tier
 
 // ============================================
