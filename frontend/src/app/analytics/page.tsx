@@ -28,9 +28,10 @@ const TOOLTIP_CONTENT_STYLE = {
   border: "1px solid #374151",
   borderRadius: "6px",
   fontSize: 12,
+  color: "#e5e7eb",
 };
 const TOOLTIP_LABEL_STYLE = { color: "#9ca3af", marginBottom: 4 };
-const TOOLTIP_ITEM_STYLE  = { padding: "1px 0" };
+const TOOLTIP_ITEM_STYLE  = { color: "#e5e7eb", padding: "1px 0" };
 
 // ─── Period presets ───────────────────────────────────────────────────────────
 
@@ -453,21 +454,22 @@ export default function Analytics() {
 
   const buRows = rows.map(r => {
     const totalBU = Math.round((r.totalSwabs / 7200) * 10) / 10;
-    // Per-bucket threshold: for hourly, use production-rate; for daily, scale by actual shift count.
+    // Per-bucket threshold: compare the per-shift average output against
+    // the per-shift target. For hourly buckets, use the production rate.
+    // For daily buckets, divide total by the number of shifts that contributed
+    // data so a partial day isn't penalised against a multi-shift target.
+    const shifts = Math.max(1, r.shiftCount);
+    const perShiftBU = granularity === "hour" ? totalBU : totalBU / shifts;
     const barTarget = buTargetPerShift !== null
-      ? (granularity === "hour"
-          ? buTargetPerShift / shiftHours
-          : buTargetPerShift * r.shiftCount)
+      ? (granularity === "hour" ? buTargetPerShift / shiftHours : buTargetPerShift)
       : null;
     const barMediocre = buMediocrePerShift !== null
-      ? (granularity === "hour"
-          ? buMediocrePerShift / shiftHours
-          : buMediocrePerShift * r.shiftCount)
+      ? (granularity === "hour" ? buMediocrePerShift / shiftHours : buMediocrePerShift)
       : null;
     const barColor =
       barTarget === null || barMediocre === null ? "#22d3ee"      // no targets → default cyan
-      : totalBU >= barTarget                    ? "#4ade80"      // good → green
-      : totalBU >= barMediocre                  ? "#eab308"      // mediocre → yellow
+      : perShiftBU >= barTarget                 ? "#4ade80"      // good → green
+      : perShiftBU >= barMediocre               ? "#eab308"      // mediocre → yellow
       :                                           "#ef4444";     // poor → red
     return { ...r, totalBU, barTarget, barMediocre, barColor };
   });
@@ -482,13 +484,10 @@ export default function Analytics() {
 
   // KPI color for Total BU Output — compare actual total against what the park
   // should have produced across all buckets that had data.
-  // Instead of assuming full 24/7 production, sum each bucket's scaled target.
-  const totalBuGoodTarget     = buTargetPerShift !== null
-    ? buRows.reduce((s, r) => s + (r.barTarget ?? 0), 0) : null;
-  const totalBuMediocreTarget = buMediocrePerShift !== null
-    ? buRows.reduce((s, r) => s + (r.barMediocre ?? 0), 0) : null;
-  const buKpiGood     = totalBuGoodTarget;
-  const buKpiMediocre = totalBuMediocreTarget;
+  // Each bucket contributes target × shiftCount for that bucket.
+  const totalShiftsInPeriod = buRows.reduce((s, r) => s + Math.max(1, r.shiftCount), 0);
+  const buKpiGood     = buTargetPerShift !== null ? buTargetPerShift * totalShiftsInPeriod : null;
+  const buKpiMediocre = buMediocrePerShift !== null ? buMediocrePerShift * totalShiftsInPeriod : null;
   const buKpiColor    = (() => {
     if (totalBUs <= 0 || buKpiGood === null || buKpiMediocre === null)
       return { text: "text-gray-500", border: "border-gray-700" };
@@ -737,12 +736,9 @@ export default function Analytics() {
             title={`Total BU Output ${chartTitle}`}
             legend={buTargetLine !== null ? (
               <>
-                <ZoneLegend color="#4ade80" label={`Good (≥ target${granularity === "day" ? " × shifts" : ""})`} />
-                <ZoneLegend color="#eab308" label={`Mediocre`} />
-                <ZoneLegend color="#ef4444" label={`Poor`} />
-                <span className="text-gray-600 ml-1">
-                  — {granularity === "hour" ? "line" : "dashed"}: {Math.round(buTargetLine).toLocaleString()} BUs/{granularity === "hour" ? "h" : "shift"}
-                </span>
+                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTargetLine).toLocaleString()} BUs/shift)`} />
+                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
+                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
               </>
             ) : undefined}
           >
