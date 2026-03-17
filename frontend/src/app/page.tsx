@@ -703,7 +703,7 @@ function ParkSummaryTiles({
     : hasAnyBuTarget ? "No live data" : "No targets set";
 
   return (
-    <div className="grid grid-cols-3 gap-3 mb-6">
+    <div className="grid grid-cols-4 gap-3 mb-6">
       <SummaryTile
         icon="bi-activity"
         label="Machines Online"
@@ -734,6 +734,14 @@ function ParkSummaryTiles({
         colorClass={sc.text}
         borderClass={sc.border}
       />
+      <SummaryTile
+        icon="bi-box-seam"
+        label="Expected Output"
+        value={buValue}
+        sub={buSub}
+        colorClass={buc.text}
+        borderClass={buc.border}
+      />
     </div>
   );
 }
@@ -753,44 +761,51 @@ function ShiftAndBUProgress({
   shiftName,
   currentTime,
   machines,
+  thresholds,
 }: {
   shiftStartedAt: number;
   totalShiftMins: number;
   shiftName: string;
   currentTime: Date;
   machines: Record<string, DashboardMachine>;
+  thresholds: Thresholds;
 }) {
   if (!shiftName || totalShiftMins <= 0) return null;
 
   // ── Shift elapsed ──
   const elapsedMins   = Math.max(0, (currentTime.getTime() - shiftStartedAt) / 60000);
-  const remainingMins = Math.max(0, totalShiftMins - elapsedMins);
   const shiftProgress = Math.min(1, elapsedMins / totalShiftMins);
   const shiftPct      = Math.round(shiftProgress * 100);
 
-  const shiftBarColor =
-    shiftProgress < 0.75 ? "bg-cyan-500"
-    : shiftProgress < 0.90 ? "bg-yellow-500"
-    : "bg-red-500";
-
   // ── BU output ──
   const all = Object.values(machines);
+  const rawShiftMins = thresholds.bu.shiftLengthMinutes;
+  const plannedDowntimeMins = thresholds.bu.plannedDowntimeMinutes ?? 0;
   let totalCurrentBU = 0;
   let totalTargetBU  = 0;
+  let floorProjected = 0;
+  let floorMediocreTarget = 0;
   for (const m of all) {
     if (m.buTarget && m.buTarget > 0) totalTargetBU += m.buTarget;
+    if (m.buMediocre && m.buMediocre > 0) floorMediocreTarget += m.buMediocre;
     const activeShift = m.machineStatus?.ActShift ?? 1;
     const shiftData   = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
     const swabs       = shiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
     totalCurrentBU += swabs / 7200;
+    const br = calcBuRunRate(m, rawShiftMins, shiftStartedAt, plannedDowntimeMins);
+    if (br) floorProjected += br.projected;
   }
   const hasBU      = totalTargetBU > 0;
   const buProgress = hasBU ? Math.min(1, totalCurrentBU / totalTargetBU) : 0;
   const buPct      = Math.round(buProgress * 100);
+
+  // BU bar color derived from expected output thresholds (same as KPI tile)
+  const buc = applyBuRunRateColor(floorProjected, totalTargetBU, floorMediocreTarget > 0 ? floorMediocreTarget : null);
   const buBarColor =
-    buProgress >= 0.9 ? "bg-green-500"
-    : buProgress >= 0.7 ? "bg-yellow-500"
-    : "bg-purple-500";
+    buc.text === "text-green-400"  ? "bg-green-500"
+    : buc.text === "text-yellow-400" ? "bg-yellow-500"
+    : buc.text === "text-red-400"    ? "bg-red-500"
+    : "bg-gray-500";
 
   return (
     <div className="mb-6 bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-3 space-y-2">
@@ -803,7 +818,7 @@ function ShiftAndBUProgress({
           <span className="text-xs text-gray-400 w-24 shrink-0">Elapsed time</span>
           <div className="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
             <div
-              className={`h-full rounded-full transition-all duration-1000 ${shiftBarColor}`}
+              className="h-full rounded-full transition-all duration-1000 bg-cyan-500"
               style={{ width: `${shiftPct}%` }}
             />
           </div>
@@ -1126,6 +1141,7 @@ export default function Dashboard() {
           shiftName={shiftBadgeLabel}
           currentTime={currentTime}
           machines={machines}
+          thresholds={thresholds}
         />
       )}
 
