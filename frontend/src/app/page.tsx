@@ -787,6 +787,7 @@ export default function Dashboard() {
   });
   const router = useRouter();
   const bridgeFailCount = useRef(0);
+  const machinesRef = useRef<Record<string, DashboardMachine>>({});
 
   const loadData = useCallback(async () => {
     let registered: RegisteredMachine[] = [];
@@ -831,9 +832,10 @@ export default function Dashboard() {
       setCurrentShift(state.currentShiftNumber || 0);
       for (const [code, live] of Object.entries(state.machines)) {
         // Determine statusSince: carry forward if status unchanged, reset on change
-        const prevStatus = machines[code]?.machineStatus?.Status?.toLowerCase();
+        const prev = machinesRef.current[code];
+        const prevStatus = prev?.machineStatus?.Status?.toLowerCase();
         const nextStatus = live.machineStatus?.Status?.toLowerCase();
-        const prevSince  = machines[code]?.statusSince;
+        const prevSince  = prev?.statusSince;
         const statusSince =
           nextStatus && nextStatus !== prevStatus
             ? Date.now()
@@ -854,6 +856,7 @@ export default function Dashboard() {
           statusSince,
         };
       }
+      machinesRef.current = merged;
       setMachines(merged);
     } catch {
       bridgeFailCount.current += 1;
@@ -861,6 +864,7 @@ export default function Dashboard() {
       // This prevents brief network hiccups from flashing the dashboard.
       if (bridgeFailCount.current >= 3) {
         setMqttConnected(false);
+        machinesRef.current = merged;
         setMachines(merged);
       }
       // Otherwise keep the previous machines state (do nothing)
