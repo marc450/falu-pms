@@ -402,9 +402,9 @@ function publishCombinedShift(client, machine, shiftNum, save = false) {
     Status:                 machine.status,
     Speed:                  isRunning ? machine.currentSpeed : 0,
     Shift:                  shiftNum,
-    ProductionTime:         parseFloat(shift.productionTime.toFixed(2)),
-    IdleTime:               parseFloat(shift.idleTime.toFixed(2)),
-    ErrorTime:              parseFloat(shift.errorTime.toFixed(2)),
+    ProductionTime:         Math.round(shift.productionTime * 60),  // seconds, matching real PLC spec
+    IdleTime:               Math.round(shift.idleTime       * 60),  // seconds, matching real PLC spec
+    ErrorTime:              Math.round(shift.errorTime      * 60),  // seconds, matching real PLC spec
     CottonTears:            shift.cottonTears            || 0,
     MissingSticks:          shift.missingSticks          || 0,
     FoultyPickups:          shift.faultyPickups          || 0,  // PLC field name has typo
