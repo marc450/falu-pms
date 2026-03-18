@@ -11,6 +11,7 @@ import type { DateRange, RegisteredMachine, MachineShiftRow } from "@/lib/supaba
 
 const BU_TARGET_DEFAULT   = 185;
 const BU_MEDIOCRE_DEFAULT = 150;
+const SWABS_PER_BU        = 7200;
 
 type Metric = "bu" | "hours" | "efficiency" | "scrap";
 type Group  = "all" | "CB" | "CT";
@@ -55,8 +56,9 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
   const [rows, setRows]       = useState<MachineShiftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
-  const [metric, setMetric]   = useState<Metric>("bu");
-  const [group, setGroup]     = useState<Group>("all");
+  const [metric,     setMetric]     = useState<Metric>("bu");
+  const [group,      setGroup]      = useState<Group>("all");
+  const [normalized, setNormalized] = useState(true);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -110,13 +112,19 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
     const tgt = machineTargets.get(code) ?? { bu_target: BU_TARGET_DEFAULT, bu_mediocre: BU_MEDIOCRE_DEFAULT };
 
     if (metric === "bu") {
-      const valid = machRows.filter(r => r.bu_normalized !== null && r.run_hours > 0);
-      if (valid.length === 0) return { display: "—", colorClass: "text-gray-600" };
-      // Weighted average by run_hours
-      const totalHours = valid.reduce((s, r) => s + r.run_hours, 0);
-      const weighted   = valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours), 0);
-      const avg = totalHours > 0 ? weighted / totalHours : null;
-      return { display: avg !== null ? avg.toFixed(1) : "—", colorClass: buCellColor(avg, tgt.bu_target, tgt.bu_mediocre) };
+      if (normalized) {
+        const valid = machRows.filter(r => r.bu_normalized !== null && r.run_hours > 0);
+        if (valid.length === 0) return { display: "—", colorClass: "text-gray-600" };
+        const totalHours = valid.reduce((s, r) => s + r.run_hours, 0);
+        const weighted   = valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours), 0);
+        const avg = totalHours > 0 ? weighted / totalHours : null;
+        return { display: avg !== null ? avg.toFixed(1) : "—", colorClass: buCellColor(avg, tgt.bu_target, tgt.bu_mediocre) };
+      } else {
+        // Raw: average actual BU per shift session
+        if (machRows.length === 0) return { display: "—", colorClass: "text-gray-600" };
+        const avg = machRows.reduce((s, r) => s + r.swabs_produced / SWABS_PER_BU, 0) / machRows.length;
+        return { display: avg.toFixed(1), colorClass: buCellColor(avg, tgt.bu_target, tgt.bu_mediocre) };
+      }
     }
     if (metric === "hours") {
       const total = machRows.reduce((s, r) => s + r.run_hours, 0);
@@ -142,7 +150,9 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
     if (!r) return { display: "—", colorClass: "bg-gray-900 text-gray-600" };
 
     if (metric === "bu") {
-      const val = r.bu_normalized;
+      const val = normalized
+        ? r.bu_normalized
+        : r.swabs_produced / SWABS_PER_BU;
       return { display: val !== null ? val.toFixed(1) : "—", colorClass: buCellColor(val, tgt.bu_target, tgt.bu_mediocre) };
     }
     if (metric === "hours") {
@@ -185,10 +195,10 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
   }
 
   const metricButtons: { id: Metric; label: string }[] = [
-    { id: "bu",         label: "BU Normalized" },
-    { id: "hours",      label: "Run Hours"     },
-    { id: "efficiency", label: "Efficiency"    },
-    { id: "scrap",      label: "Scrap"         },
+    { id: "bu",         label: "BU"         },
+    { id: "hours",      label: "Run Hours"  },
+    { id: "efficiency", label: "Efficiency" },
+    { id: "scrap",      label: "Scrap"      },
   ];
 
   const groupButtons: { id: Group; label: string }[] = [
@@ -232,23 +242,39 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
           ))}
         </div>
         {metric === "bu" && (
-          <div className="flex items-center gap-3 text-xs text-gray-500 ml-2">
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-green-900/40 border border-green-700/40"></span>
-              Good ({">"}= 185 BU)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-yellow-900/40 border border-yellow-700/40"></span>
-              Mediocre ({">"}= 150 BU)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-red-900/40 border border-red-700/40"></span>
-              Poor ({"<"} 150 BU)
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40"></span>
-              No data
-            </span>
+          <div className="flex items-center gap-3 flex-wrap">
+            {/* Normalization toggle */}
+            <button
+              onClick={() => setNormalized(v => !v)}
+              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
+                normalized
+                  ? "bg-blue-900/40 border-blue-600/60 text-blue-300"
+                  : "bg-gray-800 border-gray-600 text-gray-400 hover:text-white hover:border-gray-500"
+              }`}
+              title={normalized ? "Showing BU extrapolated to a full 12h shift — click to show actual BU produced" : "Showing actual BU produced — click to normalize to 12h shift"}
+            >
+              <i className={`bi ${normalized ? "bi-toggles" : "bi-toggles"} text-xs`}></i>
+              {normalized ? "Normalized @ 12 h" : "Actual BU"}
+            </button>
+            {/* Legend */}
+            <div className="flex items-center gap-3 text-xs text-gray-500">
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-green-900/40 border border-green-700/40"></span>
+                {">"}= 185 BU
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-yellow-900/40 border border-yellow-700/40"></span>
+                {">"}= 150 BU
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-red-900/40 border border-red-700/40"></span>
+                {"<"} 150 BU
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40"></span>
+                No data
+              </span>
+            </div>
           </div>
         )}
       </div>
