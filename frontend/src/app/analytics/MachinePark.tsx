@@ -67,6 +67,11 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── Machine code → display name (user-set name, fallback to UID) ──
+  const machineNameMap = new Map<string, string>();
+  for (const m of machines) machineNameMap.set(m.machine_code, m.name || m.machine_code);
+  const displayName = (code: string) => machineNameMap.get(code) ?? code;
+
   // Machine target lookup
   const machineTargets = new Map<string, { bu_target: number; bu_mediocre: number }>();
   for (const m of machines) {
@@ -237,8 +242,8 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
               const tgt = machineTargets.get(code) ?? { bu_target: BU_TARGET_DEFAULT, bu_mediocre: BU_MEDIOCRE_DEFAULT };
               return (
                 <div key={code} className="flex items-start mb-0.5">
-                  <div style={{ width: 76, minWidth: 76 }} className="text-xs text-gray-400 pr-2 flex items-center h-9 shrink-0">
-                    {code}
+                  <div style={{ width: 76, minWidth: 76 }} className="text-xs text-gray-400 pr-2 flex items-center h-9 shrink-0" title={code}>
+                    {displayName(code)}
                   </div>
                   {last60Days.map(day => {
                     const slots = index.get(day)?.get(code);
@@ -256,7 +261,7 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${code} ${dateLabel} Shift A: ${buA !== null ? buA.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} Shift A: ${buA !== null ? buA.toFixed(1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
@@ -272,7 +277,7 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${code} ${dateLabel} Shift B: ${buB !== null ? buB.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} Shift B: ${buB !== null ? buB.toFixed(1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
@@ -311,7 +316,7 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
               {ranked.map(({ code, avgBu, bestShift, worstShift, avgRunHours, avgEfficiency }, idx) => (
                 <tr key={code} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
                   <td className="px-3 py-2 text-xs text-center text-gray-500">{idx + 1}</td>
-                  <td className="px-3 py-2 text-xs text-center font-medium text-gray-300">{code}</td>
+                  <td className="px-3 py-2 text-xs text-center font-medium text-gray-300" title={code}>{displayName(code)}</td>
                   <td className={`px-3 py-2 text-xs text-right font-mono ${buTableColor(avgBu)}`}>
                     {avgBu !== null ? avgBu.toFixed(1) : "—"}
                   </td>

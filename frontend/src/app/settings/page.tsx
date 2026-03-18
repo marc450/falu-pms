@@ -778,7 +778,12 @@ function MachineTargetRow({
   const tgt = targets[m.machine_code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null, bu_mediocre: null, speed_target: null };
   return (
     <tr className="border-t border-gray-700/50 hover:bg-gray-800/30">
-      <td className="px-4 py-2.5 font-bold text-cyan-400 text-sm whitespace-nowrap">{m.machine_code}</td>
+      <td className="px-4 py-2.5 whitespace-nowrap">
+        <div className="font-bold text-cyan-400 text-sm leading-tight">{m.name || m.machine_code}</div>
+        {m.name && m.name !== m.machine_code && (
+          <div className="text-xs text-gray-600 leading-tight">{m.machine_code}</div>
+        )}
+      </td>
       {/* Uptime group — cyan tint */}
       <td className="px-3 py-2.5 bg-cyan-900/5">
         <TargetInput value={tgt.efficiency_good} onChange={v => onSetTarget(m.machine_code, "efficiency_good", v)} onSave={v => onSaveTarget(m.machine_code, "efficiency_good", v)} unit="%" placeholder="e.g. 82" />

@@ -174,6 +174,11 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
   const machineCell = new Map<string, string | null>();
   for (const m of machines) machineCell.set(m.machine_code, m.cell_id ?? null);
 
+  // ── Machine code → display name (user-set name, fallback to UID) ──
+  const machineNameMap = new Map<string, string>();
+  for (const m of machines) machineNameMap.set(m.machine_code, m.name || m.machine_code);
+  const displayName = (code: string) => machineNameMap.get(code) ?? code;
+
   // ── Derived lists ──
   const allMachineCodes = Array.from(new Set(rows.map(r => r.machine_code))).sort();
 
@@ -450,8 +455,8 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
                   Shift
                 </th>
                 {filteredCodes.map(code => (
-                  <th key={code} className="text-center px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap min-w-[80px]">
-                    {code}
+                  <th key={code} className="text-center px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap min-w-[80px]" title={code}>
+                    {displayName(code)}
                   </th>
                 ))}
               </tr>

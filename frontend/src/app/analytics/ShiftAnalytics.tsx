@@ -75,7 +75,7 @@ function barColor(val: number): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ShiftAnalytics({ dateRange, machines: _machines }: ShiftAnalyticsProps) {
+export default function ShiftAnalytics({ dateRange, machines }: ShiftAnalyticsProps) {
   const [rows, setRows]       = useState<MachineShiftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
@@ -94,6 +94,11 @@ export default function ShiftAnalytics({ dateRange, machines: _machines }: Shift
   }, [dateRange]);
 
   useEffect(() => { load(); }, [load]);
+
+  // ── Machine code → display name (user-set name, fallback to UID) ──
+  const machineNameMap = new Map<string, string>();
+  for (const m of machines) machineNameMap.set(m.machine_code, m.name || m.machine_code);
+  const displayName = (code: string) => machineNameMap.get(code) ?? code;
 
   // ── Aggregations ──
   const shiftARows = rows.filter(r => r.shift_label === "A");
@@ -278,7 +283,7 @@ export default function ShiftAnalytics({ dateRange, machines: _machines }: Shift
             <tbody>
               {machineComparison.map(({ code, buA, buB, delta, better }) => (
                 <tr key={code} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
-                  <td className="px-4 py-2 text-xs font-medium text-gray-300 text-center">{code}</td>
+                  <td className="px-4 py-2 text-xs font-medium text-gray-300 text-center" title={code}>{displayName(code)}</td>
                   <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(buA)}`}>
                     {buA !== null ? buA.toFixed(1) : "—"}
                   </td>
