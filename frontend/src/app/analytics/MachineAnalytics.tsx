@@ -117,6 +117,29 @@ function scrapStyle(val: number | null, mode: ColorMode): CellStyle {
   return { className: "text-white font-medium", style: { backgroundColor: scrapGradientBg(val) } };
 }
 
+// Run-hours gradient: 0 h (red) → 6 h (amber) → 10 h (green) → 12 h (rich green)
+function hoursGradientBg(val: number, shiftLen = 12): string {
+  const t = Math.max(0, Math.min(1, val / shiftLen));
+  return lerpHsl(t, [
+    { t: 0.00, h:   4, s: 78, l: 22 },
+    { t: 0.40, h:  36, s: 75, l: 30 },
+    { t: 0.72, h:  72, s: 60, l: 28 },
+    { t: 0.88, h: 128, s: 50, l: 28 },
+    { t: 1.00, h: 148, s: 55, l: 26 },
+  ]);
+}
+
+function hoursStyle(val: number | null, mode: ColorMode, shiftLen = 12): CellStyle {
+  if (val === null) return { className: "bg-gray-900 text-gray-600" };
+  if (mode === "simple") {
+    const pct = val / shiftLen;
+    if (pct >= 0.83) return { className: "bg-green-900/40 text-green-300" };
+    if (pct >= 0.50) return { className: "bg-yellow-900/40 text-yellow-300" };
+    return                  { className: "bg-red-900/40 text-red-300" };
+  }
+  return { className: "text-white font-medium", style: { backgroundColor: hoursGradientBg(val, shiftLen) } };
+}
+
 // Gradient legend swatch strip (used in gradient mode)
 // labelLeft appears to the left of the bar (low/bad end), labelRight to the right (high/good end).
 function GradientSwatch({ fn, labelLeft, labelRight }: {
@@ -237,7 +260,8 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
       return { display: val !== null ? val.toFixed(1) : "—", ...s };
     }
     if (metric === "hours") {
-      return { display: `${r.run_hours.toFixed(1)} h`, className: "text-gray-300" };
+      const s = hoursStyle(r.run_hours, colorMode);
+      return { display: `${r.run_hours.toFixed(1)} h`, ...s };
     }
     if (metric === "efficiency") {
       const val = r.avg_efficiency;
@@ -271,7 +295,9 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
     }
     if (metric === "hours") {
       const total = machRows.reduce((s, r) => s + r.run_hours, 0);
-      return { display: `${total.toFixed(1)} h`, className: "text-gray-300" };
+      const avg   = total / machRows.length;
+      const s = hoursStyle(avg, colorMode);
+      return { display: `${total.toFixed(1)} h`, ...s };
     }
     if (metric === "efficiency") {
       const valid = machRows.filter(r => r.avg_efficiency !== null);
@@ -428,54 +454,55 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
         </div>
 
         {/* Legend */}
-        {metric !== "hours" && (
-          <div className="flex items-center gap-3 text-xs text-gray-500 ml-1 pt-1">
-            {colorMode === "simple" ? (
-              <>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-green-900/40 border border-green-700/40" />
-                  {metric === "scrap" ? "≤ 2%" : metric === "efficiency" ? "≥ 85%" : "≥ 185 BU"}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-yellow-900/40 border border-yellow-700/40" />
-                  {metric === "scrap" ? "≤ 5%" : metric === "efficiency" ? "≥ 70%" : "≥ 150 BU"}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-red-900/40 border border-red-700/40" />
-                  {metric === "scrap" ? "> 5%" : metric === "efficiency" ? "< 70%" : "< 150 BU"}
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40" />
-                  No data
-                </span>
-              </>
-            ) : (
-              <>
-                {metric === "bu" && (
-                  <GradientSwatch
-                    labelLeft="poor"
-                    labelRight={`${BU_TARGET_DEFAULT} BU`}
-                    fn={t => buGradientBg(
-                      BU_MEDIOCRE_DEFAULT * 0.35 + t * (BU_TARGET_DEFAULT * 1.12 - BU_MEDIOCRE_DEFAULT * 0.35),
-                      BU_TARGET_DEFAULT,
-                      BU_MEDIOCRE_DEFAULT,
-                    )}
-                  />
-                )}
-                {metric === "efficiency" && (
-                  <GradientSwatch labelLeft="0%" labelRight="100%" fn={t => effGradientBg(t * 100)} />
-                )}
-                {metric === "scrap" && (
-                  <GradientSwatch labelLeft="0% scrap" labelRight="10%" fn={t => scrapGradientBg(t * 10)} />
-                )}
-                <span className="flex items-center gap-1.5">
-                  <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40" />
-                  No data
-                </span>
-              </>
-            )}
-          </div>
-        )}
+        <div className="flex items-center gap-3 text-xs text-gray-500 ml-1 pt-1">
+          {colorMode === "simple" ? (
+            <>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-green-900/40 border border-green-700/40" />
+                {metric === "scrap" ? "≤ 2%" : metric === "efficiency" ? "≥ 85%" : metric === "hours" ? "≥ 83% of shift" : "≥ 185 BU"}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-yellow-900/40 border border-yellow-700/40" />
+                {metric === "scrap" ? "≤ 5%" : metric === "efficiency" ? "≥ 70%" : metric === "hours" ? "≥ 50% of shift" : "≥ 150 BU"}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-red-900/40 border border-red-700/40" />
+                {metric === "scrap" ? "> 5%" : metric === "efficiency" ? "< 70%" : metric === "hours" ? "< 50% of shift" : "< 150 BU"}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40" />
+                No data
+              </span>
+            </>
+          ) : (
+            <>
+              {metric === "bu" && (
+                <GradientSwatch
+                  labelLeft="poor"
+                  labelRight={`${BU_TARGET_DEFAULT} BU`}
+                  fn={t => buGradientBg(
+                    BU_MEDIOCRE_DEFAULT * 0.35 + t * (BU_TARGET_DEFAULT * 1.12 - BU_MEDIOCRE_DEFAULT * 0.35),
+                    BU_TARGET_DEFAULT,
+                    BU_MEDIOCRE_DEFAULT,
+                  )}
+                />
+              )}
+              {metric === "efficiency" && (
+                <GradientSwatch labelLeft="0%" labelRight="100%" fn={t => effGradientBg(t * 100)} />
+              )}
+              {metric === "scrap" && (
+                <GradientSwatch labelLeft="0% scrap" labelRight="10%" fn={t => scrapGradientBg(t * 10)} />
+              )}
+              {metric === "hours" && (
+                <GradientSwatch labelLeft="0 h" labelRight="12 h" fn={t => hoursGradientBg(t * 12)} />
+              )}
+              <span className="flex items-center gap-1.5">
+                <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40" />
+                No data
+              </span>
+            </>
+          )}
+        </div>
       </div>
 
       {/* ── Table ── */}
