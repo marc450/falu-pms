@@ -107,14 +107,17 @@ const BROKER_PASS      = process.env.MQTT_PASSWORD   || "Admin123";
 const IS_LOCAL         = process.env.MQTT_IS_LOCAL   === "true";
 const TICK_MS          = parseInt(process.env.SIM_FREQUENCY_MS || "5000");
 const TICK_MIN         = TICK_MS / 60000;
-// Numeric UIDs — these are what the PLC publishes as the "Machine" field.
-// Users assign human-readable display names in the dashboard settings.
+// Numeric UIDs — the exact IDs the real PLC hardware publishes as the "Machine" field.
+// Display names here are for simulator logging only; users set their own display
+// names in the dashboard settings via the rename feature.
 const MACHINE_UID_MAP = {
-  "11564": "CB-30", "11565": "CB-31", "11566": "CB-32", "11567": "CB-33",
-  "11568": "CB-34", "11569": "CB-35", "11570": "CB-36", "11571": "CB-37",
-  "12101": "CT-1",  "12102": "CT-2",  "12103": "CT-3",  "12104": "CT-4",
-  "12105": "CT-5",  "12106": "CT-6",  "12107": "CT-7",  "12108": "CT-8",
-  "12109": "CT-9",  "12110": "CT-10",
+  // CB machines (first 8) — speed range 2689–2850 pcs/min
+  "11552": "CB-30", "11559": "CB-31", "11560": "CB-32", "11557": "CB-33",
+  "11562": "CB-34", "11550": "CB-35", "11553": "CB-36", "11556": "CB-37",
+  // CT machines (last 10) — speed range 2389–2650 pcs/min
+  "11579": "CT-1",  "11574": "CT-2",  "11564": "CT-3",  "11554": "CT-4",
+  "11551": "CT-5",  "11563": "CT-6",  "11555": "CT-7",  "11575": "CT-8",
+  "11576": "CT-9",  "11580": "CT-10",
 };
 const MACHINE_NAMES = Object.keys(MACHINE_UID_MAP);
 
