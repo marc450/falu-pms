@@ -219,13 +219,25 @@ async function handleShiftMessage(payload) {
     m.statusSince = new Date().toISOString();
     logger.info(`Status change for ${machineCode}: ${prevStatus || "(none)"}→${nextStatus} at ${m.statusSince}`);
   }
-  // Trust the authoritative episode-start timestamps from the simulator/PLC when
+  // Trust the authoritative episode-start timestamps from the simulator when
   // present.  This corrects a stale statusSince caused by the bridge missing a
   // status-change message while it was offline or reconnecting.
   if (nextStatus === "error" && data.ErrorSince) {
     m.statusSince = data.ErrorSince;
   } else if (nextStatus === "idle" && data.IdleSince) {
     m.statusSince = data.IdleSince;
+  } else if (nextStatus === "error") {
+    // Real PLCs do not send ErrorSince, so apply a hard-constraint correction:
+    // the current error episode cannot be longer than the total accumulated
+    // ErrorTime for the shift.  If the badge would exceed that, statusSince is
+    // stale (bridge missed a recovery while offline) and we reset it so the
+    // badge shows at most the accumulated error time.
+    const errorMins  = (data.ErrorTime || 0) / 60;   // ErrorTime is seconds from PLC
+    const badgeMins  = (Date.now() - new Date(m.statusSince).getTime()) / 60000;
+    if (badgeMins > errorMins + 1) {                  // +1 min rounding tolerance
+      m.statusSince = new Date(Date.now() - errorMins * 60000).toISOString();
+      logger.warn(`Corrected stale statusSince for ${machineCode}: badge was ${badgeMins.toFixed(1)} min but ErrorTime is ${errorMins.toFixed(1)} min`);
+    }
   }
   if (!m.statusSince) {
     m.statusSince = new Date().toISOString();
