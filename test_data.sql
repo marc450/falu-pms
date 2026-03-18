@@ -27,8 +27,14 @@
 
 -- Wipe ALL historical data so no old test runs accumulate on top of each other.
 -- The live bridge will regenerate today's readings automatically after this runs.
+-- analytics_readings MUST also be cleared: get_fleet_trend prefers shift_readings
+-- over analytics_readings for any overlapping bucket (UNION NOT EXISTS), but once
+-- downsample_to_analytics moves rows out of shift_readings the stale ar data
+-- would reappear and produce different numbers for the same day depending on
+-- which date-range preset is selected.
 DELETE FROM shift_readings;
 DELETE FROM saved_shift_logs;
+DELETE FROM analytics_readings;
 
 -- Restore correct per-machine BU targets (run unconditionally)
 UPDATE machines
