@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { format, parseISO } from "date-fns";
+import { fmtN, fmtH } from "@/lib/fmt";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
@@ -225,7 +226,7 @@ export default function ShiftAnalytics({
             <KpiTile
               key={s.label}
               label={`${s.name} Fleet Avg BU`}
-              value={s.bu !== null ? s.bu.toFixed(1) : "—"}
+              value={fmtN(s.bu, 1)}
               sub="Normalized to 12 h shift"
               colorClass={buColor(s.bu)}
             />
@@ -269,25 +270,25 @@ export default function ShiftAnalytics({
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
           <KpiTile
             label={`${pick1Eff} Fleet Avg BU`}
-            value={avgBu(crewRows(pick1Eff))?.toFixed(1) ?? "—"}
+            value={fmtN(avgBu(crewRows(pick1Eff)), 1)}
             sub="Normalized to 12 h shift"
             colorClass={buColor(avgBu(crewRows(pick1Eff)))}
           />
           <KpiTile
             label={`${pick2Eff} Fleet Avg BU`}
-            value={avgBu(crewRows(pick2Eff))?.toFixed(1) ?? "—"}
+            value={fmtN(avgBu(crewRows(pick2Eff)), 1)}
             sub="Normalized to 12 h shift"
             colorClass={buColor(avgBu(crewRows(pick2Eff)))}
           />
           <KpiTile
             label={`${pick1Eff} Avg Run Hours`}
-            value={(() => { const v = crewRows(pick1Eff).filter(r => r.run_hours != null); return v.length > 0 ? `${(v.reduce((s, r) => s + r.run_hours!, 0) / v.length).toFixed(1)} h` : "—"; })()}
+            value={(() => { const v = crewRows(pick1Eff).filter(r => r.run_hours != null); return v.length > 0 ? fmtH(v.reduce((s, r) => s + r.run_hours!, 0) / v.length, 1) : "—"; })()}
             sub="Per machine per shift"
             colorClass="text-gray-300"
           />
           <KpiTile
             label={`${pick2Eff} Avg Run Hours`}
-            value={(() => { const v = crewRows(pick2Eff).filter(r => r.run_hours != null); return v.length > 0 ? `${(v.reduce((s, r) => s + r.run_hours!, 0) / v.length).toFixed(1)} h` : "—"; })()}
+            value={(() => { const v = crewRows(pick2Eff).filter(r => r.run_hours != null); return v.length > 0 ? fmtH(v.reduce((s, r) => s + r.run_hours!, 0) / v.length, 1) : "—"; })()}
             sub="Per machine per shift"
             colorClass="text-gray-300"
           />
@@ -335,7 +336,7 @@ export default function ShiftAnalytics({
                 itemStyle={TOOLTIP_ITEM_STYLE}
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 formatter={(v: any, name: any) => [
-                  `${Number(v).toFixed(1)} BU`,
+                  `${fmtN(Number(v), 1)} BU`,
                   name === "bu1" ? pick1Eff : pick2Eff,
                 ]}
               />
@@ -382,10 +383,10 @@ export default function ShiftAnalytics({
                     {displayName(code)}
                   </td>
                   <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu1)}`}>
-                    {bu1 !== null ? bu1.toFixed(1) : "—"}
+                    {fmtN(bu1, 1)}
                   </td>
                   <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu2)}`}>
-                    {bu2 !== null ? bu2.toFixed(1) : "—"}
+                    {fmtN(bu2, 1)}
                   </td>
                   <td className={`px-4 py-2 text-xs text-right font-mono ${
                     delta === null ? "text-gray-600"
@@ -393,7 +394,7 @@ export default function ShiftAnalytics({
                     : delta < 0    ? "text-red-400"
                     :                "text-gray-400"
                   }`}>
-                    {delta !== null ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)}` : "—"}
+                    {delta !== null ? `${delta > 0 ? "+" : ""}${fmtN(delta, 1)}` : "—"}
                   </td>
                   <td className={`px-4 py-2 text-xs text-center font-medium ${
                     better === "1" ? "text-cyan-400"

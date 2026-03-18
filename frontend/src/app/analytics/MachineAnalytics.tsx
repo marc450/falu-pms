@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { format, parseISO } from "date-fns";
+import { fmtN, fmtPct, fmtH } from "@/lib/fmt";
 import {
   fetchMachineShiftSummary,
   fetchProductionCells,
@@ -239,21 +240,21 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
     if (metric === "bu") {
       const val = normalized ? r.bu_normalized : (r.swabs_produced / SWABS_PER_BU);
       const s   = buStyle(val, tgt.bu_target, tgt.bu_mediocre, colorMode, tableMin, tableMax);
-      return { display: val !== null ? val.toFixed(1) : "—", ...s };
+      return { display: fmtN(val, 1), ...s };
     }
     if (metric === "hours") {
       const s = hoursStyle(r.run_hours, colorMode, 12, tableMin, tableMax);
-      return { display: r.run_hours != null ? `${r.run_hours.toFixed(1)} h` : "—", ...s };
+      return { display: fmtH(r.run_hours, 1), ...s };
     }
     if (metric === "efficiency") {
       const val = r.avg_efficiency;
       const s   = effStyle(val, colorMode, tableMin, tableMax);
-      return { display: val !== null ? `${val.toFixed(1)}%` : "—", ...s };
+      return { display: fmtPct(val, 1), ...s };
     }
     // scrap
     const val = r.avg_scrap;
     const s   = scrapStyle(val, colorMode, tableMin, tableMax);
-    return { display: val !== null ? `${val.toFixed(2)}%` : "—", ...s };
+    return { display: fmtPct(val, 2), ...s };
   }
 
   // ── Summary row ──
@@ -269,10 +270,10 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
         const totalHours = valid.reduce((s, r) => s + r.run_hours!, 0);
         const weighted   = valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours!), 0);
         const avg = totalHours > 0 ? weighted / totalHours : null;
-        return { display: avg !== null ? avg.toFixed(1) : "—", ...buStyle(avg, tgt.bu_target, tgt.bu_mediocre, colorMode, tableMin, tableMax) };
+        return { display: fmtN(avg, 1), ...buStyle(avg, tgt.bu_target, tgt.bu_mediocre, colorMode, tableMin, tableMax) };
       } else {
         const avg = machRows.reduce((s, r) => s + r.swabs_produced / SWABS_PER_BU, 0) / machRows.length;
-        return { display: avg.toFixed(1), ...buStyle(avg, tgt.bu_target, tgt.bu_mediocre, colorMode, tableMin, tableMax) };
+        return { display: fmtN(avg, 1), ...buStyle(avg, tgt.bu_target, tgt.bu_mediocre, colorMode, tableMin, tableMax) };
       }
     }
     if (metric === "hours") {
@@ -280,18 +281,18 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
       if (valid.length === 0) return { display: "—", className: "bg-gray-900 text-gray-600" };
       const total = valid.reduce((s, r) => s + r.run_hours!, 0);
       const avg   = total / valid.length;
-      return { display: `${total.toFixed(1)} h`, ...hoursStyle(avg, colorMode, 12, tableMin, tableMax) };
+      return { display: fmtH(total, 1), ...hoursStyle(avg, colorMode, 12, tableMin, tableMax) };
     }
     if (metric === "efficiency") {
       const valid = machRows.filter(r => r.avg_efficiency !== null);
       if (valid.length === 0) return { display: "—", className: "text-gray-600" };
       const avg = valid.reduce((s, r) => s + r.avg_efficiency!, 0) / valid.length;
-      return { display: `${avg.toFixed(1)}%`, ...effStyle(avg, colorMode, tableMin, tableMax) };
+      return { display: fmtPct(avg, 1), ...effStyle(avg, colorMode, tableMin, tableMax) };
     }
     const valid = machRows.filter(r => r.avg_scrap !== null);
     if (valid.length === 0) return { display: "—", className: "text-gray-600" };
     const avg = valid.reduce((s, r) => s + r.avg_scrap!, 0) / valid.length;
-    return { display: `${avg.toFixed(2)}%`, ...scrapStyle(avg, colorMode, tableMin, tableMax) };
+    return { display: fmtPct(avg, 2), ...scrapStyle(avg, colorMode, tableMin, tableMax) };
   }
 
   // ── Loading / error / empty ──
@@ -462,21 +463,21 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
               <GradientSwatch
                 labelLeft={
                   metric === "scrap"
-                    ? (tableMax.toFixed(2) + "%")
+                    ? fmtPct(tableMax, 2)
                     : metric === "hours"
-                      ? (tableMin.toFixed(1) + " h")
+                      ? fmtH(tableMin, 1)
                       : metric === "efficiency"
-                        ? (tableMin.toFixed(1) + "%")
-                        : tableMin.toFixed(1)
+                        ? fmtPct(tableMin, 1)
+                        : fmtN(tableMin, 1)
                 }
                 labelRight={
                   metric === "scrap"
-                    ? (tableMin.toFixed(2) + "%")
+                    ? fmtPct(tableMin, 2)
                     : metric === "hours"
-                      ? (tableMax.toFixed(1) + " h")
+                      ? fmtH(tableMax, 1)
                       : metric === "efficiency"
-                        ? (tableMax.toFixed(1) + "%")
-                        : tableMax.toFixed(1)
+                        ? fmtPct(tableMax, 1)
+                        : fmtN(tableMax, 1)
                 }
                 fn={t => rangeGradientBg(
                   tableMin + t * (tableMax - tableMin),

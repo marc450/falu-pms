@@ -22,6 +22,7 @@ import {
 import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat, ShiftConfig } from "@/lib/supabase";
 import { PACKING_FORMATS } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
+import { fmtN, fmtPct } from "@/lib/fmt";
 
 type SortColumn  = "Machine" | "Status" | "Speed" | "IdleTime" | "ErrorTime" | "Efficiency" | "Reject" | "LastSync";
 type CellSortCol = "Machine" | "Status" | "Uptime" | "Scrap" | "TotalBU" | "BU" | "Speed" | "IdleTime" | "ErrorTime" | "Sync";
@@ -260,10 +261,10 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
         )}
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
-        {!isOffline && hasProduction && corrEff !== null ? `${corrEff.toFixed(1)}%` : ""}
+        {!isOffline && hasProduction && corrEff !== null ? fmtPct(corrEff, 1) : ""}
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(scpColor.text)}`}>
-        {!isOffline && hasProduction ? `${(m.machineStatus?.Reject ?? 0).toFixed(1)}%` : ""}
+        {!isOffline && hasProduction ? fmtPct(m.machineStatus?.Reject ?? 0, 1) : ""}
       </td>
       <td className="px-4 py-3 font-medium text-white">
         {!isOffline && currentBUs > 0
@@ -273,7 +274,7 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
       <td className={`px-4 py-3 font-medium ${toRowColor(buColor.text)}`}>
         {buRate !== null ? (
           <>{Math.round(buRate.projected).toLocaleString()} <span className="text-gray-500 text-xs">BUs</span>
-          {" "}<span className="text-xs opacity-70">{Math.round((buRate.projected / buRate.target) * 100)}%</span></>
+          {" "}<span className="text-xs opacity-70">{fmtN(Math.round((buRate.projected / buRate.target) * 100))}%</span></>
         ) : ""}
       </td>
       <td className={`px-4 py-3 font-medium ${spdColor.text}`}>
@@ -514,7 +515,7 @@ function CellSection({
                 {avgEff !== null && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[2].label}</span>}
-                    <span className={`text-sm font-semibold ${ec.text}`}>{avgEff.toFixed(1)}%</span>
+                    <span className={`text-sm font-semibold ${ec.text}`}>{fmtPct(avgEff, 1)}</span>
                   </div>
                 )}
               </td>
@@ -523,7 +524,7 @@ function CellSection({
                 {avgScrap !== null && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[3].label}</span>}
-                    <span className={`text-sm font-semibold ${sc.text}`}>{avgScrap.toFixed(1)}%</span>
+                    <span className={`text-sm font-semibold ${sc.text}`}>{fmtPct(avgScrap, 1)}</span>
                   </div>
                 )}
               </td>
@@ -547,7 +548,7 @@ function CellSection({
                     <span className={`text-sm font-semibold ${buCc.text}`}>
                       {Math.round(cellProjected).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-60">BUs</span>
-                      {" "}<span className="text-xs font-normal opacity-70">{Math.round((cellProjected / cellTarget) * 100)}%</span>
+                      {" "}<span className="text-xs font-normal opacity-70">{fmtN(Math.round((cellProjected / cellTarget) * 100))}%</span>
                     </span>
                   </div>
                 ) : null}
@@ -722,7 +723,7 @@ function ParkSummaryTiles({
       <SummaryTile
         icon="bi-speedometer2"
         label="Avg Uptime"
-        value={avgEff !== null ? `${avgEff.toFixed(1)}%` : "—"}
+        value={fmtPct(avgEff, 1)}
         sub={avgEff !== null
           ? avgEff >= thresholds.efficiency.good ? "Good"
           : avgEff >= thresholds.efficiency.mediocre ? "Mediocre" : "Below target"
@@ -733,7 +734,7 @@ function ParkSummaryTiles({
       <SummaryTile
         icon="bi-exclamation-triangle"
         label="Avg Scrap Rate"
-        value={avgScrap !== null ? `${avgScrap.toFixed(1)}%` : "—"}
+        value={fmtPct(avgScrap, 1)}
         sub={avgScrap !== null
           ? (avgScrapGood === null || avgScrap <= avgScrapGood) ? "Good"
           : (avgScrapMed === null || avgScrap <= avgScrapMed) ? "Mediocre" : "Above target"

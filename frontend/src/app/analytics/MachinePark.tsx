@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { format, parseISO } from "date-fns";
+import { fmtN, fmtPct, fmtH } from "@/lib/fmt";
 import {
   fetchMachineShiftSummary,
   teamNameForShift,
@@ -270,7 +271,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${displayName(code)} ${dateLabel} ${slotName("A", day)}: ${buA !== null ? buA.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} ${slotName("A", day)}: ${buA !== null ? fmtN(buA, 1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
@@ -286,7 +287,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${displayName(code)} ${dateLabel} ${slotName("B", day)}: ${buB !== null ? buB.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} ${slotName("B", day)}: ${buB !== null ? fmtN(buB, 1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
@@ -327,12 +328,12 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
                   <td className="px-3 py-2 text-xs text-center text-gray-500">{idx + 1}</td>
                   <td className="px-3 py-2 text-xs text-center font-medium text-gray-300" title={code}>{displayName(code)}</td>
                   <td className={`px-3 py-2 text-xs text-right font-mono ${buTableColor(avgBu)}`}>
-                    {avgBu !== null ? avgBu.toFixed(1) : "—"}
+                    {fmtN(avgBu, 1)}
                   </td>
                   <td className="px-3 py-2 text-xs text-center text-gray-400">{bestShift}</td>
                   <td className="px-3 py-2 text-xs text-center text-gray-400">{worstShift}</td>
                   <td className="px-3 py-2 text-xs text-right font-mono text-gray-300">
-                    {avgRunHours !== null ? `${avgRunHours.toFixed(1)} h` : "—"}
+                    {fmtH(avgRunHours, 1)}
                   </td>
                   <td className={`px-3 py-2 text-xs text-right font-mono ${
                     avgEfficiency === null ? "text-gray-500"
@@ -340,7 +341,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
                     : avgEfficiency >= 70  ? "text-yellow-400"
                     : "text-red-400"
                   }`}>
-                    {avgEfficiency !== null ? `${avgEfficiency.toFixed(1)}%` : "—"}
+                    {fmtPct(avgEfficiency, 1)}
                   </td>
                 </tr>
               ))}

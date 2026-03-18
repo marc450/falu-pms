@@ -18,6 +18,7 @@ import {
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
 import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, ShiftConfig, TimeSlot, ShiftAssignment } from "@/lib/supabase";
+import { fmtN, fmtPct } from "@/lib/fmt";
 import MachineAnalytics from "./MachineAnalytics";
 import ShiftAnalytics   from "./ShiftAnalytics";
 import MachinePark      from "./MachinePark";
@@ -688,7 +689,7 @@ export default function Analytics() {
             <KpiTile
               icon="bi-speedometer2"
               label="Avg Uptime"
-              value={avgUptime !== null ? `${avgUptime.toFixed(1)}%` : "—"}
+              value={fmtPct(avgUptime, 1)}
               sub="Park average · selected period"
               colorClass={ec.text}
               borderClass={ec.border}
@@ -696,7 +697,7 @@ export default function Analytics() {
             <KpiTile
               icon="bi-exclamation-triangle"
               label="Avg Scrap Rate"
-              value={avgScrap !== null ? `${avgScrap.toFixed(1)}%` : "—"}
+              value={fmtPct(avgScrap, 1)}
               sub="Park average · selected period"
               colorClass={sc.text}
               borderClass={sc.border}
@@ -728,9 +729,9 @@ export default function Analytics() {
               title={`Avg Uptime ${chartTitle}`}
               legend={
                 <>
-                  <ZoneLegend color="#4ade80" label={`Good (≥${+thresholds.efficiency.good.toFixed(1)}%)`} />
-                  <ZoneLegend color="#eab308" label={`Mediocre (≥${+thresholds.efficiency.mediocre.toFixed(1)}%)`} />
-                  <ZoneLegend color="#ef4444" label={`Poor (<${+thresholds.efficiency.mediocre.toFixed(1)}%)`} />
+                  <ZoneLegend color="#4ade80" label={`Good (≥${fmtPct(thresholds.efficiency.good, 1)})`} />
+                  <ZoneLegend color="#eab308" label={`Mediocre (≥${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
+                  <ZoneLegend color="#ef4444" label={`Poor (<${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
                 </>
               }
             >
@@ -766,7 +767,7 @@ export default function Analytics() {
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
                       labelFormatter={(l) => fmtLabel(l as string)}
-                      formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Uptime"]}
+                      formatter={(v) => [fmtPct(Number(v ?? 0), 1), "Uptime"]}
                     />
                     <Line
                       type="monotone"
@@ -787,9 +788,9 @@ export default function Analytics() {
               title={`Avg Scrap Rate ${chartTitle}`}
               legend={
                 <>
-                  <ZoneLegend color="#4ade80" label={`Good (≤${+thresholds.scrap.good.toFixed(1)}%)`} />
-                  <ZoneLegend color="#eab308" label={`Mediocre (≤${+thresholds.scrap.mediocre.toFixed(1)}%)`} />
-                  <ZoneLegend color="#ef4444" label={`Poor (>${+thresholds.scrap.mediocre.toFixed(1)}%)`} />
+                  <ZoneLegend color="#4ade80" label={`Good (≤${fmtPct(thresholds.scrap.good, 1)})`} />
+                  <ZoneLegend color="#eab308" label={`Mediocre (≤${fmtPct(thresholds.scrap.mediocre, 1)})`} />
+                  <ZoneLegend color="#ef4444" label={`Poor (>${fmtPct(thresholds.scrap.mediocre, 1)})`} />
                 </>
               }
             >
@@ -825,7 +826,7 @@ export default function Analytics() {
                       labelStyle={TOOLTIP_LABEL_STYLE}
                       itemStyle={TOOLTIP_ITEM_STYLE}
                       labelFormatter={(l) => fmtLabel(l as string)}
-                      formatter={(v) => [`${Number(v ?? 0).toFixed(1)}%`, "Scrap"]}
+                      formatter={(v) => [fmtPct(Number(v ?? 0), 1), "Scrap"]}
                     />
                     <Line
                       type="monotone"
