@@ -281,13 +281,11 @@ async function handleShiftMessage(payload) {
     current_reject: data.Reject || 0,
     last_sync_status: now,
     hidden: false,
+    // Always persist so values survive Railway restarts (written every 5 s)
+    status_since:    m.statusSince || now,
+    idle_time_calc:  Math.round(m.idleTimeCalc  || 0),
+    error_time_calc: Math.round(m.errorTimeCalc || 0),
   };
-  // Persist statusSince and idle/error accumulators on status change
-  if (prevStatus !== nextStatus) {
-    updatePayload.status_since = m.statusSince;
-    updatePayload.idle_time_calc = m.idleTimeCalc || 0;
-    updatePayload.error_time_calc = m.errorTimeCalc || 0;
-  }
   await supabase
     .from("machines")
     .update(updatePayload)
