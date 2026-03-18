@@ -60,11 +60,11 @@ function KpiTile({ label, value, sub, colorClass }: {
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function avgBu(rows: MachineShiftRow[]): number | null {
-  const valid = rows.filter(r => r.bu_normalized !== null && r.run_hours > 0);
+  const valid = rows.filter(r => r.bu_normalized !== null && r.run_hours != null && r.run_hours > 0);
   if (valid.length === 0) return null;
-  const totalHours = valid.reduce((s, r) => s + r.run_hours, 0);
+  const totalHours = valid.reduce((s, r) => s + r.run_hours!, 0);
   if (totalHours === 0) return null;
-  return valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours), 0) / totalHours;
+  return valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours!), 0) / totalHours;
 }
 
 function buColor(val: number | null): string {
@@ -151,7 +151,7 @@ export default function ShiftAnalytics({
       label,
       name:  shiftLabelToName(label, shiftSlots),
       bu:    avgBu(slotR),
-      hours: slotR.length > 0 ? slotR.reduce((s, r) => s + r.run_hours, 0) / slotR.length : null,
+      hours: (() => { const v = slotR.filter(r => r.run_hours != null); return v.length > 0 ? v.reduce((s, r) => s + r.run_hours!, 0) / v.length : null; })(),
       color: SLOT_COLORS[i] ?? "#9ca3af",
     };
   });
@@ -281,17 +281,13 @@ export default function ShiftAnalytics({
           />
           <KpiTile
             label={`${pick1Eff} Avg Run Hours`}
-            value={crewRows(pick1Eff).length > 0
-              ? `${(crewRows(pick1Eff).reduce((s, r) => s + r.run_hours, 0) / crewRows(pick1Eff).length).toFixed(1)} h`
-              : "—"}
+            value={(() => { const v = crewRows(pick1Eff).filter(r => r.run_hours != null); return v.length > 0 ? `${(v.reduce((s, r) => s + r.run_hours!, 0) / v.length).toFixed(1)} h` : "—"; })()}
             sub="Per machine per shift"
             colorClass="text-gray-300"
           />
           <KpiTile
             label={`${pick2Eff} Avg Run Hours`}
-            value={crewRows(pick2Eff).length > 0
-              ? `${(crewRows(pick2Eff).reduce((s, r) => s + r.run_hours, 0) / crewRows(pick2Eff).length).toFixed(1)} h`
-              : "—"}
+            value={(() => { const v = crewRows(pick2Eff).filter(r => r.run_hours != null); return v.length > 0 ? `${(v.reduce((s, r) => s + r.run_hours!, 0) / v.length).toFixed(1)} h` : "—"; })()}
             sub="Per machine per shift"
             colorClass="text-gray-300"
           />

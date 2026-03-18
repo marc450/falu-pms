@@ -124,10 +124,10 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
     if (machRows.length === 0) return { code, avgBu: null, bestShift: "—", worstShift: "—", avgRunHours: null, avgEfficiency: null };
 
     // Avg BU: weighted by run_hours
-    const validBu = machRows.filter(r => r.bu_normalized !== null && r.run_hours > 0);
-    const totalHours = validBu.reduce((s, r) => s + r.run_hours, 0);
+    const validBu = machRows.filter(r => r.bu_normalized !== null && r.run_hours != null && r.run_hours > 0);
+    const totalHours = validBu.reduce((s, r) => s + r.run_hours!, 0);
     const avgBu = totalHours > 0
-      ? validBu.reduce((s, r) => s + r.bu_normalized! * r.run_hours, 0) / totalHours
+      ? validBu.reduce((s, r) => s + r.bu_normalized! * r.run_hours!, 0) / totalHours
       : null;
 
     // Best and worst shift (by bu_normalized)
@@ -148,8 +148,9 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
       worstLabel = `${dl} ${slotName(worst.shift_label, worst.work_day)}`;
     }
 
-    const avgRunHours = machRows.length > 0
-      ? machRows.reduce((s, r) => s + r.run_hours, 0) / machRows.length
+    const validHours = machRows.filter(r => r.run_hours != null);
+    const avgRunHours = validHours.length > 0
+      ? validHours.reduce((s, r) => s + r.run_hours!, 0) / validHours.length
       : null;
 
     const effRows = machRows.filter(r => r.avg_efficiency !== null);
