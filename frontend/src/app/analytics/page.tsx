@@ -714,9 +714,9 @@ export default function Analytics() {
               title={`Avg Uptime ${chartTitle}`}
               legend={
                 <>
-                  <ZoneLegend color="#4ade80" label={`Good (≥${thresholds.efficiency.good}%)`} />
-                  <ZoneLegend color="#eab308" label={`Mediocre (≥${thresholds.efficiency.mediocre}%)`} />
-                  <ZoneLegend color="#ef4444" label={`Poor (<${thresholds.efficiency.mediocre}%)`} />
+                  <ZoneLegend color="#4ade80" label={`Good (≥${+thresholds.efficiency.good.toFixed(1)}%)`} />
+                  <ZoneLegend color="#eab308" label={`Mediocre (≥${+thresholds.efficiency.mediocre.toFixed(1)}%)`} />
+                  <ZoneLegend color="#ef4444" label={`Poor (<${+thresholds.efficiency.mediocre.toFixed(1)}%)`} />
                 </>
               }
             >
@@ -773,9 +773,9 @@ export default function Analytics() {
               title={`Avg Scrap Rate ${chartTitle}`}
               legend={
                 <>
-                  <ZoneLegend color="#4ade80" label={`Good (≤${thresholds.scrap.good}%)`} />
-                  <ZoneLegend color="#eab308" label={`Mediocre (≤${thresholds.scrap.mediocre}%)`} />
-                  <ZoneLegend color="#ef4444" label={`Poor (>${thresholds.scrap.mediocre}%)`} />
+                  <ZoneLegend color="#4ade80" label={`Good (≤${+thresholds.scrap.good.toFixed(1)}%)`} />
+                  <ZoneLegend color="#eab308" label={`Mediocre (≤${+thresholds.scrap.mediocre.toFixed(1)}%)`} />
+                  <ZoneLegend color="#ef4444" label={`Poor (>${+thresholds.scrap.mediocre.toFixed(1)}%)`} />
                 </>
               }
             >
