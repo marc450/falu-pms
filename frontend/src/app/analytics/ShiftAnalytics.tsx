@@ -9,8 +9,9 @@ import {
 import {
   fetchMachineShiftSummary,
   shiftLabelToName,
+  teamNameForShift,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -30,12 +31,16 @@ const TICK_STYLE          = { fill: "#9ca3af", fontSize: 11 };
 const GRID_COLOR          = "#374151";
 const AXIS_COLOR          = "#4b5563";
 
+// Colors for first four slots/teams
+const SLOT_COLORS = ["#22d3ee", "#a78bfa", "#4ade80", "#fb923c"];
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface ShiftAnalyticsProps {
-  dateRange:  DateRange;
-  machines:   RegisteredMachine[];
-  shiftSlots: TimeSlot[];
+  dateRange:        DateRange;
+  machines:         RegisteredMachine[];
+  shiftSlots:       TimeSlot[];
+  shiftAssignments: Record<string, ShiftAssignment>;
 }
 
 // ─── KPI tile ─────────────────────────────────────────────────────────────────
@@ -75,13 +80,21 @@ function barColor(val: number): string {
   return "#ef4444";
 }
 
+// ─── Annotated row type ───────────────────────────────────────────────────────
+
+interface AnnotatedRow extends MachineShiftRow {
+  crewName: string;   // team name from assignments, e.g. "SHIFT C"
+  slotName: string;   // generic slot name, e.g. "Shift A"
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ShiftAnalytics({ dateRange, machines, shiftSlots }: ShiftAnalyticsProps) {
-  const slotName = (label: string) => shiftLabelToName(label, shiftSlots);
-  const [rows, setRows]       = useState<MachineShiftRow[]>([]);
+export default function ShiftAnalytics({
+  dateRange, machines, shiftSlots, shiftAssignments,
+}: ShiftAnalyticsProps) {
+  const [rows,    setRows]    = useState<MachineShiftRow[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [error,   setError]   = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -98,53 +111,77 @@ export default function ShiftAnalytics({ dateRange, machines, shiftSlots }: Shif
 
   useEffect(() => { load(); }, [load]);
 
-  // ── Machine code → display name (user-set name, fallback to UID) ──
+  // ── Machine code → display name ──
   const machineNameMap = new Map<string, string>();
   for (const m of machines) machineNameMap.set(m.machine_code, m.name || m.machine_code);
   const displayName = (code: string) => machineNameMap.get(code) ?? code;
 
-  // ── Aggregations ──
-  const shiftARows = rows.filter(r => r.shift_label === "A");
-  const shiftBRows = rows.filter(r => r.shift_label === "B");
+  // ── Annotate rows with crew name from shift assignments ──
+  // crewName: the actual team assigned to that slot on that day (e.g. "SHIFT C")
+  // slotName: the generic configured slot name (e.g. "Shift A")
+  const annotated: AnnotatedRow[] = rows.map(r => ({
+    ...r,
+    crewName: teamNameForShift(r.work_day, r.shift_label, shiftAssignments, shiftSlots),
+    slotName: shiftLabelToName(r.shift_label, shiftSlots),
+  }));
 
-  const shiftAAvgBu   = avgBu(shiftARows);
-  const shiftBAvgBu   = avgBu(shiftBRows);
+  // ── Available slot labels and crew names in the data ──
+  const availableSlots = Array.from(new Set(annotated.map(r => r.shift_label))).sort();
+  const availableCrews = Array.from(new Set(annotated.map(r => r.crewName))).sort();
 
-  const avgRunHoursA = shiftARows.length > 0
-    ? shiftARows.reduce((s, r) => s + r.run_hours, 0) / shiftARows.length
-    : null;
-  const avgRunHoursB = shiftBRows.length > 0
-    ? shiftBRows.reduce((s, r) => s + r.run_hours, 0) / shiftBRows.length
-    : null;
+  // ── Pairwise comparison selection ──
+  // Default to first two available slots/crews on first load
+  const [pick1, setPick1] = useState<string>("");
+  const [pick2, setPick2] = useState<string>("");
 
-  // ── Bar chart: fleet avg BU per work_day, grouped by shift ──
-  const workDays = Array.from(new Set(rows.map(r => r.work_day))).sort();
-  const last30Days = workDays.slice(-30);
+  // Set defaults when crews are first known
+  const pick1Eff = pick1 || availableCrews[0] || "";
+  const pick2Eff = pick2 || availableCrews[1] || availableCrews[0] || "";
 
-  const chartData = last30Days.map(day => {
-    const dayA = rows.filter(r => r.work_day === day && r.shift_label === "A");
-    const dayB = rows.filter(r => r.work_day === day && r.shift_label === "B");
-    const buA  = avgBu(dayA);
-    const buB  = avgBu(dayB);
-    let dateLabel = day;
-    try { dateLabel = format(parseISO(day), "dd.MM"); } catch { /* noop */ }
-    return { day, dateLabel, buA: buA ?? 0, buB: buB ?? 0 };
+  // ── Per-crew aggregation: groups ALL shifts a crew worked (any slot, any day) ──
+  function crewRows(crewName: string): AnnotatedRow[] {
+    return annotated.filter(r => r.crewName === crewName);
+  }
+
+  // ── Slot-based overview data ──
+  // Groups by slot label (time-window) to show overall slot performance
+  const slotOverview = availableSlots.map((label, i) => {
+    const slotR = annotated.filter(r => r.shift_label === label);
+    return {
+      label,
+      name:  shiftLabelToName(label, shiftSlots),
+      bu:    avgBu(slotR),
+      hours: slotR.length > 0 ? slotR.reduce((s, r) => s + r.run_hours, 0) / slotR.length : null,
+      color: SLOT_COLORS[i] ?? "#9ca3af",
+    };
   });
 
-  // ── Machine comparison table ──
-  const allMachineCodes = Array.from(new Set(rows.map(r => r.machine_code))).sort();
+  // ── Per-day chart data for the two selected crews ──
+  const workDays = Array.from(new Set(annotated.map(r => r.work_day))).sort();
+  const chartDays = workDays.slice(-30);
+
+  const chartData = chartDays.map(day => {
+    const d1 = annotated.filter(r => r.work_day === day && r.crewName === pick1Eff);
+    const d2 = annotated.filter(r => r.work_day === day && r.crewName === pick2Eff);
+    let dateLabel = day;
+    try { dateLabel = format(parseISO(day), "dd.MM"); } catch { /* noop */ }
+    return { day, dateLabel, bu1: avgBu(d1) ?? 0, bu2: avgBu(d2) ?? 0 };
+  });
+
+  // ── Machine comparison for the two selected crews ──
+  const allMachineCodes = Array.from(new Set(annotated.map(r => r.machine_code))).sort();
   const machineComparison = allMachineCodes.map(code => {
-    const mA = rows.filter(r => r.machine_code === code && r.shift_label === "A");
-    const mB = rows.filter(r => r.machine_code === code && r.shift_label === "B");
-    const buA = avgBu(mA);
-    const buB = avgBu(mB);
-    const delta = buA !== null && buB !== null ? buA - buB : null;
-    const better = delta === null ? "N/A" : delta > 0.5 ? "A" : delta < -0.5 ? "B" : "Even";
-    return { code, buA, buB, delta, better };
+    const m1 = annotated.filter(r => r.machine_code === code && r.crewName === pick1Eff);
+    const m2 = annotated.filter(r => r.machine_code === code && r.crewName === pick2Eff);
+    const bu1 = avgBu(m1);
+    const bu2 = avgBu(m2);
+    const delta = bu1 !== null && bu2 !== null ? bu1 - bu2 : null;
+    const better = delta === null ? "N/A" : delta > 0.5 ? "1" : delta < -0.5 ? "2" : "Even";
+    return { code, bu1, bu2, delta, better };
   }).sort((a, b) => {
-    const avgA = a.buA !== null && a.buB !== null ? (a.buA + a.buB) / 2 : a.buA ?? a.buB ?? 0;
-    const avgB = b.buA !== null && b.buB !== null ? (b.buA + b.buB) / 2 : b.buA ?? b.buB ?? 0;
-    return avgB - avgA;
+    const sA = a.bu1 !== null && a.bu2 !== null ? (a.bu1 + a.bu2) / 2 : a.bu1 ?? a.bu2 ?? 0;
+    const sB = b.bu1 !== null && b.bu2 !== null ? (b.bu1 + b.bu2) / 2 : b.bu1 ?? b.bu2 ?? 0;
+    return sB - sA;
   });
 
   // ── Render ──
@@ -176,53 +213,108 @@ export default function ShiftAnalytics({ dateRange, machines, shiftSlots }: Shif
 
   return (
     <div className="flex flex-col gap-5">
-      {/* KPI tiles */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <KpiTile
-          label={`${slotName("A")} Fleet Avg BU`}
-          value={shiftAAvgBu !== null ? shiftAAvgBu.toFixed(1) : "—"}
-          sub="Normalized to 12 h shift"
-          colorClass={buColor(shiftAAvgBu)}
-        />
-        <KpiTile
-          label={`${slotName("B")} Fleet Avg BU`}
-          value={shiftBAvgBu !== null ? shiftBAvgBu.toFixed(1) : "—"}
-          sub="Normalized to 12 h shift"
-          colorClass={buColor(shiftBAvgBu)}
-        />
-        <KpiTile
-          label={`${slotName("A")} Avg Run Hours`}
-          value={avgRunHoursA !== null ? `${avgRunHoursA.toFixed(1)} h` : "—"}
-          sub="Per machine per shift"
-          colorClass="text-gray-300"
-        />
-        <KpiTile
-          label={`${slotName("B")} Avg Run Hours`}
-          value={avgRunHoursB !== null ? `${avgRunHoursB.toFixed(1)} h` : "—"}
-          sub="Per machine per shift"
-          colorClass="text-gray-300"
-        />
+
+      {/* ── Slot overview: one KPI tile per time slot ─────────────────────── */}
+      <div>
+        <p className="text-xs text-gray-500 mb-2 flex items-center gap-1.5">
+          <i className="bi bi-clock"></i>
+          Overview by time slot
+        </p>
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          {slotOverview.map(s => (
+            <KpiTile
+              key={s.label}
+              label={`${s.name} Fleet Avg BU`}
+              value={s.bu !== null ? s.bu.toFixed(1) : "—"}
+              sub="Normalized to 12 h shift"
+              colorClass={buColor(s.bu)}
+            />
+          ))}
+        </div>
       </div>
 
-      {/* Bar chart */}
+      {/* ── Crew comparison selector ──────────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-        <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-white">Fleet Avg BU per Day ({slotName("A")} vs {slotName("B")})</h3>
+        <div className="flex flex-wrap items-center gap-3 mb-4">
+          <span className="text-sm font-semibold text-white flex items-center gap-2">
+            <i className="bi bi-people-fill text-cyan-400"></i>
+            Compare crews
+          </span>
+          <div className="flex items-center gap-2 ml-auto">
+            {/* Crew 1 picker */}
+            <select
+              value={pick1 || availableCrews[0] || ""}
+              onChange={e => setPick1(e.target.value)}
+              className="bg-gray-900 border border-cyan-700/60 text-cyan-300 text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none focus:border-cyan-400"
+            >
+              {availableCrews.map(c => (
+                <option key={c} value={c} className="bg-gray-800 text-white">{c}</option>
+              ))}
+            </select>
+            <span className="text-xs text-gray-500">vs</span>
+            {/* Crew 2 picker */}
+            <select
+              value={pick2 || availableCrews[1] || availableCrews[0] || ""}
+              onChange={e => setPick2(e.target.value)}
+              className="bg-gray-900 border border-purple-700/60 text-purple-300 text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none focus:border-purple-400"
+            >
+              {availableCrews.map(c => (
+                <option key={c} value={c} className="bg-gray-800 text-white">{c}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        {/* KPI row for the selected two crews */}
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
+          <KpiTile
+            label={`${pick1Eff} Fleet Avg BU`}
+            value={avgBu(crewRows(pick1Eff))?.toFixed(1) ?? "—"}
+            sub="Normalized to 12 h shift"
+            colorClass={buColor(avgBu(crewRows(pick1Eff)))}
+          />
+          <KpiTile
+            label={`${pick2Eff} Fleet Avg BU`}
+            value={avgBu(crewRows(pick2Eff))?.toFixed(1) ?? "—"}
+            sub="Normalized to 12 h shift"
+            colorClass={buColor(avgBu(crewRows(pick2Eff)))}
+          />
+          <KpiTile
+            label={`${pick1Eff} Avg Run Hours`}
+            value={crewRows(pick1Eff).length > 0
+              ? `${(crewRows(pick1Eff).reduce((s, r) => s + r.run_hours, 0) / crewRows(pick1Eff).length).toFixed(1)} h`
+              : "—"}
+            sub="Per machine per shift"
+            colorClass="text-gray-300"
+          />
+          <KpiTile
+            label={`${pick2Eff} Avg Run Hours`}
+            value={crewRows(pick2Eff).length > 0
+              ? `${(crewRows(pick2Eff).reduce((s, r) => s + r.run_hours, 0) / crewRows(pick2Eff).length).toFixed(1)} h`
+              : "—"}
+            sub="Per machine per shift"
+            colorClass="text-gray-300"
+          />
+        </div>
+
+        {/* Bar chart: selected two crews over time */}
+        <div className="flex items-center justify-between mb-3">
+          <span className="text-xs text-gray-400">Fleet Avg BU per Day</span>
           <div className="flex items-center gap-3 text-xs text-gray-500">
             <span className="flex items-center gap-1.5">
               <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "#22d3ee" }}></span>
-              {slotName("A")}
+              {pick1Eff}
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "#a78bfa" }}></span>
-              {slotName("B")}
+              {pick2Eff}
             </span>
           </div>
         </div>
         {chartData.length === 0 ? (
           <div className="flex items-center justify-center h-48 text-gray-500 text-sm">No data</div>
         ) : (
-          <ResponsiveContainer width="100%" height={240}>
+          <ResponsiveContainer width="100%" height={220}>
             <BarChart data={chartData} margin={{ top: 4, right: 8, left: -18, bottom: 16 }} barCategoryGap="25%">
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
               <ReferenceLine y={BU_TARGET_DEFAULT}   stroke="#4ade80" strokeDasharray="6 3" strokeOpacity={0.5} />
@@ -248,17 +340,17 @@ export default function ShiftAnalytics({ dateRange, machines, shiftSlots }: Shif
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 formatter={(v: any, name: any) => [
                   `${Number(v).toFixed(1)} BU`,
-                  name === "buA" ? slotName("A") : slotName("B"),
+                  name === "bu1" ? pick1Eff : pick2Eff,
                 ]}
               />
-              <Bar dataKey="buA" name="buA" radius={[2, 2, 0, 0]} barSize={10}>
+              <Bar dataKey="bu1" name="bu1" radius={[2, 2, 0, 0]} barSize={10}>
                 {chartData.map((d, i) => (
-                  <Cell key={`a-${i}`} fill={d.buA > 0 ? barColor(d.buA) : "#374151"} fillOpacity={0.85} />
+                  <Cell key={`1-${i}`} fill={d.bu1 > 0 ? barColor(d.bu1) : "#374151"} fillOpacity={0.85} />
                 ))}
               </Bar>
-              <Bar dataKey="buB" name="buB" radius={[2, 2, 0, 0]} barSize={10}>
+              <Bar dataKey="bu2" name="bu2" radius={[2, 2, 0, 0]} barSize={10}>
                 {chartData.map((d, i) => (
-                  <Cell key={`b-${i}`} fill={d.buB > 0 ? "#a78bfa" : "#374151"} fillOpacity={0.75} />
+                  <Cell key={`2-${i}`} fill={d.bu2 > 0 ? "#a78bfa" : "#374151"} fillOpacity={0.75} />
                 ))}
               </Bar>
             </BarChart>
@@ -269,44 +361,50 @@ export default function ShiftAnalytics({ dateRange, machines, shiftSlots }: Shif
       {/* Comparison table */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-700">
-          <h3 className="text-sm font-semibold text-white">Machine Shift Comparison</h3>
-          <p className="text-xs text-gray-500 mt-0.5">Ranked by avg BU across both shifts</p>
+          <h3 className="text-sm font-semibold text-white">Machine Crew Comparison</h3>
+          <p className="text-xs text-gray-500 mt-0.5">
+            {pick1Eff} vs {pick2Eff} — ranked by avg BU across both crews
+          </p>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-gray-700 bg-gray-900/40">
                 <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Machine</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">{slotName("A")} Avg BU</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">{slotName("B")} Avg BU</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">Delta ({slotName("A")} minus {slotName("B")})</th>
-                <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Better Shift</th>
+                <th className="text-right  px-4 py-2 text-xs font-semibold text-cyan-400">{pick1Eff} Avg BU</th>
+                <th className="text-right  px-4 py-2 text-xs font-semibold text-purple-400">{pick2Eff} Avg BU</th>
+                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">
+                  Delta ({pick1Eff} − {pick2Eff})
+                </th>
+                <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Better</th>
               </tr>
             </thead>
             <tbody>
-              {machineComparison.map(({ code, buA, buB, delta, better }) => (
+              {machineComparison.map(({ code, bu1, bu2, delta, better }) => (
                 <tr key={code} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
-                  <td className="px-4 py-2 text-xs font-medium text-gray-300 text-center" title={code}>{displayName(code)}</td>
-                  <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(buA)}`}>
-                    {buA !== null ? buA.toFixed(1) : "—"}
+                  <td className="px-4 py-2 text-xs font-medium text-gray-300 text-center" title={code}>
+                    {displayName(code)}
                   </td>
-                  <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(buB)}`}>
-                    {buB !== null ? buB.toFixed(1) : "—"}
+                  <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu1)}`}>
+                    {bu1 !== null ? bu1.toFixed(1) : "—"}
+                  </td>
+                  <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu2)}`}>
+                    {bu2 !== null ? bu2.toFixed(1) : "—"}
                   </td>
                   <td className={`px-4 py-2 text-xs text-right font-mono ${
                     delta === null ? "text-gray-600"
-                    : delta > 0 ? "text-green-400"
-                    : delta < 0 ? "text-red-400"
-                    : "text-gray-400"
+                    : delta > 0    ? "text-green-400"
+                    : delta < 0    ? "text-red-400"
+                    :                "text-gray-400"
                   }`}>
                     {delta !== null ? `${delta > 0 ? "+" : ""}${delta.toFixed(1)}` : "—"}
                   </td>
                   <td className={`px-4 py-2 text-xs text-center font-medium ${
-                    better === "A" ? "text-cyan-400"
-                    : better === "B" ? "text-purple-400"
+                    better === "1" ? "text-cyan-400"
+                    : better === "2" ? "text-purple-400"
                     : "text-gray-500"
                   }`}>
-                    {better === "A" ? slotName("A") : better === "B" ? slotName("B") : better}
+                    {better === "1" ? pick1Eff : better === "2" ? pick2Eff : better}
                   </td>
                 </tr>
               ))}
@@ -314,6 +412,7 @@ export default function ShiftAnalytics({ dateRange, machines, shiftSlots }: Shif
           </table>
         </div>
       </div>
+
     </div>
   );
 }

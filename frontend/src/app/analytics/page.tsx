@@ -660,7 +660,7 @@ export default function Analytics() {
         <MachineAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
       )}
       {tab === "shifts" && (
-        <ShiftAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} />
+        <ShiftAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
       )}
       {tab === "park" && (
         <MachinePark dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
