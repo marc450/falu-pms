@@ -4,6 +4,81 @@ Last updated: 2026-03-18
 
 ---
 
+## Pre-Ship Checklist (complete before handing to customer)
+
+### A. Infrastructure — stop simulation, start reality
+
+| Step | Action | Where |
+|---|---|---|
+| A1 | Stop the Railway **simulator** service (the separate service running `npm run simulator`) | Railway dashboard |
+| A2 | Keep the Railway **bridge** service running (`npm start` / `node src/index.js`) | Railway dashboard |
+| A3 | Confirm Railway bridge env vars point to **production** Supabase (`SUPABASE_URL`, `SUPABASE_SERVICE_KEY`) | Railway → Variables |
+| A4 | Confirm GitHub Actions secrets match the same production Supabase project (`NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`) | GitHub → Settings → Secrets |
+| A5 | Confirm `NEXT_PUBLIC_API_URL` GitHub Actions variable points to the Railway bridge URL (not localhost) | GitHub → Settings → Variables |
+
+---
+
+### B. Real PLC onboarding
+
+| Step | Action |
+|---|---|
+| B1 | Configure each Raspberry Pi / PLC with the HiveMQ hostname, port 8883, and credentials (username + password from HiveMQ Cloud console) |
+| B2 | Verify each PLC publishes to the `cloud/Shift` topic (not `local/Shift`) — the bridge subscribes to `cloud/#` |
+| B3 | Confirm with the site engineer that the PLC shift clock boundaries are set to 07:00 / 19:00 **local Eastern time** on the factory floor |
+| B4 | After the first real MQTT message from each machine arrives, verify a new row appears in the `machines` table in Supabase with the correct `machine_code` (PLC UID) |
+
+---
+
+### C. Machine configuration in Settings (first-run only)
+
+| Step | Action |
+|---|---|
+| C1 | Open Settings → Machines tab; all 18 real machines should now appear with their PLC UIDs |
+| C2 | Rename each machine to its human-readable label (CB-30 through CB-37, CT-1 through CT-10) using the pencil icon |
+| C3 | Drag each machine into its correct production cell |
+| C4 | Set speed targets, efficiency thresholds, and scrap thresholds to the agreed factory values (the bulk "Apply to all" and per-cell "Set all" controls in Settings → Targets make this faster) |
+
+---
+
+### D. Database cleanup (remove all demo / seed data)
+
+Run the following SQL in the Supabase SQL editor **after** stopping the simulator and **before** any real shift begins:
+
+```sql
+-- 1. Remove all simulated shift readings
+TRUNCATE shift_readings;
+
+-- 2. Remove all downsampled analytics
+TRUNCATE analytics_readings;
+
+-- 3. Remove all saved shift log snapshots
+TRUNCATE saved_shift_logs;
+
+-- 4. Clear simulator state (no longer needed with real machines)
+TRUNCATE simulator_state;
+
+-- 5. Remove hidden / orphaned machines left over from simulator UIDs
+--    (only run this AFTER real machines have connected and appear in the table)
+DELETE FROM machines WHERE hidden = true;
+```
+
+> Do NOT truncate the `machines` table itself — the real machines will already be registered there after step B4.
+
+---
+
+### E. Verify the live dashboard
+
+| Check | Expected result |
+|---|---|
+| Dashboard loads | 18 machines visible, all showing real-time status |
+| Idle and error times | Numeric minutes visible (not "–") |
+| BU output | Non-zero after first complete shift |
+| Analytics — Fleet Trend | Data appears after the first hour of production |
+| Analytics — Shift Summary | Data appears after the first complete shift |
+| Settings — machine names | Human-readable names shown everywhere (dashboard, analytics, settings) |
+
+---
+
 ## Factory Timezone
 
 The US factory operates in **Eastern Time (ET)**.
@@ -146,6 +221,11 @@ hourly regardless of the factory timezone.
 
 | Area | Change needed | Priority |
 |---|---|---|
+| Stop simulator Railway service | Operational — stop before first real shift | Critical |
+| PLC HiveMQ credentials | Configure each Pi/PLC before factory start | Critical |
+| DB demo data cleanup | Truncate shift_readings, analytics_readings, saved_shift_logs, simulator_state | Critical |
+| Machine naming + cell assignment | Settings UI after first real MQTT message | High |
+| Production targets and thresholds | Settings → Targets after naming | High |
 | `get_fleet_trend` — daily bucket | Replace `- interval '7 hours'` with `AT TIME ZONE 'America/New_York' - interval '7 hours'` | High — affects daily chart correctness |
 | Hourly label display | Apply factory UTC offset in `fmtBucket` | Medium — cosmetic but confusing without it |
 | `downsample_to_analytics` — bucket alignment | Apply `AT TIME ZONE` to hour truncation | Low — minor alignment only |
