@@ -129,6 +129,10 @@ async function loadRegisteredMachines() {
     machineIdCache[code] = row.id;
 
     if (!allMachines[code]) {
+      // idle_time_calc / error_time_calc in the DB are RUNNING TOTALS that
+      // already include the current ongoing stint (folded in every 5 s).
+      // Reset statusSince to now so the frontend's "current stint" starts
+      // fresh and doesn't double-count the time already in idleTimeCalc.
       allMachines[code] = {
         machine: code,
         machineStatus: {
@@ -142,7 +146,7 @@ async function loadRegisteredMachines() {
           Reject: row.current_reject || 0,
         },
         lastSync: row.last_sync_status || row.last_sync_shift || null,
-        statusSince: row.status_since || new Date().toISOString(),
+        statusSince: new Date().toISOString(), // reset — prev stint is in idleTimeCalc
         idleTimeCalc: row.idle_time_calc || 0,
         errorTimeCalc: row.error_time_calc || 0,
       };
@@ -270,8 +274,20 @@ async function handleShiftMessage(payload) {
 
   // Always update the machines table (status, speed, live counters)
   const now = new Date().toISOString();
+
+  // Include the CURRENT ongoing stint in the persisted totals so a Railway
+  // restart never loses more than ~5 s of accumulated idle/error time.
+  // m.idleTimeCalc only grows on status transitions; folding the live stint
+  // into the DB value here makes idle_time_calc a true running total that the
+  // bridge restores directly on the next startup.
+  const currentStintMs = m.statusSince
+    ? Math.max(0, Date.now() - new Date(m.statusSince).getTime())
+    : 0;
+  const extraIdleMins  = nextStatus === "idle"  ? currentStintMs / 60000 : 0;
+  const extraErrorMins = nextStatus === "error" ? currentStintMs / 60000 : 0;
+
   const updatePayload = {
-    status: (data.Status || "offline").toLowerCase(),
+    status: nextStatus,
     error_message: null, // errors now come via cloud/Error
     active_shift: data.Shift || 1,
     speed: data.Speed || 0,
@@ -281,10 +297,12 @@ async function handleShiftMessage(payload) {
     current_reject: data.Reject || 0,
     last_sync_status: now,
     hidden: false,
-    // Always persist so values survive Railway restarts (written every 5 s)
+    // Always persist so values survive Railway restarts (written every 5 s).
+    // idle/error totals include the current ongoing stint so the DB is always
+    // a complete snapshot; status_since records when this status started.
     status_since:    m.statusSince || now,
-    idle_time_calc:  Math.round(m.idleTimeCalc  || 0),
-    error_time_calc: Math.round(m.errorTimeCalc || 0),
+    idle_time_calc:  Math.round((m.idleTimeCalc  || 0) + extraIdleMins),
+    error_time_calc: Math.round((m.errorTimeCalc || 0) + extraErrorMins),
   };
   await supabase
     .from("machines")
