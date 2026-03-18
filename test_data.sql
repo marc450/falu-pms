@@ -1,37 +1,28 @@
 -- ============================================================================
 -- Realistic test data for FALU PMS
--- Per-machine, per-shift readings for 6 months
+-- Four 6-hour shifts per machine per day for 6 months
 -- ============================================================================
 --
--- Two separate concepts kept distinct throughout:
+-- BU formula (normalised to 12h equivalent):
+--   bu_normalized = (swabs_produced / 7200) / run_hours * 12
 --
---   rated_swabs  = what a machine produces at 100 % uptime, full speed
---                  = 240 BU × 7 200 = 1 728 000 swabs / 12 h shift
---                  (used only in the swab-rate formula)
---
---   bu_target    = the production GOAL per shift per machine = 185 BU
---                  A machine must achieve ≥ 77 % uptime to hit this goal.
---                  Used for reference lines on the chart, NOT for formula math.
+-- Rated capacity per 6h shift: 240 BU × 7 200 / 2 = 864 000 swabs
+-- BU target per shift: 185 BU (machine must run ≥ 77 % to hit it)
 --
 -- Performance design:
 --   base efficiency (fraction of shift spent running): 0.74 – 0.88
---   fleet average ≈ 0.81 → 240 × 0.81 ≈ 194 BU/shift → 194/185 ≈ 105 % of target
---   → fleet daily ≈ 18 × 2 × 194 ≈ 6 984 BU/day  vs  "Good" threshold 6 660
---   → most days green, breakdown days yellow/red  →  realistic spread
---
---   Hard cap per 2 h interval: 115 % of target interval  (= 255 300 swabs)
---   → max possible per shift: 213 BU  (+15 % of target, never more)
+--   fleet average ≈ 0.81
 --   Breakdown chance: 7 % per machine per shift
 --   Weekend factor: −5 %    Night-shift factor: −3 %
+--
+-- Shift schedule (matches app_settings shift_config):
+--   Shift A (s=1): 07:00 – 12:59
+--   Shift B (s=2): 13:00 – 18:59
+--   Shift C (s=3): 19:00 – 00:59
+--   Shift D (s=4): 01:00 – 06:59  (attributed to previous calendar work-day)
 -- ============================================================================
 
 -- Wipe ALL historical data so no old test runs accumulate on top of each other.
--- The live bridge will regenerate today's readings automatically after this runs.
--- analytics_readings MUST also be cleared: get_fleet_trend prefers shift_readings
--- over analytics_readings for any overlapping bucket (UNION NOT EXISTS), but once
--- downsample_to_analytics moves rows out of shift_readings the stale ar data
--- would reappear and produce different numbers for the same day depending on
--- which date-range preset is selected.
 DELETE FROM shift_readings;
 DELETE FROM saved_shift_logs;
 DELETE FROM analytics_readings;
@@ -53,16 +44,14 @@ DECLARE
   machine_codes TEXT[];
   machine_count INT;
 
-  -- Rated capacity: 240 BU at 100 % uptime (= target / 0.77)
-  -- bu_target is 185 BU — the reference goal on the chart.
-  -- At 77 % uptime a machine just hits target; at 81 % (fleet avg) it runs at ~105 %.
-  rated_swabs    CONSTANT BIGINT := 1728000;  -- 240 BU × 7200 swabs/BU
-  interval_rated CONSTANT BIGINT := 288000;   -- rated_swabs / 6 readings
-  -- Hard cap per interval: 185 × 1.15 × 7200 / 6  (never exceed +15 % of goal)
-  interval_cap   CONSTANT BIGINT := 255300;
+  -- Rated capacity: 240 BU at 100 % uptime for a 6h shift
+  -- = 240 × 7200 swabs / 2  (half of 12h rated)
+  rated_swabs    CONSTANT BIGINT := 864000;
+  interval_rated CONSTANT BIGINT := 172800;   -- rated_swabs / 5 readings
+  -- Hard cap per interval: 185 × 1.15 × 7200 / 5
+  interval_cap   CONSTANT BIGINT := 198720;
 
-  -- Per-machine uptime profiles (0 = all idle, 1 = always running)
-  -- Fleet average: 0.810 → 240 × 0.81 = 194 BU/shift ≈ 105 % of 185 target
+  -- Per-machine uptime profiles (fleet average 0.810)
   base_eff DOUBLE PRECISION[] := ARRAY[
     0.88, 0.82, 0.85, 0.74, 0.83, 0.78,
     0.86, 0.76, 0.84, 0.73, 0.81, 0.79,
@@ -83,17 +72,19 @@ DECLARE
   dow         INT;
 
   shift_start           TIMESTAMPTZ;
-  shift_len_mins CONSTANT INT := 720;
-  n_readings     CONSTANT INT := 6;
-  interval_mins  CONSTANT INT := 120;  -- 720 / 6
+  -- 6-hour shifts, 5 readings each (60-min intervals → last reading at +300 min,
+  -- safely within the 6h window and not spilling into the next slot)
+  shift_len_mins CONSTANT INT := 360;
+  n_readings     CONSTANT INT := 5;
+  interval_mins  CONSTANT INT := 60;
 
-  mach_eff    DOUBLE PRECISION;
-  day_factor  DOUBLE PRECISION;
+  mach_eff     DOUBLE PRECISION;
+  day_factor   DOUBLE PRECISION;
   shift_factor DOUBLE PRECISION;
-  eff_factor  DOUBLE PRECISION;   -- combined uptime fraction for this session
+  eff_factor   DOUBLE PRECISION;
 
   is_breakdown BOOLEAN;
-  bd_eff       DOUBLE PRECISION;  -- breakdown uptime multiplier (0.40 – 0.60)
+  bd_eff       DOUBLE PRECISION;
 
   cum_prod_time INT;
   cum_idle_time INT;
@@ -127,26 +118,38 @@ BEGIN
     RAISE NOTICE 'No active machines — skipping.'; RETURN;
   END IF;
 
-  FOR d IN SELECT generate_series((CURRENT_DATE - INTERVAL '6 months')::date, (CURRENT_DATE - INTERVAL '1 day')::date, '1 day') LOOP
+  FOR d IN SELECT generate_series(
+      (CURRENT_DATE - INTERVAL '6 months')::date,
+      (CURRENT_DATE - INTERVAL '1 day')::date,
+      '1 day'
+  ) LOOP
     dow := EXTRACT(dow FROM d)::int;
 
     day_factor := 1.0
       + CASE WHEN dow IN (0, 6) THEN -0.05 ELSE 0 END
-      + (random() - 0.5) * 0.06;  -- ±3 % daily noise
+      + (random() - 0.5) * 0.06;   -- ±3 % daily noise
 
-    FOR s IN 1..2 LOOP
+    -- Four 6-hour shifts:
+    --   s=1  Shift A  07:00–12:59
+    --   s=2  Shift B  13:00–18:59
+    --   s=3  Shift C  19:00–00:59
+    --   s=4  Shift D  01:00–06:59 (next calendar day, same work-day via -7h offset)
+    FOR s IN 1..4 LOOP
       shift_factor := day_factor
-        + CASE WHEN s = 2 THEN -0.03 ELSE 0.01 END
+        + CASE WHEN s IN (3, 4) THEN -0.03 ELSE 0.01 END   -- night penalty
         + (random() - 0.5) * 0.04;
 
-      shift_start := d::timestamptz
-        + CASE WHEN s = 1 THEN interval '7 hours' ELSE interval '19 hours' END;
+      shift_start := CASE s
+        WHEN 1 THEN d::timestamptz + interval '7 hours'
+        WHEN 2 THEN d::timestamptz + interval '13 hours'
+        WHEN 3 THEN d::timestamptz + interval '19 hours'
+        WHEN 4 THEN d::timestamptz + interval '25 hours'   -- 01:00 next calendar day
+      END;
 
       FOR m_idx IN 1..machine_count LOOP
         m_id     := machine_ids[m_idx];
         mach_eff := CASE WHEN m_idx <= 18 THEN base_eff[m_idx] ELSE 0.81 END;
 
-        -- Combined uptime fraction for this specific shift session
         eff_factor := GREATEST(0.25, LEAST(0.98, mach_eff * shift_factor));
 
         is_breakdown := random() < 0.07;
@@ -161,14 +164,13 @@ BEGIN
 
         FOR r IN 1..n_readings LOOP
 
-          -- ── Productive minutes this interval ───────────────────────────
-          -- eff_factor is applied only to TIME (not to swab rate).
-          IF is_breakdown AND r BETWEEN 3 AND 5 THEN
+          -- ── Productive minutes this interval ─────────────────────────
+          IF is_breakdown AND r BETWEEN 3 AND 4 THEN
             inc_prod_mins := GREATEST(5,
               (interval_mins * bd_eff * (0.7 + random() * 0.6))::int
             );
           ELSE
-            inc_prod_mins := GREATEST(20,
+            inc_prod_mins := GREATEST(10,
               (interval_mins * eff_factor * (0.94 + random() * 0.12))::int
             );
             inc_prod_mins := LEAST(interval_mins, inc_prod_mins);
@@ -177,23 +179,19 @@ BEGIN
           cum_prod_time := cum_prod_time + inc_prod_mins;
           cum_idle_time := cum_idle_time + (interval_mins - inc_prod_mins);
 
-          -- ── Swab production ─────────────────────────────────────────────
-          -- Rate while running = machine rated speed ± tiny speed noise.
-          -- Efficiency was already captured in productive time above — NOT
-          -- applied again here (that was the bug causing under-production).
+          -- ── Swab production ──────────────────────────────────────────
           inc_swabs := (
-            (rated_swabs::float8 / shift_len_mins)  -- rated swabs/min
-            * inc_prod_mins                          -- productive minutes
-            * (0.97 + random() * 0.06)              -- speed noise ±3 %
+            (rated_swabs::float8 / shift_len_mins)
+            * inc_prod_mins
+            * (0.97 + random() * 0.06)
           )::bigint;
 
-          -- Hard cap: never exceed +15 % of the production goal per interval
           inc_swabs := LEAST(inc_swabs, interval_cap);
           inc_swabs := GREATEST(0, inc_swabs);
 
           cum_swabs := cum_swabs + inc_swabs;
 
-          -- ── Scrap ───────────────────────────────────────────────────────
+          -- ── Scrap ────────────────────────────────────────────────────
           inc_discarded := GREATEST(0, (
             inc_swabs * (
               CASE WHEN m_idx <= 18 THEN base_scrap[m_idx] ELSE 0.018 END
@@ -203,7 +201,7 @@ BEGIN
           )::bigint);
           cum_discarded := cum_discarded + inc_discarded;
 
-          -- ── Boxes ───────────────────────────────────────────────────────
+          -- ── Boxes ────────────────────────────────────────────────────
           inc_boxes    := GREATEST(0, inc_swabs / 7200);
           cum_boxes    := cum_boxes + inc_boxes;
           IF random() < 0.05 THEN
@@ -220,6 +218,7 @@ BEGIN
             THEN LEAST(100.0, cum_discarded::float8 / cum_swabs * 100)
             ELSE 0 END;
 
+          -- Reading timestamp: inside the 60-min interval window, with ±2 min jitter
           rec_at := shift_start
             + (r * interval_mins * interval '1 minute')
             + ((random() * 4 - 2) * interval '1 minute');
@@ -272,12 +271,12 @@ BEGIN
           cum_boxes, cum_boxes_lp,
           cum_discarded,
           ROUND(eff_pct::numeric, 1), ROUND(rej_pct::numeric, 1),
-          shift_start + interval '12 hours' - (random() * interval '3 minutes')
+          shift_start + interval '6 hours' - (random() * interval '3 minutes')
         );
 
       END LOOP; -- machines
     END LOOP;   -- shifts
   END LOOP;     -- days
 
-  RAISE NOTICE 'Done: % machines, 6 months.', machine_count;
+  RAISE NOTICE 'Done: % machines, 6 months, 4 shifts/day.', machine_count;
 END $$;
