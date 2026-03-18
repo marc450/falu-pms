@@ -405,7 +405,7 @@ function CellSection({
     if (corrEff !== null) { effSum += corrEff; effCount++; }
     // Scrap: sum raw discarded/produced swabs across all non-offline machines
     const produced = m.machineStatus?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
-    const discarded = m.machineStatus?.DiscardedSwabs ?? 0;
+    const discarded = m.machineStatus?.DisgardedSwabs ?? m.machineStatus?.DiscardedSwabs ?? 0;
     if (!isOffline && produced > 0) { totalProduced += produced; totalDiscarded += discarded; }
     const mActShift = m.machineStatus?.ActShift ?? 1;
     const mShiftData = mActShift === 2 ? m.shift2 : mActShift === 3 ? m.shift3 : m.shift1;
@@ -672,7 +672,7 @@ function ParkSummaryTiles({
     // Scrap: sum raw discarded/produced swabs across all non-offline machines
     const isOffline = s === "offline" || !s;
     const produced  = m.machineStatus?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
-    const discarded = m.machineStatus?.DiscardedSwabs ?? 0;
+    const discarded = m.machineStatus?.DisgardedSwabs ?? m.machineStatus?.DiscardedSwabs ?? 0;
     if (!isOffline && produced > 0) { totalProduced += produced; totalDiscarded += discarded; }
     // Accumulate per-machine scrap targets for color thresholds
     if (m.scrapGood)     { scrapGoodSum += m.scrapGood;     scrapGoodCount++; }
