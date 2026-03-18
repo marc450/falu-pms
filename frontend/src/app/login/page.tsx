@@ -4,6 +4,18 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
 
+function UscLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <circle cx="50" cy="28" r="18" fill="#1a3a8f"/>
+      <circle cx="32" cy="56" r="18" fill="#1a3a8f"/>
+      <circle cx="68" cy="56" r="18" fill="#1a3a8f"/>
+      <rect x="43" y="64" width="14" height="22" rx="3" fill="#1a3a8f"/>
+      <rect x="36" y="82" width="28" height="8" rx="4" fill="#1a3a8f"/>
+    </svg>
+  );
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -37,11 +49,7 @@ export default function LoginPage() {
 
         {/* Brand */}
         <div className="text-center mb-8">
-          <img
-            src="/usc-logo.svg"
-            alt="U.S. Cotton logo"
-            className="w-16 h-16 mx-auto mb-4"
-          />
+          <UscLogo className="w-16 h-16 mx-auto mb-4" />
           <h1 className="text-white text-2xl font-bold tracking-tight">U.S. COTTON Cleveland</h1>
           <p className="text-gray-500 text-sm mt-1">Production Monitoring System</p>
         </div>

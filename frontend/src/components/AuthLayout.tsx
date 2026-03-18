@@ -5,6 +5,19 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
 
+// Inline SVG so it works regardless of basePath / CDN configuration
+function UscLogo({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <circle cx="50" cy="28" r="18" fill="#1a3a8f"/>
+      <circle cx="32" cy="56" r="18" fill="#1a3a8f"/>
+      <circle cx="68" cy="56" r="18" fill="#1a3a8f"/>
+      <rect x="43" y="64" width="14" height="22" rx="3" fill="#1a3a8f"/>
+      <rect x="36" y="82" width="28" height="8" rx="4" fill="#1a3a8f"/>
+    </svg>
+  );
+}
+
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
   const { session, loading, signOut, user } = useAuth();
   const pathname = usePathname();
@@ -49,11 +62,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         {/* Brand */}
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center gap-2.5">
-            <img
-              src="/usc-logo.svg"
-              alt="U.S. Cotton logo"
-              className="w-9 h-9 shrink-0"
-            />
+            <UscLogo className="w-9 h-9 shrink-0" />
             <div>
               <h1 className="text-sm font-bold text-white leading-tight">U.S. COTTON Cleveland</h1>
               <p className="text-xs text-gray-500">Production Monitoring</p>
