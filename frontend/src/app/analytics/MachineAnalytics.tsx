@@ -487,7 +487,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
                 <th className="text-center px-3 py-2 text-xs font-semibold text-gray-400 bg-gray-900/50 sticky left-0 z-10 whitespace-nowrap">
                   Date
                 </th>
-                <th className="text-center px-2 py-2 text-xs font-semibold text-gray-400 bg-gray-900/50 sticky left-[72px] z-10 border-r border-gray-700">
+                <th className="text-center px-2 py-2 text-xs font-semibold text-gray-400 bg-gray-900/50 sticky left-[72px] z-10 border-r border-gray-700 whitespace-nowrap">
                   Shift
                 </th>
                 {filteredCodes.map(code => (
@@ -506,7 +506,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
                     <td className="px-3 py-1.5 text-xs text-gray-400 bg-gray-900/30 sticky left-0 z-10 whitespace-nowrap">
                       {dateLabel}
                     </td>
-                    <td className="px-2 py-1.5 text-xs text-center font-medium text-gray-300 bg-gray-900/30 sticky left-[72px] z-10 border-r border-gray-700">
+                    <td className="px-2 py-1.5 text-xs text-center font-medium text-gray-300 bg-gray-900/30 sticky left-[72px] z-10 border-r border-gray-700 whitespace-nowrap">
                       {slotName(work_day, shift_label)}
                     </td>
                     {filteredCodes.map(code => {
