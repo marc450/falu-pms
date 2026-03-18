@@ -550,7 +550,7 @@ function CellSection({
                 {nonOfflineCount > 0 && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[6].label}</span>}
-                    <span className={`text-sm font-semibold ${spCc.text}`}>
+                    <span className={`text-sm font-semibold ${avgSpeed !== null ? spCc.text : "text-gray-400"}`}>
                       {Math.round(avgSpeed ?? 0).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-60">pcs/min</span>
                     </span>
