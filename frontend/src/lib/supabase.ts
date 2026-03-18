@@ -185,6 +185,20 @@ export async function updateMachineTargets(
   if (error) throw new Error(error.message);
 }
 
+export async function updateMachineTargetsBulk(
+  machine_codes: string[],
+  field: keyof MachineTargets,
+  value: number | null
+): Promise<void> {
+  if (machine_codes.length === 0) return;
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("machines")
+    .update({ [field]: value })
+    .in("machine_code", machine_codes);
+  if (error) throw new Error(error.message);
+}
+
 export async function updateMachinePackingFormat(
   machine_code: string,
   packing_format: PackingFormat | null

@@ -12,6 +12,7 @@ import {
   updateMachinePackingFormat,
   renameMachine,
   updateMachineTargets,
+  updateMachineTargetsBulk,
   deleteMachine,
   deleteMachineFromBridge,
   fetchThresholds,
@@ -735,6 +736,34 @@ function TargetInput({
   );
 }
 
+// One-shot input that applies to all machines and then clears
+function BulkInput({ onApply, unit }: {
+  onApply: (val: number) => void;
+  unit?: string;
+}) {
+  const [val, setVal] = useState("");
+  const commit = (raw: string) => {
+    const n = parseFloat(raw);
+    if (!isNaN(n) && n >= 0) onApply(n);
+    setVal("");
+  };
+  return (
+    <div className="flex items-center gap-1">
+      <input
+        type="number" min={0} step={0.5}
+        value={val}
+        placeholder="—"
+        onWheel={e => e.currentTarget.blur()}
+        onChange={e => setVal(e.target.value)}
+        onBlur={e => commit(e.target.value)}
+        onKeyDown={e => { if (e.key === "Enter") commit((e.target as HTMLInputElement).value); }}
+        className="w-16 bg-gray-900 border border-cyan-700/60 rounded px-2 py-1 text-xs text-cyan-300 text-right focus:border-cyan-400 outline-none placeholder-gray-700"
+      />
+      {unit && <span className="text-gray-500 text-xs">{unit}</span>}
+    </div>
+  );
+}
+
 // ─────────────────────────────────────────────────────────────
 // Module-level so React never re-mounts them on parent re-render
 // ─────────────────────────────────────────────────────────────
@@ -780,13 +809,14 @@ function MachineTargetRow({
 }
 
 function CellGroup({
-  title, ms, targets, onSetTarget, onSaveTarget,
+  title, ms, targets, onSetTarget, onSaveTarget, onApplyBulk,
 }: {
   title: string;
   ms: RegisteredMachine[];
   targets: Record<string, MachineTargets>;
   onSetTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
   onSaveTarget: (code: string, field: keyof MachineTargets, val: number | null) => void;
+  onApplyBulk: (field: keyof MachineTargets, val: number) => void;
 }) {
   const [open, setOpen] = useState(false);
   if (ms.length === 0) return null;
@@ -869,6 +899,35 @@ function CellGroup({
             </tr>
           </thead>
           <tbody>
+            {/* Bulk-fill row — enter a value and press Enter to set all machines in this group */}
+            <tr className="bg-cyan-950/40 border-t border-cyan-800/30">
+              <td className="px-4 py-2">
+                <span className="text-xs font-semibold text-cyan-500 flex items-center gap-1 whitespace-nowrap">
+                  <i className="bi bi-layers-fill"></i> Set all
+                </span>
+              </td>
+              <td className="px-3 py-2 bg-cyan-900/10">
+                <BulkInput onApply={v => onApplyBulk("efficiency_good", v)} unit="%" />
+              </td>
+              <td className="px-3 py-2 bg-cyan-900/10 border-r border-gray-700/50">
+                <BulkInput onApply={v => onApplyBulk("efficiency_mediocre", v)} unit="%" />
+              </td>
+              <td className="px-3 py-2 bg-orange-900/10">
+                <BulkInput onApply={v => onApplyBulk("scrap_good", v)} unit="%" />
+              </td>
+              <td className="px-3 py-2 bg-orange-900/10 border-r border-gray-700/50">
+                <BulkInput onApply={v => onApplyBulk("scrap_mediocre", v)} unit="%" />
+              </td>
+              <td className="px-3 py-2 bg-purple-900/10 border-l border-gray-700/50">
+                <BulkInput onApply={v => onApplyBulk("bu_target", v)} unit="BUs" />
+              </td>
+              <td className="px-3 py-2 bg-purple-900/10 border-l border-gray-700/50 border-r border-gray-700/50">
+                <BulkInput onApply={v => onApplyBulk("bu_mediocre", v)} unit="BUs" />
+              </td>
+              <td className="px-3 py-2 bg-teal-900/10">
+                <BulkInput onApply={v => onApplyBulk("speed_target", v)} unit="p/m" />
+              </td>
+            </tr>
             {ms.map(m => (
               <MachineTargetRow key={m.machine_code} m={m} targets={targets} onSetTarget={onSetTarget} onSaveTarget={onSaveTarget} />
             ))}
@@ -925,6 +984,18 @@ function ThresholdsTab() {
     updateMachineTargets(code, { ...current, [field]: val }).catch(console.error);
   };
 
+  // Bulk-apply one field to a list of machine codes
+  const applyBulkToMachines = (codes: string[], field: keyof MachineTargets, val: number) => {
+    setTargets(prev => {
+      const next = { ...prev };
+      for (const code of codes) {
+        next[code] = { ...(prev[code] ?? { efficiency_good: null, efficiency_mediocre: null, scrap_good: null, scrap_mediocre: null, bu_target: null, bu_mediocre: null, speed_target: null }), [field]: val };
+      }
+      return next;
+    });
+    updateMachineTargetsBulk(codes, field, val).catch(console.error);
+  };
+
   if (loading) return (
     <div className="flex items-center gap-2 text-gray-400 py-8">
       <span className="animate-spin text-lg">⟳</span> Loading…
@@ -946,11 +1017,54 @@ function ThresholdsTab() {
         <p className="text-gray-500 text-sm">No machines registered yet.</p>
       ) : (
         <div className="space-y-4">
+          {/* Global bulk-fill panel */}
+          <div className="bg-gray-800/50 border border-cyan-700/30 rounded-lg overflow-hidden">
+            <div className="bg-gray-800 px-4 py-2.5 border-b border-gray-700 flex items-center gap-3">
+              <i className="bi bi-layers-fill text-cyan-400"></i>
+              <span className="text-white font-semibold text-sm">Apply to all {machines.length} machines</span>
+              <span className="text-xs text-gray-500">Enter a value and press Enter to set every machine at once</span>
+            </div>
+            <div className="flex flex-wrap gap-x-6 gap-y-3 px-5 py-3.5">
+              {([
+                { field: "efficiency_good"     as keyof MachineTargets, label: "Uptime good",       unit: "%",   color: "text-green-400"  },
+                { field: "efficiency_mediocre" as keyof MachineTargets, label: "Uptime mediocre",   unit: "%",   color: "text-yellow-400" },
+                { field: "scrap_good"          as keyof MachineTargets, label: "Scrap good",        unit: "%",   color: "text-green-400"  },
+                { field: "scrap_mediocre"      as keyof MachineTargets, label: "Scrap mediocre",    unit: "%",   color: "text-yellow-400" },
+                { field: "bu_target"           as keyof MachineTargets, label: "Output target",     unit: "BUs", color: "text-purple-300" },
+                { field: "bu_mediocre"         as keyof MachineTargets, label: "Output mediocre",   unit: "BUs", color: "text-yellow-400" },
+                { field: "speed_target"        as keyof MachineTargets, label: "Speed target",      unit: "p/m", color: "text-teal-300"   },
+              ]).map(({ field, label, unit, color }) => (
+                <div key={field} className="flex flex-col gap-1 min-w-[5.5rem]">
+                  <span className={`text-xs font-medium ${color}`}>{label}</span>
+                  <BulkInput
+                    onApply={v => applyBulkToMachines(machines.map(m => m.machine_code), field, v)}
+                    unit={unit}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+
           {cells.map(cell => (
-            <CellGroup key={cell.id} title={cell.name} ms={cellMachines(cell.id)} targets={targets} onSetTarget={setTarget} onSaveTarget={saveTargetField} />
+            <CellGroup
+              key={cell.id}
+              title={cell.name}
+              ms={cellMachines(cell.id)}
+              targets={targets}
+              onSetTarget={setTarget}
+              onSaveTarget={saveTargetField}
+              onApplyBulk={(field, val) => applyBulkToMachines(cellMachines(cell.id).map(m => m.machine_code), field, val)}
+            />
           ))}
           {unassigned.length > 0 && (
-            <CellGroup title="Unassigned" ms={unassigned} targets={targets} onSetTarget={setTarget} onSaveTarget={saveTargetField} />
+            <CellGroup
+              title="Unassigned"
+              ms={unassigned}
+              targets={targets}
+              onSetTarget={setTarget}
+              onSaveTarget={saveTargetField}
+              onApplyBulk={(field, val) => applyBulkToMachines(unassigned.map(m => m.machine_code), field, val)}
+            />
           )}
         </div>
       )}
