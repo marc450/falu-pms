@@ -752,3 +752,41 @@ export async function saveShiftAssignmentsBulk(
     );
   if (error) throw new Error(error.message);
 }
+
+// ============================================
+// MACHINE SHIFT SUMMARY
+// ============================================
+
+export interface MachineShiftRow {
+  work_day:       string;   // 'YYYY-MM-DD'
+  shift_label:    string;   // 'A' or 'B'
+  machine_id:     string;
+  machine_code:   string;
+  run_hours:      number;
+  swabs_produced: number;
+  boxes_produced: number;
+  bu_normalized:  number | null;
+  avg_efficiency: number | null;
+  avg_scrap:      number | null;
+}
+
+export async function fetchMachineShiftSummary(range: DateRange): Promise<MachineShiftRow[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb.rpc("get_machine_shift_summary", {
+    p_range_start: range.start.toISOString(),
+    p_range_end:   range.end.toISOString(),
+  });
+  if (error) throw new Error(error.message);
+  return (data ?? []).map((r: Record<string, unknown>) => ({
+    work_day:       r.work_day       as string,
+    shift_label:    r.shift_label    as string,
+    machine_id:     r.machine_id     as string,
+    machine_code:   r.machine_code   as string,
+    run_hours:      Number(r.run_hours)      || 0,
+    swabs_produced: Number(r.swabs_produced) || 0,
+    boxes_produced: Number(r.boxes_produced) || 0,
+    bu_normalized:  r.bu_normalized  != null ? Number(r.bu_normalized)  : null,
+    avg_efficiency: r.avg_efficiency != null ? Number(r.avg_efficiency) : null,
+    avg_scrap:      r.avg_scrap      != null ? Number(r.avg_scrap)      : null,
+  }));
+}

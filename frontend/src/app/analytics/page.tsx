@@ -16,7 +16,10 @@ import {
   applyEfficiencyColor, applyScrapColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { DateRange, FleetTrendRow, Thresholds } from "@/lib/supabase";
+import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine } from "@/lib/supabase";
+import MachineAnalytics from "./MachineAnalytics";
+import ShiftAnalytics   from "./ShiftAnalytics";
+import MachinePark      from "./MachinePark";
 
 // ─── Chart constants ─────────────────────────────────────────────────────────
 
@@ -379,6 +382,10 @@ function PeriodSelector({
   );
 }
 
+// ─── Tab types ────────────────────────────────────────────────────────────────
+
+type AnalyticsTab = "fleet" | "machines" | "shifts" | "park";
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Analytics() {
@@ -386,6 +393,7 @@ export default function Analytics() {
   const [dateRange, setDateRange]           = useState<DateRange>(() =>
     PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange()
   );
+  const [tab, setTab]                     = useState<AnalyticsTab>("fleet");
   const [rows, setRows]                   = useState<FleetTrendRow[]>([]);
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
   const [totalReadings, setTotalReadings] = useState<number>(0);
@@ -395,6 +403,7 @@ export default function Analytics() {
   const [loading, setLoading]             = useState(true);
   const [error, setError]                 = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
+  const [machines, setMachines]           = useState<RegisteredMachine[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -415,6 +424,7 @@ export default function Analytics() {
       setRows(result.rows);
       setGranularity(result.granularity);
       setTotalReadings(result.totalReadings);
+      setMachines(machines);
 
       // Derive zone thresholds from per-machine targets (same values as the
       // live dashboard), falling back to defaults if none are configured.
@@ -587,7 +597,7 @@ export default function Analytics() {
   return (
     <div>
       {/* ── Header ── */}
-      <div className="flex justify-between items-start mb-6 gap-6">
+      <div className="flex justify-between items-start mb-4 gap-6">
         <div className="flex flex-col gap-3">
           <h2 className="text-xl font-bold text-white">Analytics</h2>
           <PeriodSelector
@@ -614,6 +624,36 @@ export default function Analytics() {
         )}
       </div>
 
+      {/* ── Tab navigation ── */}
+      <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1 w-fit mb-5">
+        {(["fleet", "machines", "shifts", "park"] as AnalyticsTab[]).map(t => (
+          <button
+            key={t}
+            onClick={() => setTab(t)}
+            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+              tab === t
+                ? "bg-blue-600 text-white"
+                : "text-gray-400 hover:text-white hover:bg-gray-700"
+            }`}
+          >
+            {t === "fleet" ? "Fleet Trend" : t === "machines" ? "Machine Analytics" : t === "shifts" ? "Shift Analytics" : "Machine Park"}
+          </button>
+        ))}
+      </div>
+
+      {/* ── Non-fleet tabs ── */}
+      {tab === "machines" && (
+        <MachineAnalytics dateRange={kpiRange} machines={machines} />
+      )}
+      {tab === "shifts" && (
+        <ShiftAnalytics dateRange={kpiRange} machines={machines} />
+      )}
+      {tab === "park" && (
+        <MachinePark dateRange={kpiRange} machines={machines} />
+      )}
+
+      {tab === "fleet" && (
+      <>
       {/* ── Error banner ── */}
       {error && (
         <div className="mb-4 bg-red-900/30 border border-red-700/50 text-red-400 text-sm rounded-lg px-4 py-3">
@@ -862,6 +902,8 @@ export default function Analytics() {
             )}
           </ChartCard>
         </>
+      )}
+      </>
       )}
     </div>
   );
