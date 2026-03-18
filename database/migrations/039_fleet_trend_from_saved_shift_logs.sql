@@ -1,41 +1,22 @@
--- ============================================================================
--- FUNCTION: get_fleet_trend
--- Current version: migration 039 (saved_shift_logs replaces analytics_readings)
--- ============================================================================
+-- Migration 039: replace analytics_readings with saved_shift_logs in get_fleet_trend
 --
--- Arguments:
---   range_start        timestamptz  — start of the query window
---   range_end          timestamptz  — end of the query window
---   bucket_granularity text         — 'hour' or 'day'
+-- analytics_readings has fundamental, unrecoverable data quality issues:
+--   • swabs_produced inflated by LAG default=0 bug in old downsample function
+--   • avg_efficiency wrongly set to 100% by migration 038
+--   • minutes_idle / minutes_error = NULL (status value mismatch)
+--   • avg_speed / avg_scrap_rate = NULL (never computed in old schema)
+--   • minutes_offline absurdly large (bridge restart gaps dumped into single buckets)
 --
--- Returns one row per time bucket with:
---   bucket        — ISO string  ('YYYY-MM-DD' for day, 'YYYY-MM-DDTHH24' for hour)
---   avg_uptime    — fleet average machine uptime % (0–100)
---   avg_scrap     — fleet average scrap/reject rate %
---   total_boxes   — total boxes produced (fleet, all machines)
---   total_swabs   — total swabs produced (fleet, all machines)
---   machine_count — number of distinct machines with data in this bucket
---   reading_count — raw reading rows in this bucket
---   shift_count   — number of distinct shifts active in this bucket
+-- saved_shift_logs contains clean, authoritative per-shift totals:
+--   • produced_swabs / produced_boxes — PLC end-of-shift counters
+--   • efficiency — PLC efficiency % (0-100)
+--   • reject_rate — PLC reject/scrap rate %
+--   • production_time — seconds of productive uptime (normalised by migration 037)
 --
--- Design notes:
---   shift_readings stores CUMULATIVE swab/box counts per machine per shift.
---
---   HOURLY path:  uses LAG() to compute per-reading deltas.  An anchor
---                 reading from just before the query window is fetched for
---                 each (machine, shift) so the first visible reading has a
---                 valid LAG predecessor and does not spike.
---
---   DAILY path:   uses MAX(cumulative) per (work-day, machine, shift).
---                 Work-day starts at configured first_hour (default 07:00).
---
---   TWO-SOURCE UNION:
---                 shift_readings     — last 48 h, cumulative, needs delta/LAG
---                 saved_shift_logs   — historical, clean per-shift PLC totals
---
---   analytics_readings is no longer used (data quality issues: LAG bug,
---   wrong avg_efficiency, NULL scrap/speed, oversized offline buckets).
--- ============================================================================
+-- Architecture after this migration:
+--   shift_readings  → hourly view and the most recent 48 h of daily view
+--   saved_shift_logs → all historical daily view (> what shift_readings covers)
+--   analytics_readings → no longer queried by any RPC (can be archived/dropped later)
 
 CREATE OR REPLACE FUNCTION get_fleet_trend(
   range_start        timestamptz,
