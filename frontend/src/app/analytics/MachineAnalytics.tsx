@@ -518,7 +518,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
                   Shift
                 </th>
                 {filteredCodes.map(code => (
-                  <th key={code} className="text-center px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap min-w-[80px]" title={code}>
+                  <th key={code} className="text-right px-2 py-2 text-xs font-semibold text-gray-400 whitespace-nowrap min-w-[80px]" title={code}>
                     {displayName(code)}
                   </th>
                 ))}
