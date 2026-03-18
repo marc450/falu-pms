@@ -10,6 +10,7 @@ import {
   assignMachineToCell,
   updateCellOrder,
   updateMachinePackingFormat,
+  renameMachine,
   updateMachineTargets,
   deleteMachine,
   deleteMachineFromBridge,
@@ -92,8 +93,11 @@ function MachinesTab() {
   const [addingCell, setAddingCell] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState<{ cellId: string; cellName: string } | null>(null);
   const [confirmDeleteMachine, setConfirmDeleteMachine] = useState<string | null>(null);
+  const [renamingMachine, setRenamingMachine] = useState<string | null>(null);
+  const [machineRenameValue, setMachineRenameValue] = useState("");
   const renameInputRef = useRef<HTMLInputElement>(null);
   const newCellInputRef = useRef<HTMLInputElement>(null);
+  const machineRenameInputRef = useRef<HTMLInputElement>(null);
 
   const reload = async (silent = false) => {
     const [m, c] = await Promise.all([fetchRegisteredMachines(), fetchProductionCells()]);
@@ -105,6 +109,7 @@ function MachinesTab() {
   useEffect(() => { reload(); }, []);
   useEffect(() => { if (renamingCell) renameInputRef.current?.focus(); }, [renamingCell]);
   useEffect(() => { if (addingCell) newCellInputRef.current?.focus(); }, [addingCell]);
+  useEffect(() => { if (renamingMachine) machineRenameInputRef.current?.focus(); }, [renamingMachine]);
 
   const machinesInCell = (cellId: string) =>
     machines
@@ -228,6 +233,21 @@ function MachinesTab() {
     await updateMachinePackingFormat(code, format);
   };
 
+  const startRenameMachine = (m: RegisteredMachine) => {
+    setRenamingMachine(m.machine_code);
+    setMachineRenameValue(m.name || m.machine_code);
+  };
+
+  const commitRenameMachine = async (code: string) => {
+    const newName = machineRenameValue.trim() || code;
+    // Optimistic update
+    setMachines((prev) =>
+      prev.map((m) => m.machine_code === code ? { ...m, name: newName } : m)
+    );
+    setRenamingMachine(null);
+    await renameMachine(code, newName);
+  };
+
   // Render chips with insertion-line indicators
   const renderChips = (chipList: RegisteredMachine[], cellId: string | null) => (
     <>
@@ -239,8 +259,12 @@ function MachinesTab() {
           )}
           <MachineChip
             code={m.machine_code}
+            name={m.name || m.machine_code}
             packingFormat={m.packing_format}
             isDragging={dragging === m.machine_code}
+            isRenaming={renamingMachine === m.machine_code}
+            renameValue={machineRenameValue}
+            renameInputRef={renamingMachine === m.machine_code ? machineRenameInputRef : undefined}
             onFormatChange={(fmt) => handleFormatChange(m.machine_code, fmt)}
             onDragStart={() => setDragging(m.machine_code)}
             onDragEnd={() => { setDragging(null); setDropTarget(null); }}
@@ -249,6 +273,10 @@ function MachinesTab() {
               e.stopPropagation();
               setDropTarget({ cellId, beforeCode: m.machine_code });
             }}
+            onRenameStart={() => startRenameMachine(m)}
+            onRenameChange={setMachineRenameValue}
+            onRenameConfirm={() => commitRenameMachine(m.machine_code)}
+            onRenameCancel={() => setRenamingMachine(null)}
             onDelete={() => setConfirmDeleteMachine(m.machine_code)}
           />
         </div>
@@ -449,53 +477,119 @@ function MachinesTab() {
 // ─────────────────────────────────────────────────────────────
 function MachineChip({
   code,
+  name,
   packingFormat,
   isDragging,
+  isRenaming,
+  renameValue,
+  renameInputRef,
   onFormatChange,
   onDragStart,
   onDragEnd,
   onChipDragOver,
+  onRenameStart,
+  onRenameChange,
+  onRenameConfirm,
+  onRenameCancel,
   onDelete,
 }: {
   code: string;
+  name?: string;
   packingFormat?: PackingFormat | null;
   isDragging?: boolean;
+  isRenaming?: boolean;
+  renameValue?: string;
+  renameInputRef?: React.RefObject<HTMLInputElement | null>;
   onFormatChange?: (fmt: PackingFormat | null) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onChipDragOver?: (e: React.DragEvent) => void;
+  onRenameStart?: () => void;
+  onRenameChange?: (v: string) => void;
+  onRenameConfirm?: () => void;
+  onRenameCancel?: () => void;
   onDelete?: () => void;
 }) {
+  const displayName = name || code;
+  const hasCustomName = name && name !== code;
+
   return (
     <div
-      draggable
-      onDragStart={onDragStart}
-      onDragEnd={onDragEnd}
-      onDragOver={onChipDragOver}
+      draggable={!isRenaming}
+      onDragStart={isRenaming ? undefined : onDragStart}
+      onDragEnd={isRenaming ? undefined : onDragEnd}
+      onDragOver={isRenaming ? undefined : onChipDragOver}
       className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium select-none transition-all ${
         isDragging
           ? "opacity-30 cursor-grabbing bg-gray-600 text-gray-400 border border-gray-500"
+          : isRenaming
+          ? "bg-gray-700 text-white border border-cyan-500"
           : "bg-gray-700 text-white border border-gray-600 cursor-grab hover:border-cyan-500 hover:bg-gray-600 active:cursor-grabbing"
       }`}
     >
-      <i className="bi bi-grip-vertical text-gray-400 text-xs"></i>
+      {!isRenaming && <i className="bi bi-grip-vertical text-gray-400 text-xs"></i>}
       <i className="bi bi-cpu text-cyan-400 text-xs"></i>
-      <span>{code}</span>
+
+      {/* Name area — inline edit when renaming */}
+      {isRenaming ? (
+        <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
+          <input
+            ref={renameInputRef}
+            value={renameValue ?? ""}
+            onChange={(e) => onRenameChange?.(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") onRenameConfirm?.();
+              if (e.key === "Escape") onRenameCancel?.();
+            }}
+            className="w-24 text-xs bg-gray-800 border border-cyan-500 rounded px-1.5 py-0.5 text-white outline-none"
+            placeholder={code}
+          />
+          <button onClick={onRenameConfirm} className="text-green-400 hover:text-green-300 transition-colors" title="Save name">
+            <i className="bi bi-check-lg text-xs"></i>
+          </button>
+          <button onClick={onRenameCancel} className="text-gray-500 hover:text-gray-300 transition-colors" title="Cancel">
+            <i className="bi bi-x-lg text-xs"></i>
+          </button>
+        </div>
+      ) : (
+        <div className="flex flex-col leading-tight">
+          <span className="text-white font-medium">{displayName}</span>
+          {hasCustomName && (
+            <span className="text-gray-500 text-xs font-normal">{code}</span>
+          )}
+        </div>
+      )}
+
+      {/* Rename button (pencil) */}
+      {!isRenaming && onRenameStart && (
+        <button
+          onPointerDown={(e) => e.stopPropagation()}
+          onClick={(e) => { e.stopPropagation(); onRenameStart(); }}
+          className="text-gray-500 hover:text-cyan-400 transition-colors"
+          title="Rename machine"
+        >
+          <i className="bi bi-pencil text-xs"></i>
+        </button>
+      )}
+
       {/* Packing format selector — stopPropagation prevents drag starting on click */}
-      <select
-        value={packingFormat ?? ""}
-        onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
-        onPointerDown={(e) => e.stopPropagation()}
-        className="ml-1 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
-        title="Packing format"
-      >
-        <option value="">— format</option>
-        {(Object.entries(PACKING_FORMATS) as [PackingFormat, string][]).map(([key, label]) => (
-          <option key={key} value={key}>{label}</option>
-        ))}
-      </select>
+      {!isRenaming && (
+        <select
+          value={packingFormat ?? ""}
+          onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
+          onPointerDown={(e) => e.stopPropagation()}
+          className="ml-1 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
+          title="Packing format"
+        >
+          <option value="">— format</option>
+          {(Object.entries(PACKING_FORMATS) as [PackingFormat, string][]).map(([key, label]) => (
+            <option key={key} value={key}>{label}</option>
+          ))}
+        </select>
+      )}
+
       {/* Delete button */}
-      {onDelete && (
+      {!isRenaming && onDelete && (
         <button
           onPointerDown={(e) => e.stopPropagation()}
           onClick={(e) => { e.stopPropagation(); onDelete(); }}

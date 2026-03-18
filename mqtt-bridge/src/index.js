@@ -1,17 +1,25 @@
 /**
- * FALU PMS - MQTT Bridge + REST API (v2 — combined topic)
+ * FALU PMS - MQTT Bridge + REST API (v3 — full PLC message spec)
  *
- * Subscribes to a single unified topic from cotton swab machines:
- *   - cloud/Shift  → Combined status + shift data (every 5 s)
- *   - cloud/Error   → Active error codes per machine (future)
+ * Subscribes to two topics from cotton swab machines:
+ *   - cloud/Shift  → Combined status + production data (every 5 s normally;
+ *                    immediately on status change, e.g. when error occurs)
+ *                    Fields: Machine, Status, Shift, Speed, ProductionTime,
+ *                    IdleTime, ErrorTime, CottonTears, MissingSticks,
+ *                    FoultyPickups, OtherErrors, ProducedSwabs, PackagedSwabs,
+ *                    ProducedBoxes, ProducedBoxesLayerPlus, DisgardedSwabs,
+ *                    Efficiency, Reject, Save, Timestamp
+ *   - cloud/Error  → Individual error code per message (many may arrive in
+ *                    quick succession for one error event; cloud/Shift with
+ *                    Status:"Error" always arrives FIRST)
+ *                    Fields: Machine, ErrorCode, ErrorStatus, Timestamp
+ *
+ * IdleTime and ErrorTime are authoritative PLC values (seconds) — the bridge
+ * no longer accumulates these per-tick; it simply converts to minutes and
+ * stores them. Values reset automatically when the PLC reports a shift change.
  *
  * Historical shift data is stored in Supabase; the bridge no longer
  * publishes RequestShift — the dashboard reads past shifts from the DB.
- *
- * MQTT Topic Structure:
- *   Subscribe: cloud/# (or local/#)
- *     - cloud/Shift  → unified machine message (status + production)
- *     - cloud/Error   → error code list (future)
  */
 
 require("dotenv").config();
@@ -69,26 +77,6 @@ let mqttConnected = false;
 let currentShiftNumber = 1;
 let shiftStartedAt = Date.now();
 
-// Persist/restore shift state so a bridge restart doesn't lose the start time
-const SHIFT_STATE_FILE = path.join(__dirname, "..", "shift-state.json");
-
-function saveShiftState() {
-  try {
-    fs.writeFileSync(SHIFT_STATE_FILE, JSON.stringify({ currentShiftNumber, shiftStartedAt }));
-  } catch (e) { /* non-fatal */ }
-}
-
-function loadShiftState() {
-  try {
-    const raw = fs.readFileSync(SHIFT_STATE_FILE, "utf8");
-    const s = JSON.parse(raw);
-    if (s.currentShiftNumber) currentShiftNumber = s.currentShiftNumber;
-    if (s.shiftStartedAt)    shiftStartedAt    = s.shiftStartedAt;
-  } catch (e) { /* file doesn't exist yet — use defaults */ }
-}
-
-loadShiftState();
-
 // Machine cache: machine_code -> UUID
 const machineIdCache = {};
 
@@ -115,7 +103,7 @@ function getSubscribeTopic() {
 async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
-    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since, idle_time_calc, error_time_calc")
+    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since, active_error_codes")
     .eq("hidden", false)
     .order("machine_code");
 
@@ -144,12 +132,8 @@ async function loadRegisteredMachines() {
         lastSync: row.last_sync_status || row.last_sync_shift || null,
         // Restore the actual transition time so the status badge shows correctly.
         statusSince: row.status_since || new Date().toISOString(),
-        // Restore persisted running totals — the bridge accumulates directly
-        // on every tick so no extra "current stint" math is needed on restart.
-        idleTimeCalc:  row.idle_time_calc  || 0,
-        errorTimeCalc: row.error_time_calc || 0,
-        // Tick clock: used to measure elapsed time each MQTT message.
-        lastTickTime: Date.now(),
+        // Restore active error codes so the dashboard continues showing them after restart.
+        activeErrors: Array.isArray(row.active_error_codes) ? row.active_error_codes : [],
       };
     }
   }
@@ -209,7 +193,7 @@ async function handleShiftMessage(payload) {
 
   // ── Update in-memory state ──
   if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode, idleTimeCalc: 0, errorTimeCalc: 0, lastTickTime: Date.now() };
+    allMachines[machineCode] = { machine: machineCode, activeErrors: [] };
   }
   const m = allMachines[machineCode];
 
@@ -217,20 +201,11 @@ async function handleShiftMessage(payload) {
   const prevShift = m.machineStatus?.Shift;
   const incomingShift = data.Shift || currentShiftNumber;
   if (prevShift !== undefined && incomingShift && prevShift !== incomingShift) {
-    logger.info(`Machine ${machineCode} shift ${prevShift}→${incomingShift} — resetting idle/error accumulators`);
-    m.idleTimeCalc  = 0;
-    m.errorTimeCalc = 0;
-    m.lastTickTime  = Date.now();
-    // Persist reset to DB so a restart doesn't restore stale values
-    const machineIdForReset = machineIdCache[machineCode];
-    if (machineIdForReset) {
-      supabase.from("machines").update({ idle_time_calc: 0, error_time_calc: 0 }).eq("id", machineIdForReset).then(() => {});
-    }
+    logger.info(`Machine ${machineCode} shift ${prevShift}→${incomingShift} — PLC resets idle/error counters`);
   }
   if (incomingShift !== currentShiftNumber) {
     currentShiftNumber = incomingShift;
     shiftStartedAt = Date.now();
-    saveShiftState();
     logger.info(`Global shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
   }
 
@@ -245,18 +220,13 @@ async function handleShiftMessage(payload) {
     m.statusSince = new Date().toISOString();
   }
 
-  // ── Per-tick idle/error accumulation ──────────────────────────────────────
-  // Accumulate directly on every MQTT tick (every 5 s) rather than relying on
-  // status transitions.  This means:
-  //   • idle_time_calc in the DB is always a complete running total
-  //   • A Railway restart loses at most one tick interval (~5 s)
-  //   • Accumulators are reset ONLY when the PLC reports a shift change above
-  // Cap the tick at 8 s so a restart gap doesn't spike the counter.
-  const nowMs = Date.now();
-  const tickMs = m.lastTickTime ? Math.min(nowMs - m.lastTickTime, 8000) : 0;
-  m.lastTickTime = nowMs;
-  if (nextStatus === "idle")  m.idleTimeCalc  = (m.idleTimeCalc  || 0) + tickMs / 60000;
-  if (nextStatus === "error") m.errorTimeCalc = (m.errorTimeCalc || 0) + tickMs / 60000;
+  // ── Clear active error codes when machine returns to running ──────────────
+  // The PLC sends cloud/Shift Status:"Error" before sending cloud/Error codes.
+  // When the machine recovers, it sends cloud/Shift Status:"Running" — at that
+  // point all error codes are resolved.
+  if (nextStatus === "running" || nextStatus === "run") {
+    m.activeErrors = [];
+  }
 
   // Store as machineStatus, adding backward-compatible aliases so the frontend
   // keeps working with both old (Status-only) and new (combined) payloads.
@@ -283,7 +253,7 @@ async function handleShiftMessage(payload) {
 
   const updatePayload = {
     status: nextStatus,
-    error_message: null, // errors now come via cloud/Error
+    error_message: null, // errors come via cloud/Error; active codes tracked in active_error_codes
     active_shift: data.Shift || 1,
     speed: data.Speed || 0,
     current_swabs: data.ProducedSwabs || 0,
@@ -292,11 +262,13 @@ async function handleShiftMessage(payload) {
     current_reject: data.Reject || 0,
     last_sync_status: now,
     hidden: false,
-    // Running totals — accumulated per tick above, saved every 5 s.
-    // Reset only on PLC shift change.  Survives Railway restarts intact.
+    // PLC is the authoritative source for idle/error time (seconds, converted to minutes).
+    // These reset automatically when the PLC reports a shift change.
     status_since:    m.statusSince || now,
-    idle_time_calc:  Math.round(m.idleTimeCalc  || 0),
-    error_time_calc: Math.round(m.errorTimeCalc || 0),
+    idle_time_calc:  Math.round((data.IdleTime  || 0) / 60),
+    error_time_calc: Math.round((data.ErrorTime || 0) / 60),
+    // Persist active error codes so they survive a bridge restart.
+    active_error_codes: m.activeErrors || [],
   };
   await supabase
     .from("machines")
@@ -315,21 +287,21 @@ async function handleShiftMessage(payload) {
       shift_number: data.Shift,
       status: (data.Status || "run").toLowerCase(),
       speed: data.Speed || 0,
-      production_time: data.ProductionTime || 0,
-      idle_time:       data.IdleTime       || 0,
-      error_time:      Math.round(m.errorTimeCalc || 0),  // bridge accumulator — persisted so history survives shift reset
-      cotton_tears: 0,           // no longer in payload — will come via cloud/Error
-      missing_sticks: 0,
-      faulty_pickups: 0,
-      other_errors: 0,
-      produced_swabs: data.ProducedSwabs || 0,
-      packaged_swabs: data.PackagedSwabs || 0,
-      produced_boxes: data.ProducedBoxes || 0,
-      produced_boxes_layer_plus: 0,
-      discarded_swabs: data.DiscardedSwabs || 0,
-      efficiency: data.Efficiency || 0,
-      reject_rate: data.Reject || 0,
-      save_flag: data.Save || false,
+      production_time:           data.ProductionTime          || 0,
+      idle_time:                 data.IdleTime                || 0,  // seconds, from PLC
+      error_time:                data.ErrorTime               || 0,  // seconds, from PLC
+      cotton_tears:              data.CottonTears             || 0,
+      missing_sticks:            data.MissingSticks           || 0,
+      faulty_pickups:            data.FoultyPickups           || 0,  // PLC typo preserved
+      other_errors:              data.OtherErrors             || 0,
+      produced_swabs:            data.ProducedSwabs           || 0,
+      packaged_swabs:            data.PackagedSwabs           || 0,
+      produced_boxes:            data.ProducedBoxes           || 0,
+      produced_boxes_layer_plus: data.ProducedBoxesLayerPlus  || 0,
+      discarded_swabs:           data.DisgardedSwabs          || 0,  // PLC typo preserved
+      efficiency:                data.Efficiency              || 0,
+      reject_rate:               data.Reject                  || 0,
+      save_flag:                 data.Save                    || false,
       raw_payload: data,
     });
 
@@ -347,7 +319,7 @@ async function handleShiftMessage(payload) {
       shift_number:             data.Shift,
       production_time:          Math.round(data.ProductionTime  || 0),
       idle_time:                Math.round(data.IdleTime        || 0),
-      error_time:               Math.round(m.errorTimeCalc      || 0),  // bridge accumulator
+      error_time:               Math.round(data.ErrorTime        || 0),  // seconds, from PLC
       cotton_tears:             data.CottonTears               || 0,
       missing_sticks:           data.MissingSticks             || 0,
       faulty_pickups:           data.FoultyPickups             || 0,
@@ -356,7 +328,7 @@ async function handleShiftMessage(payload) {
       packaged_swabs:           data.PackagedSwabs             || 0,
       produced_boxes:           data.ProducedBoxes             || 0,
       produced_boxes_layer_plus: data.ProducedBoxesLayerPlus   || 0,
-      discarded_swabs:          data.DiscardedSwabs            || 0,
+      discarded_swabs:          data.DisgardedSwabs            || 0,  // PLC typo preserved
       efficiency:               data.Efficiency                || 0,
       reject_rate:              data.Reject                    || 0,
     });
@@ -366,25 +338,44 @@ async function handleShiftMessage(payload) {
 }
 
 // ============================================
-// ERROR MESSAGE HANDLER (future — cloud/Error)
+// ERROR MESSAGE HANDLER — cloud/Error
 // ============================================
-// Expected payload: { Machine: "CB-30", Errors: [101, 205, 310] }
-// For now, just log it. Full implementation after Sebastian ships PLC changes.
+// PLC sends one message per error code. Many codes may arrive in quick
+// succession for a single error event. The cloud/Shift message with
+// Status:"Error" ALWAYS arrives before any cloud/Error messages, so the
+// machine is already registered in allMachines when these arrive.
+// Payload: { Machine: "11564", ErrorCode: 232, ErrorStatus: true, Timestamp: "..." }
 async function handleErrorMessage(payload) {
   const data = JSON.parse(payload);
   const machineCode = data.Machine;
   if (!machineCode) return;
 
-  const errorCodes = data.Errors || [];
-  logger.info(`Error codes for ${machineCode}: [${errorCodes.join(", ")}]`);
-
-  // Update in-memory state
-  if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode, idleTimeCalc: 0, errorTimeCalc: 0 };
+  // Do NOT auto-register from error messages — cloud/Shift always arrives first.
+  const m = allMachines[machineCode];
+  if (!m) {
+    logger.warn(`cloud/Error for unknown machine ${machineCode} — ignoring`);
+    return;
   }
-  allMachines[machineCode].activeErrors = errorCodes;
 
-  // TODO: persist error codes to Supabase once schema is ready
+  const code = data.ErrorCode;
+  if (!code) return;
+
+  if (!m.activeErrors) m.activeErrors = [];
+  if (data.ErrorStatus) {
+    if (!m.activeErrors.includes(code)) m.activeErrors.push(code);
+  } else {
+    m.activeErrors = m.activeErrors.filter(c => c !== code);
+  }
+  logger.info(`Active error codes for ${machineCode}: [${m.activeErrors.join(", ")}]`);
+
+  // Persist to DB so error codes survive a bridge restart
+  const machineId = machineIdCache[machineCode];
+  if (machineId) {
+    supabase.from("machines")
+      .update({ active_error_codes: m.activeErrors })
+      .eq("id", machineId)
+      .then(() => {});
+  }
 }
 
 // ============================================

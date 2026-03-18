@@ -34,15 +34,17 @@ export interface MachineStatusMessage {
   // Full payload fields spread by bridge from combined cloud/Shift message
   ProductionTime?: number;
   IdleTime?: number;
-  ProducedSwabs?: number;
-  PackagedSwabs?: number;
-  DiscardedSwabs?: number;
-  ProducedBoxes?: number;
-  ProducedBoxesLayerPlus?: number;
+  ErrorTime?: number;
   CottonTears?: number;
   MissingSticks?: number;
   FoultyPickups?: number;
   OtherErrors?: number;
+  ProducedSwabs?: number;
+  PackagedSwabs?: number;
+  DisgardedSwabs?: number;
+  ProducedBoxes?: number;
+  ProducedBoxesLayerPlus?: number;
+  Timestamp?: string;
 }
 
 export interface ShiftDataMessage {
@@ -76,10 +78,12 @@ export interface MachineData {
   lastRequestShift?: string;
   /** Unix ms timestamp of the last status transition (from bridge). */
   statusSince?: number;
-  /** Accumulated idle time in minutes for current shift (completed stints, from bridge). */
+  /** Idle time in minutes for current shift — PLC-provided, converted from seconds. */
   idleTimeCalc?: number;
-  /** Accumulated error time in minutes for current shift (completed stints, from bridge). */
+  /** Error time in minutes for current shift — PLC-provided, converted from seconds. */
   errorTimeCalc?: number;
+  /** Active PLC error codes for this machine (cleared when machine returns to Running). */
+  activeErrors?: number[];
 }
 
 export interface BridgeState {
@@ -107,7 +111,9 @@ export const PACKING_FORMATS = {
 export type PackingFormat = keyof typeof PACKING_FORMATS;
 
 export interface RegisteredMachine {
-  machine_code: string;
+  id: string;
+  machine_code: string;           // PLC UID — never changes
+  name: string;                   // user-editable display name (defaults to machine_code)
   packing_format: PackingFormat | null;
   status: string | null;
   error_message: string | null;
@@ -136,7 +142,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "machine_code, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
+      "id, machine_code, name, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
     )
     .eq("hidden", false)
     .order("machine_code");
@@ -186,6 +192,15 @@ export async function updateMachinePackingFormat(
   const { error } = await sb
     .from("machines")
     .update({ packing_format: packing_format || null })
+    .eq("machine_code", machine_code);
+  if (error) throw new Error(error.message);
+}
+
+export async function renameMachine(machine_code: string, name: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("machines")
+    .update({ name: name.trim() || machine_code })
     .eq("machine_code", machine_code);
   if (error) throw new Error(error.message);
 }

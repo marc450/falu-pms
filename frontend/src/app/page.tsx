@@ -37,7 +37,9 @@ type DashboardMachine = MachineData & {
   buTarget?: number | null;
   buMediocre?: number | null;
   speedTarget?: number | null;
-  // statusSince, idleTimeCalc, errorTimeCalc inherited from MachineData
+  /** User-defined display name (from machines.name). Falls back to machine_code. */
+  displayName?: string;
+  // statusSince, idleTimeCalc, errorTimeCalc, activeErrors inherited from MachineData
 };
 
 function formatStateDuration(sinceMs: number, nowMs: number): string {
@@ -234,7 +236,12 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
 
   return (
     <tr onClick={onClick} className="cursor-pointer hover:bg-white/5 transition-colors">
-      <td className="px-4 py-3 font-bold text-cyan-400">{m.machine}</td>
+      <td className="px-4 py-3">
+        <div className="font-bold text-cyan-400 leading-tight">{m.displayName ?? m.machine}</div>
+        {m.displayName && m.displayName !== m.machine && (
+          <div className="text-xs text-gray-500 leading-tight">{m.machine}</div>
+        )}
+      </td>
       <td className="px-4 py-3">
         <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}>
           <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
@@ -900,6 +907,12 @@ export default function Dashboard() {
       setInitialLoading(false);
     }
 
+    // Build code → display name map so the dashboard shows user-assigned names.
+    const displayNameMap: Record<string, string> = {};
+    for (const row of registered) {
+      displayNameMap[row.machine_code] = row.name || row.machine_code;
+    }
+
     const merged: Record<string, DashboardMachine> = {};
     for (const row of registered) {
       merged[row.machine_code] = {
@@ -914,6 +927,7 @@ export default function Dashboard() {
         buTarget:          row.bu_target ?? null,
         buMediocre:        row.bu_mediocre ?? null,
         speedTarget:       row.speed_target ?? null,
+        displayName:       row.name || row.machine_code,
       };
     }
 
@@ -930,6 +944,7 @@ export default function Dashboard() {
         const statusSince = isoSince ? new Date(isoSince).getTime() : Date.now();
         const idleTimeCalc  = (live as any).idleTimeCalc  as number | undefined;
         const errorTimeCalc = (live as any).errorTimeCalc as number | undefined;
+        const activeErrors  = (live as any).activeErrors  as number[] | undefined;
 
         merged[code] = {
           ...live,
@@ -943,9 +958,11 @@ export default function Dashboard() {
           buTarget:          merged[code]?.buTarget ?? null,
           buMediocre:        merged[code]?.buMediocre ?? null,
           speedTarget:       merged[code]?.speedTarget ?? null,
+          displayName:       displayNameMap[code] ?? code,
           statusSince,
           idleTimeCalc:  idleTimeCalc  ?? 0,
           errorTimeCalc: errorTimeCalc ?? 0,
+          activeErrors:  activeErrors  ?? [],
         };
       }
       machinesRef.current = merged;

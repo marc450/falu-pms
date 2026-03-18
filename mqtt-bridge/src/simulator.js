@@ -91,7 +91,7 @@ async function loadState() {
     m.shifts[2]          = row.shift_2_data || createShiftData();
     m.shifts[3]          = row.shift_3_data || createShiftData();
     restored++;
-    console.log(`[STATE] Restored ${row.machine_name} — ${m.shifts[m.activeShift].producedSwabs.toLocaleString()} swabs`);
+    console.log(`[STATE] Restored ${row.machine_name} (${m.displayName}) — ${m.shifts[m.activeShift].producedSwabs.toLocaleString()} swabs`);
   }
   console.log(`[STATE] Restored ${restored}/${data.length} machines.`);
   return restored > 0;
@@ -107,11 +107,16 @@ const BROKER_PASS      = process.env.MQTT_PASSWORD   || "Admin123";
 const IS_LOCAL         = process.env.MQTT_IS_LOCAL   === "true";
 const TICK_MS          = parseInt(process.env.SIM_FREQUENCY_MS || "5000");
 const TICK_MIN         = TICK_MS / 60000;
-const MACHINE_NAMES    = (
-  process.env.SIM_MACHINES ||
-  "CB-30,CB-31,CB-32,CB-33,CB-34,CB-35,CB-36,CB-37," +
-  "CT-1,CT-2,CT-3,CT-4,CT-5,CT-6,CT-7,CT-8,CT-9,CT-10"
-).split(",").map(s => s.trim());
+// Numeric UIDs — these are what the PLC publishes as the "Machine" field.
+// Users assign human-readable display names in the dashboard settings.
+const MACHINE_UID_MAP = {
+  "11564": "CB-30", "11565": "CB-31", "11566": "CB-32", "11567": "CB-33",
+  "11568": "CB-34", "11569": "CB-35", "11570": "CB-36", "11571": "CB-37",
+  "12101": "CT-1",  "12102": "CT-2",  "12103": "CT-3",  "12104": "CT-4",
+  "12105": "CT-5",  "12106": "CT-6",  "12107": "CT-7",  "12108": "CT-8",
+  "12109": "CT-9",  "12110": "CT-10",
+};
+const MACHINE_NAMES = Object.keys(MACHINE_UID_MAP);
 
 const topicPrefix = IS_LOCAL ? "local" : "cloud";
 
@@ -168,6 +173,23 @@ const SPEED_CONFIG = {
 
 const SPEED_VARIATION = 150;  // ±pcs/min applied each tick within tier bounds
 const TIER_LOCK_MIN   = 45;   // minutes a machine stays in the same speed tier
+
+// ============================================
+// ERROR CODE CONFIG
+// ============================================
+// Error codes by machine type — sent as individual cloud/Error messages when
+// a machine enters the error state (2-3 codes per error event).
+const ERROR_CODES = {
+  CB: [211, 215, 312, 401, 522],
+  CT: [101, 104, 203, 305, 410],
+};
+
+function pickErrorCodes(type) {
+  const pool = [...(ERROR_CODES[type] || ERROR_CODES.CB)];
+  const count = 2 + Math.floor(Math.random() * 2);  // 2 or 3 codes
+  pool.sort(() => Math.random() - 0.5);
+  return pool.slice(0, count);
+}
 
 // ============================================
 // HELPERS
@@ -250,12 +272,15 @@ function createShiftData() {
 // ============================================
 // MACHINE INIT
 // ============================================
-function initMachine(name) {
-  const type    = name.startsWith("CB") ? "CB" : "CT";
+function initMachine(uid) {
+  // Determine machine type from display name in the UID map
+  const displayName = MACHINE_UID_MAP[uid] || uid;
+  const type        = displayName.startsWith("CB") ? "CB" : "CT";
   const { shiftNumber, elapsedMinutes } = getShiftInfo();
   const tierIdx = pickTierIdx(type);
   return {
-    name,
+    name:             uid,         // numeric UID — what the PLC sends as "Machine"
+    displayName,                   // human-readable name (for local logging only)
     type,
     status:           "run",
     activeShift:      shiftNumber,
@@ -267,6 +292,8 @@ function initMachine(name) {
     tierLockedUntil:  elapsedMinutes + TIER_LOCK_MIN,
     efficiency:       0,
     reject:           0,
+    // Active error codes — set on transition into error, cleared on transition out.
+    activeErrorCodes: null,
     shifts: {
       1: createShiftData(),
       2: createShiftData(),
@@ -368,19 +395,26 @@ function publishCombinedShift(client, machine, shiftNum, save = false) {
   if (!shift) return;
   const isRunning = machine.status === "run";
   const msg = {
-    Machine:        machine.name,
-    Status:         machine.status,
-    Speed:          isRunning ? machine.currentSpeed : 0,
-    Shift:          shiftNum,
-    ProductionTime: parseFloat(shift.productionTime.toFixed(2)),
-    IdleTime:       parseFloat(shift.idleTime.toFixed(2)),
-    ProducedSwabs:  shift.producedSwabs,
-    PackagedSwabs:  shift.packagedSwabs,
-    DiscardedSwabs: shift.discardedSwabs,
-    ProducedBoxes:  shift.producedBoxes,
-    Efficiency:     parseFloat(shift.efficiency.toFixed(2)),
-    Reject:         parseFloat(shift.reject.toFixed(2)),
-    Save:           save,
+    Machine:                machine.name,   // numeric UID
+    Status:                 machine.status,
+    Speed:                  isRunning ? machine.currentSpeed : 0,
+    Shift:                  shiftNum,
+    ProductionTime:         parseFloat(shift.productionTime.toFixed(2)),
+    IdleTime:               parseFloat(shift.idleTime.toFixed(2)),
+    ErrorTime:              parseFloat(shift.errorTime.toFixed(2)),
+    CottonTears:            shift.cottonTears            || 0,
+    MissingSticks:          shift.missingSticks          || 0,
+    FoultyPickups:          shift.faultyPickups          || 0,  // PLC field name has typo
+    OtherErrors:            shift.otherErrors            || 0,
+    ProducedSwabs:          shift.producedSwabs,
+    PackagedSwabs:          shift.packagedSwabs,
+    DisgardedSwabs:         shift.discardedSwabs,               // PLC field name has typo
+    ProducedBoxes:          shift.producedBoxes,
+    ProducedBoxesLayerPlus: shift.producedBoxesLayerPlus || 0,
+    Efficiency:             parseFloat(shift.efficiency.toFixed(2)),
+    Reject:                 parseFloat(shift.reject.toFixed(2)),
+    Save:                   save,
+    Timestamp:              new Date().toISOString(),
   };
   client.publish(`${topicPrefix}/Shift`, JSON.stringify(msg), { qos: 1 });
 }
@@ -392,9 +426,9 @@ const url = IS_LOCAL
   ? `mqtt://${BROKER_HOST}:${BROKER_PORT}`
   : `mqtts://${BROKER_HOST}:${BROKER_PORT}`;
 
-console.log(`\n=== FALU PMS Machine Simulator v3 (combined topic) ===`);
+console.log(`\n=== FALU PMS Machine Simulator v4 (full PLC spec) ===`);
 console.log(`Broker:     ${url}`);
-console.log(`Machines:   ${MACHINE_NAMES.join(", ")}`);
+console.log(`Machines:   ${MACHINE_NAMES.map(uid => `${uid} (${MACHINE_UID_MAP[uid]})`).join(", ")}`);
 console.log(`Tick:       ${TICK_MS}ms`);
 console.log(`Shift ref:  Shift 1 at ${new Date(REFERENCE_MS).toLocaleString()}`);
 console.log(`=====================================\n`);
@@ -453,8 +487,49 @@ client.on("connect", async () => {
       }
 
       // ── Tick & publish combined message ────────────────────────────────
+      const prevStatus = machine.status;
       simulateTick(machine, elapsedMinutes);
+      const newStatus = machine.status;
+
+      // Determine error code transitions (before publishing cloud/Shift)
+      let codesToActivate = null;
+      let codesToClear    = null;
+      if (prevStatus !== "error" && newStatus === "error") {
+        // Assign error codes for this error event
+        machine.activeErrorCodes = pickErrorCodes(machine.type);
+        codesToActivate = machine.activeErrorCodes;
+      } else if (prevStatus === "error" && newStatus !== "error") {
+        // Error resolved — record codes to clear, then reset
+        codesToClear = machine.activeErrorCodes;
+        machine.activeErrorCodes = null;
+      }
+
+      // cloud/Shift is always sent first (PLC spec: cloud/Shift with Status:"Error"
+      // arrives before any cloud/Error code messages)
       publishCombinedShift(client, machine, machine.activeShift, false);
+
+      // Publish error code activations after cloud/Shift
+      if (codesToActivate) {
+        for (const code of codesToActivate) {
+          client.publish(`${topicPrefix}/Error`, JSON.stringify({
+            Machine:     machine.name,
+            ErrorCode:   code,
+            ErrorStatus: true,
+            Timestamp:   new Date().toISOString(),
+          }), { qos: 1 });
+        }
+      }
+      // Publish error code clearances when returning to running
+      if (codesToClear) {
+        for (const code of codesToClear) {
+          client.publish(`${topicPrefix}/Error`, JSON.stringify({
+            Machine:     machine.name,
+            ErrorCode:   code,
+            ErrorStatus: false,
+            Timestamp:   new Date().toISOString(),
+          }), { qos: 1 });
+        }
+      }
     }
 
     // ── Persist state periodically ───────────────────────────────────
