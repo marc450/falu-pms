@@ -219,6 +219,14 @@ async function handleShiftMessage(payload) {
     m.statusSince = new Date().toISOString();
     logger.info(`Status change for ${machineCode}: ${prevStatus || "(none)"}→${nextStatus} at ${m.statusSince}`);
   }
+  // Trust the authoritative episode-start timestamps from the simulator/PLC when
+  // present.  This corrects a stale statusSince caused by the bridge missing a
+  // status-change message while it was offline or reconnecting.
+  if (nextStatus === "error" && data.ErrorSince) {
+    m.statusSince = data.ErrorSince;
+  } else if (nextStatus === "idle" && data.IdleSince) {
+    m.statusSince = data.IdleSince;
+  }
   if (!m.statusSince) {
     m.statusSince = new Date().toISOString();
   }

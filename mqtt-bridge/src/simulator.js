@@ -38,6 +38,8 @@ async function saveState() {
     shift_started_at:   shiftStartMs,
     status:             m.status,
     error_end_min:      m.errorEndMin,
+    error_start_time:   m.errorStartTime || null,
+    idle_start_time:    m.idleStartTime  || null,
     speed_tier_idx:     m.speedTierIdx,
     base_speed:         m.baseSpeed,
     tier_locked_until:  m.tierLockedUntil,
@@ -83,6 +85,8 @@ async function loadState() {
     m.activeShift        = row.active_shift;
     m.status             = row.status;
     m.errorEndMin        = row.error_end_min;
+    m.errorStartTime     = row.error_start_time || null;
+    m.idleStartTime      = row.idle_start_time  || null;
     m.speedTierIdx       = row.speed_tier_idx;
     m.baseSpeed          = row.base_speed;
     m.tierLockedUntil    = row.tier_locked_until;
@@ -297,6 +301,10 @@ function initMachine(uid) {
     reject:           0,
     // Active error codes — set on transition into error, cleared on transition out.
     activeErrorCodes: null,
+    // Authoritative timestamps for the current status episode, published with
+    // every MQTT tick so the bridge can correct statusSince even after a reconnect.
+    errorStartTime: null,
+    idleStartTime:  null,
     shifts: {
       1: createShiftData(),
       2: createShiftData(),
@@ -416,6 +424,10 @@ function publishCombinedShift(client, machine, shiftNum, save = false) {
     ProducedBoxesLayerPlus: shift.producedBoxesLayerPlus || 0,
     Efficiency:             parseFloat(shift.efficiency.toFixed(2)),
     Reject:                 parseFloat(shift.reject.toFixed(2)),
+    // Authoritative episode-start timestamps — the bridge uses these to keep
+    // statusSince accurate even after missing a status-change message.
+    ErrorSince:             machine.status === "error" ? machine.errorStartTime : null,
+    IdleSince:              machine.status === "idle"  ? machine.idleStartTime  : null,
     Save:                   save,
     Timestamp:              new Date().toISOString(),
   };
@@ -497,6 +509,19 @@ client.on("connect", async () => {
       // Determine error code transitions (before publishing cloud/Shift)
       let codesToActivate = null;
       let codesToClear    = null;
+      if (prevStatus !== newStatus) {
+        const now = new Date().toISOString();
+        if (newStatus === "error") {
+          machine.errorStartTime = now;
+          machine.idleStartTime  = null;
+        } else if (newStatus === "idle") {
+          machine.idleStartTime  = now;
+          machine.errorStartTime = null;
+        } else {
+          machine.errorStartTime = null;
+          machine.idleStartTime  = null;
+        }
+      }
       if (prevStatus !== "error" && newStatus === "error") {
         // Assign error codes for this error event
         machine.activeErrorCodes = pickErrorCodes(machine.type);
