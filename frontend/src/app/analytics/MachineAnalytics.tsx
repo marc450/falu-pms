@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { format, parseISO } from "date-fns";
 import {
   fetchMachineShiftSummary,
+  fetchProductionCells,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -13,34 +14,121 @@ const BU_TARGET_DEFAULT   = 185;
 const BU_MEDIOCRE_DEFAULT = 150;
 const SWABS_PER_BU        = 7200;
 
-type Metric = "bu" | "hours" | "efficiency" | "scrap";
-type Group  = "all" | "CB" | "CT";
+type Metric    = "bu" | "hours" | "efficiency" | "scrap";
+type ColorMode = "simple" | "gradient";
 
-// ─── Color helpers ────────────────────────────────────────────────────────────
+// ─── Gradient helper ──────────────────────────────────────────────────────────
+// Maps a normalised 0–1 position through a multi-stop HSL ramp.
 
-function buCellColor(val: number | null, target: number, mediocre: number): string {
-  if (val === null) return "bg-gray-900 text-gray-600";
-  if (val >= target)   return "bg-green-900/40 text-green-300";
-  if (val >= mediocre) return "bg-yellow-900/40 text-yellow-300";
-  return "bg-red-900/40 text-red-300";
+function lerpHsl(
+  t: number,
+  stops: Array<{ t: number; h: number; s: number; l: number }>,
+): string {
+  if (t <= stops[0].t) {
+    const s = stops[0];
+    return `hsl(${s.h},${s.s}%,${s.l}%)`;
+  }
+  const last = stops[stops.length - 1];
+  if (t >= last.t) return `hsl(${last.h},${last.s}%,${last.l}%)`;
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (t >= stops[i].t && t <= stops[i + 1].t) {
+      const a = stops[i], b = stops[i + 1];
+      const f = (t - a.t) / (b.t - a.t);
+      return `hsl(${(a.h + f * (b.h - a.h)).toFixed(1)},${(a.s + f * (b.s - a.s)).toFixed(1)}%,${(a.l + f * (b.l - a.l)).toFixed(1)}%)`;
+    }
+  }
+  return `hsl(0,0%,20%)`;
 }
 
-function efficiencyCellColor(val: number | null): string {
-  if (val === null) return "bg-gray-900 text-gray-600";
-  if (val >= 85) return "bg-green-900/40 text-green-300";
-  if (val >= 70) return "bg-yellow-900/40 text-yellow-300";
-  return "bg-red-900/40 text-red-300";
+// BU gradient: deep red → amber → yellow-green → green → rich green
+function buGradientBg(val: number, target: number, mediocre: number): string {
+  const floor = mediocre * 0.35;
+  const ceil  = target  * 1.12;
+  const t     = Math.max(0, Math.min(1, (val - floor) / (ceil - floor)));
+  return lerpHsl(t, [
+    { t: 0.00, h:   4, s: 78, l: 22 },   // deep red
+    { t: 0.20, h:  14, s: 80, l: 27 },   // red-orange
+    { t: 0.42, h:  36, s: 75, l: 30 },   // amber  (≈ mediocre)
+    { t: 0.65, h:  72, s: 60, l: 28 },   // yellow-green
+    { t: 0.85, h: 128, s: 50, l: 28 },   // green  (≈ target)
+    { t: 1.00, h: 148, s: 55, l: 26 },   // rich green
+  ]);
 }
 
-function scrapCellColor(val: number | null): string {
-  if (val === null) return "bg-gray-900 text-gray-600";
-  if (val <= 2) return "bg-green-900/40 text-green-300";
-  if (val <= 5) return "bg-yellow-900/40 text-yellow-300";
-  return "bg-red-900/40 text-red-300";
+// Efficiency gradient: same shape, 0–100 % scale
+function effGradientBg(val: number): string {
+  const t = Math.max(0, Math.min(1, val / 100));
+  return lerpHsl(t, [
+    { t: 0.00, h:   4, s: 78, l: 22 },
+    { t: 0.50, h:  36, s: 75, l: 30 },
+    { t: 0.72, h:  72, s: 60, l: 28 },
+    { t: 0.87, h: 128, s: 50, l: 28 },
+    { t: 1.00, h: 148, s: 55, l: 26 },
+  ]);
 }
 
-function hoursCellColor(): string {
-  return "text-gray-300";
+// Scrap gradient: inverted — low = green, high = red
+function scrapGradientBg(val: number): string {
+  const t = Math.max(0, Math.min(1, 1 - val / 10));   // 10 % = maximum bad
+  return lerpHsl(t, [
+    { t: 0.00, h:   4, s: 78, l: 22 },
+    { t: 0.35, h:  36, s: 75, l: 30 },
+    { t: 0.60, h:  72, s: 60, l: 28 },
+    { t: 0.82, h: 128, s: 50, l: 28 },
+    { t: 1.00, h: 148, s: 55, l: 26 },
+  ]);
+}
+
+// ─── Cell style resolver ──────────────────────────────────────────────────────
+
+interface CellStyle {
+  className: string;
+  style?:    React.CSSProperties;
+}
+
+function buStyle(val: number | null, target: number, mediocre: number, mode: ColorMode): CellStyle {
+  if (val === null) return { className: "bg-gray-900 text-gray-600" };
+  if (mode === "simple") {
+    if (val >= target)   return { className: "bg-green-900/40 text-green-300" };
+    if (val >= mediocre) return { className: "bg-yellow-900/40 text-yellow-300" };
+    return                      { className: "bg-red-900/40 text-red-300" };
+  }
+  return { className: "text-white font-medium", style: { backgroundColor: buGradientBg(val, target, mediocre) } };
+}
+
+function effStyle(val: number | null, mode: ColorMode): CellStyle {
+  if (val === null) return { className: "bg-gray-900 text-gray-600" };
+  if (mode === "simple") {
+    if (val >= 85) return { className: "bg-green-900/40 text-green-300" };
+    if (val >= 70) return { className: "bg-yellow-900/40 text-yellow-300" };
+    return                { className: "bg-red-900/40 text-red-300" };
+  }
+  return { className: "text-white font-medium", style: { backgroundColor: effGradientBg(val) } };
+}
+
+function scrapStyle(val: number | null, mode: ColorMode): CellStyle {
+  if (val === null) return { className: "bg-gray-900 text-gray-600" };
+  if (mode === "simple") {
+    if (val <= 2) return { className: "bg-green-900/40 text-green-300" };
+    if (val <= 5) return { className: "bg-yellow-900/40 text-yellow-300" };
+    return              { className: "bg-red-900/40 text-red-300" };
+  }
+  return { className: "text-white font-medium", style: { backgroundColor: scrapGradientBg(val) } };
+}
+
+// Gradient legend swatch strip (used in gradient mode)
+function GradientSwatch({ fn, label }: { fn: (t: number) => string; label: string }) {
+  const steps = 32;
+  const gradient = Array.from({ length: steps }, (_, i) => fn(i / (steps - 1))).join(", ");
+  return (
+    <span className="flex items-center gap-1.5">
+      <span
+        className="w-20 h-3 rounded-sm"
+        style={{ background: `linear-gradient(to right, ${gradient})` }}
+      />
+      <span className="text-gray-500 text-xs">{label}</span>
+    </span>
+  );
 }
 
 // ─── Props ────────────────────────────────────────────────────────────────────
@@ -53,12 +141,14 @@ interface MachineAnalyticsProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function MachineAnalytics({ dateRange, machines }: MachineAnalyticsProps) {
-  const [rows, setRows]       = useState<MachineShiftRow[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError]     = useState<string | null>(null);
+  const [rows,       setRows]       = useState<MachineShiftRow[]>([]);
+  const [cells,      setCells]      = useState<ProductionCell[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [error,      setError]      = useState<string | null>(null);
   const [metric,     setMetric]     = useState<Metric>("bu");
-  const [group,      setGroup]      = useState<Group>("all");
+  const [cellFilter, setCellFilter] = useState<string | null>(null);  // null = All
   const [normalized, setNormalized] = useState(true);
+  const [colorMode,  setColorMode]  = useState<ColorMode>("simple");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -75,25 +165,37 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
 
   useEffect(() => { load(); }, [load]);
 
+  // Load production cells once on mount
+  useEffect(() => {
+    fetchProductionCells().then(setCells).catch(() => {});
+  }, []);
+
+  // ── Machine code → cell_id lookup ──
+  const machineCell = new Map<string, string | null>();
+  for (const m of machines) machineCell.set(m.machine_code, m.cell_id ?? null);
+
   // ── Derived lists ──
   const allMachineCodes = Array.from(new Set(rows.map(r => r.machine_code))).sort();
-  const filteredCodes = allMachineCodes.filter(code =>
-    group === "all" ? true : code.startsWith(group)
-  );
 
-  // Unique (work_day, shift_label) pairs, sorted newest first then A before B
+  const filteredCodes = allMachineCodes.filter(code => {
+    if (cellFilter === null) return true;
+    return machineCell.get(code) === cellFilter;
+  });
+
+  // Unique (work_day, shift_label) pairs, newest first, A before B within day
   const slotKeys = Array.from(
-    new Map(rows.map(r => [`${r.work_day}|${r.shift_label}`, { work_day: r.work_day, shift_label: r.shift_label }])).values()
+    new Map(rows.map(r => [
+      `${r.work_day}|${r.shift_label}`,
+      { work_day: r.work_day, shift_label: r.shift_label },
+    ])).values()
   ).sort((a, b) => {
     if (a.work_day !== b.work_day) return b.work_day.localeCompare(a.work_day);
     return a.shift_label.localeCompare(b.shift_label);
   });
 
-  // Index rows by (work_day, shift_label, machine_code)
+  // Row index
   const rowIndex = new Map<string, MachineShiftRow>();
-  for (const r of rows) {
-    rowIndex.set(`${r.work_day}|${r.shift_label}|${r.machine_code}`, r);
-  }
+  for (const r of rows) rowIndex.set(`${r.work_day}|${r.shift_label}|${r.machine_code}`, r);
 
   // Machine target lookup
   const machineTargets = new Map<string, { bu_target: number; bu_mediocre: number }>();
@@ -104,91 +206,87 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
     });
   }
 
-  // Summary row: per machine aggregations
-  function summaryValue(code: string): { display: string; colorClass: string } {
-    const machRows = rows.filter(r => r.machine_code === code && filteredCodes.includes(r.machine_code));
-    if (machRows.length === 0) return { display: "—", colorClass: "text-gray-600" };
+  // ── Cell value ──
+  function cellValue(code: string, work_day: string, shift_label: string): { display: string } & CellStyle {
+    const r   = rowIndex.get(`${work_day}|${shift_label}|${code}`);
+    const tgt = machineTargets.get(code) ?? { bu_target: BU_TARGET_DEFAULT, bu_mediocre: BU_MEDIOCRE_DEFAULT };
 
+    if (!r) return { display: "—", className: "bg-gray-900/60 text-gray-700" };
+
+    if (metric === "bu") {
+      const val = normalized ? r.bu_normalized : (r.swabs_produced / SWABS_PER_BU);
+      const s   = buStyle(val, tgt.bu_target, tgt.bu_mediocre, colorMode);
+      return { display: val !== null ? val.toFixed(1) : "—", ...s };
+    }
+    if (metric === "hours") {
+      return { display: `${r.run_hours.toFixed(1)} h`, className: "text-gray-300" };
+    }
+    if (metric === "efficiency") {
+      const val = r.avg_efficiency;
+      const s   = effStyle(val, colorMode);
+      return { display: val !== null ? `${val.toFixed(1)}%` : "—", ...s };
+    }
+    // scrap
+    const val = r.avg_scrap;
+    const s   = scrapStyle(val, colorMode);
+    return { display: val !== null ? `${val.toFixed(2)}%` : "—", ...s };
+  }
+
+  // ── Summary row ──
+  function summaryValue(code: string): { display: string } & CellStyle {
+    const machRows = rows.filter(r => r.machine_code === code);
+    if (machRows.length === 0) return { display: "—", className: "text-gray-600" };
     const tgt = machineTargets.get(code) ?? { bu_target: BU_TARGET_DEFAULT, bu_mediocre: BU_MEDIOCRE_DEFAULT };
 
     if (metric === "bu") {
       if (normalized) {
         const valid = machRows.filter(r => r.bu_normalized !== null && r.run_hours > 0);
-        if (valid.length === 0) return { display: "—", colorClass: "text-gray-600" };
+        if (valid.length === 0) return { display: "—", className: "text-gray-600" };
         const totalHours = valid.reduce((s, r) => s + r.run_hours, 0);
         const weighted   = valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours), 0);
         const avg = totalHours > 0 ? weighted / totalHours : null;
-        return { display: avg !== null ? avg.toFixed(1) : "—", colorClass: buCellColor(avg, tgt.bu_target, tgt.bu_mediocre) };
+        return { display: avg !== null ? avg.toFixed(1) : "—", ...buStyle(avg, tgt.bu_target, tgt.bu_mediocre, colorMode) };
       } else {
-        // Raw: average actual BU per shift session
-        if (machRows.length === 0) return { display: "—", colorClass: "text-gray-600" };
         const avg = machRows.reduce((s, r) => s + r.swabs_produced / SWABS_PER_BU, 0) / machRows.length;
-        return { display: avg.toFixed(1), colorClass: buCellColor(avg, tgt.bu_target, tgt.bu_mediocre) };
+        return { display: avg.toFixed(1), ...buStyle(avg, tgt.bu_target, tgt.bu_mediocre, colorMode) };
       }
     }
     if (metric === "hours") {
       const total = machRows.reduce((s, r) => s + r.run_hours, 0);
-      return { display: `${total.toFixed(1)} h`, colorClass: hoursCellColor() };
+      return { display: `${total.toFixed(1)} h`, className: "text-gray-300" };
     }
     if (metric === "efficiency") {
       const valid = machRows.filter(r => r.avg_efficiency !== null);
-      if (valid.length === 0) return { display: "—", colorClass: "text-gray-600" };
+      if (valid.length === 0) return { display: "—", className: "text-gray-600" };
       const avg = valid.reduce((s, r) => s + r.avg_efficiency!, 0) / valid.length;
-      return { display: `${avg.toFixed(1)}%`, colorClass: efficiencyCellColor(avg) };
+      return { display: `${avg.toFixed(1)}%`, ...effStyle(avg, colorMode) };
     }
-    // scrap
     const valid = machRows.filter(r => r.avg_scrap !== null);
-    if (valid.length === 0) return { display: "—", colorClass: "text-gray-600" };
+    if (valid.length === 0) return { display: "—", className: "text-gray-600" };
     const avg = valid.reduce((s, r) => s + r.avg_scrap!, 0) / valid.length;
-    return { display: `${avg.toFixed(1)}%`, colorClass: scrapCellColor(avg) };
+    return { display: `${avg.toFixed(2)}%`, ...scrapStyle(avg, colorMode) };
   }
 
-  function cellValue(code: string, work_day: string, shift_label: string): { display: string; colorClass: string } {
-    const r = rowIndex.get(`${work_day}|${shift_label}|${code}`);
-    const tgt = machineTargets.get(code) ?? { bu_target: BU_TARGET_DEFAULT, bu_mediocre: BU_MEDIOCRE_DEFAULT };
-
-    if (!r) return { display: "—", colorClass: "bg-gray-900 text-gray-600" };
-
-    if (metric === "bu") {
-      const val = normalized
-        ? r.bu_normalized
-        : r.swabs_produced / SWABS_PER_BU;
-      return { display: val !== null ? val.toFixed(1) : "—", colorClass: buCellColor(val, tgt.bu_target, tgt.bu_mediocre) };
-    }
-    if (metric === "hours") {
-      return { display: `${r.run_hours.toFixed(1)} h`, colorClass: hoursCellColor() };
-    }
-    if (metric === "efficiency") {
-      const val = r.avg_efficiency;
-      return { display: val !== null ? `${val.toFixed(1)}%` : "—", colorClass: efficiencyCellColor(val) };
-    }
-    // scrap
-    const val = r.avg_scrap;
-    return { display: val !== null ? `${val.toFixed(1)}%` : "—", colorClass: scrapCellColor(val) };
-  }
-
-  // ── Render ──
+  // ── Loading / error / empty ──
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 gap-2 text-gray-500 text-sm">
-        <span className="inline-block w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></span>
+        <span className="inline-block w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin" />
         Loading machine data...
       </div>
     );
   }
-
   if (error) {
     return (
       <div className="bg-red-900/30 border border-red-700/50 text-red-400 text-sm rounded-lg px-4 py-3">
-        <i className="bi bi-exclamation-circle mr-2"></i>{error}
+        <i className="bi bi-exclamation-circle mr-2" />{error}
       </div>
     );
   }
-
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center h-64 gap-2">
-        <i className="bi bi-inbox text-3xl text-gray-600"></i>
+        <i className="bi bi-inbox text-3xl text-gray-600" />
         <p className="text-sm text-gray-500">No machine data for this period</p>
       </div>
     );
@@ -201,16 +299,19 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
     { id: "scrap",      label: "Scrap"      },
   ];
 
-  const groupButtons: { id: Group; label: string }[] = [
-    { id: "all", label: "All"  },
-    { id: "CB",  label: "CB"   },
-    { id: "CT",  label: "CT"   },
-  ];
+  // Only show cells that actually have machines in the current data set
+  const activeCellIds = new Set(
+    allMachineCodes.map(c => machineCell.get(c)).filter(Boolean) as string[]
+  );
+  const visibleCells = cells.filter(c => activeCellIds.has(c.id));
 
   return (
     <div className="flex flex-col gap-4">
-      {/* Control bar */}
-      <div className="flex flex-wrap items-center gap-3">
+
+      {/* ── Control bar ── */}
+      <div className="flex flex-wrap items-start gap-3">
+
+        {/* Metric selector */}
         <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1">
           {metricButtons.map(b => (
             <button
@@ -226,60 +327,117 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
             </button>
           ))}
         </div>
-        <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1">
-          {groupButtons.map(b => (
+
+        {/* Production cell filter */}
+        <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1 flex-wrap">
+          <button
+            onClick={() => setCellFilter(null)}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              cellFilter === null
+                ? "bg-gray-600 text-white"
+                : "text-gray-400 hover:text-white hover:bg-gray-700"
+            }`}
+          >
+            All
+          </button>
+          {visibleCells.map(c => (
             <button
-              key={b.id}
-              onClick={() => setGroup(b.id)}
+              key={c.id}
+              onClick={() => setCellFilter(prev => prev === c.id ? null : c.id)}
               className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                group === b.id
+                cellFilter === c.id
                   ? "bg-gray-600 text-white"
                   : "text-gray-400 hover:text-white hover:bg-gray-700"
               }`}
             >
-              {b.label}
+              {c.name}
             </button>
           ))}
         </div>
+
+        {/* BU normalisation toggle */}
         {metric === "bu" && (
-          <div className="flex items-center gap-3 flex-wrap">
-            {/* Normalization toggle */}
-            <button
-              onClick={() => setNormalized(v => !v)}
-              className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
-                normalized
-                  ? "bg-blue-900/40 border-blue-600/60 text-blue-300"
-                  : "bg-gray-800 border-gray-600 text-gray-400 hover:text-white hover:border-gray-500"
-              }`}
-              title={normalized ? "Showing BU extrapolated to a full 12h shift — click to show actual BU produced" : "Showing actual BU produced — click to normalize to 12h shift"}
-            >
-              <i className={`bi ${normalized ? "bi-toggles" : "bi-toggles"} text-xs`}></i>
-              {normalized ? "Normalized @ 12 h" : "Actual BU"}
-            </button>
-            {/* Legend */}
-            <div className="flex items-center gap-3 text-xs text-gray-500">
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-green-900/40 border border-green-700/40"></span>
-                {">"}= 185 BU
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-yellow-900/40 border border-yellow-700/40"></span>
-                {">"}= 150 BU
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-red-900/40 border border-red-700/40"></span>
-                {"<"} 150 BU
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40"></span>
-                No data
-              </span>
-            </div>
+          <button
+            onClick={() => setNormalized(v => !v)}
+            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
+              normalized
+                ? "bg-blue-900/40 border-blue-600/60 text-blue-300"
+                : "bg-gray-800 border-gray-600 text-gray-400 hover:text-white hover:border-gray-500"
+            }`}
+            title={normalized
+              ? "Showing BU extrapolated to a full 12 h shift"
+              : "Showing actual BU produced during the shift"}
+          >
+            <i className="bi bi-toggles text-xs" />
+            {normalized ? "Normalized @ 12 h" : "Actual BU"}
+          </button>
+        )}
+
+        {/* Color mode toggle */}
+        <button
+          onClick={() => setColorMode(m => m === "simple" ? "gradient" : "simple")}
+          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
+            colorMode === "gradient"
+              ? "bg-purple-900/40 border-purple-600/60 text-purple-300"
+              : "bg-gray-800 border-gray-600 text-gray-400 hover:text-white hover:border-gray-500"
+          }`}
+          title={colorMode === "gradient" ? "Switch to simple 3-color coding" : "Switch to continuous gradient for trend visibility"}
+        >
+          <i className="bi bi-palette text-xs" />
+          {colorMode === "gradient" ? "Gradient" : "Simple"}
+        </button>
+
+        {/* Legend */}
+        {metric !== "hours" && (
+          <div className="flex items-center gap-3 text-xs text-gray-500 ml-1 pt-1">
+            {colorMode === "simple" ? (
+              <>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-green-900/40 border border-green-700/40" />
+                  {metric === "scrap" ? "≤ 2%" : metric === "efficiency" ? "≥ 85%" : "≥ 185 BU"}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-yellow-900/40 border border-yellow-700/40" />
+                  {metric === "scrap" ? "≤ 5%" : metric === "efficiency" ? "≥ 70%" : "≥ 150 BU"}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-red-900/40 border border-red-700/40" />
+                  {metric === "scrap" ? "> 5%" : metric === "efficiency" ? "< 70%" : "< 150 BU"}
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40" />
+                  No data
+                </span>
+              </>
+            ) : (
+              <>
+                {metric === "bu" && (
+                  <GradientSwatch
+                    label={`poor → ${BU_TARGET_DEFAULT} BU target`}
+                    fn={t => buGradientBg(
+                      BU_MEDIOCRE_DEFAULT * 0.35 + t * (BU_TARGET_DEFAULT * 1.12 - BU_MEDIOCRE_DEFAULT * 0.35),
+                      BU_TARGET_DEFAULT,
+                      BU_MEDIOCRE_DEFAULT,
+                    )}
+                  />
+                )}
+                {metric === "efficiency" && (
+                  <GradientSwatch label="0 % → 100%" fn={t => effGradientBg(t * 100)} />
+                )}
+                {metric === "scrap" && (
+                  <GradientSwatch label="10% → 0% scrap" fn={t => scrapGradientBg(t * 10)} />
+                )}
+                <span className="flex items-center gap-1.5">
+                  <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40" />
+                  No data
+                </span>
+              </>
+            )}
           </div>
         )}
       </div>
 
-      {/* Table */}
+      {/* ── Table ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
@@ -300,10 +458,10 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
             </thead>
             <tbody>
               {slotKeys.map(({ work_day, shift_label }) => {
-                let dateLabel = "";
-                try { dateLabel = format(parseISO(work_day), "dd.MM.yy"); } catch { dateLabel = work_day; }
+                let dateLabel = work_day;
+                try { dateLabel = format(parseISO(work_day), "dd.MM.yy"); } catch { /* keep raw */ }
                 return (
-                  <tr key={`${work_day}|${shift_label}`} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
+                  <tr key={`${work_day}|${shift_label}`} className="border-b border-gray-700/50 hover:bg-gray-700/10 transition-colors">
                     <td className="px-3 py-1.5 text-xs text-gray-400 bg-gray-900/30 sticky left-0 z-10 whitespace-nowrap">
                       {dateLabel}
                     </td>
@@ -311,9 +469,9 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
                       {shift_label}
                     </td>
                     {filteredCodes.map(code => {
-                      const { display, colorClass } = cellValue(code, work_day, shift_label);
+                      const { display, className, style } = cellValue(code, work_day, shift_label);
                       return (
-                        <td key={code} className={`px-2 py-1.5 text-xs text-right font-mono ${colorClass}`}>
+                        <td key={code} className={`px-2 py-1.5 text-xs text-right font-mono ${className}`} style={style}>
                           {display}
                         </td>
                       );
@@ -321,15 +479,16 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
                   </tr>
                 );
               })}
-              {/* Summary row */}
+
+              {/* Period avg summary row */}
               <tr className="border-t-2 border-gray-600 bg-gray-900/50">
                 <td colSpan={2} className="px-3 py-2 text-xs font-semibold text-gray-300 sticky left-0 z-10 bg-gray-900/50 border-r border-gray-700">
                   Period avg
                 </td>
                 {filteredCodes.map(code => {
-                  const { display, colorClass } = summaryValue(code);
+                  const { display, className, style } = summaryValue(code);
                   return (
-                    <td key={code} className={`px-2 py-2 text-xs text-right font-mono font-semibold ${colorClass}`}>
+                    <td key={code} className={`px-2 py-2 text-xs text-right font-mono font-semibold ${className}`} style={style}>
                       {display}
                     </td>
                   );
