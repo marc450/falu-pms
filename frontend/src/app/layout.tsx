@@ -3,8 +3,8 @@ import "./globals.css";
 import AuthLayout from "@/components/AuthLayout";
 
 export const metadata: Metadata = {
-  title: "FALU PMS - Production Monitoring",
-  description: "Cotton swab production monitoring system",
+  title: "U.S. COTTON Cleveland - Production Monitoring",
+  description: "U.S. Cotton Cleveland production monitoring system",
 };
 
 export default function RootLayout({

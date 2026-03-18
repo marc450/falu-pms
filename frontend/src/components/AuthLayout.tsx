@@ -48,12 +48,14 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       <aside className="w-56 bg-gray-900 border-r border-gray-800 flex flex-col shrink-0">
         {/* Brand */}
         <div className="p-4 border-b border-gray-800">
-          <div className="flex items-center gap-2">
-            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center">
-              <span className="text-white font-bold text-sm">F</span>
-            </div>
+          <div className="flex items-center gap-2.5">
+            <img
+              src="/usc-logo.svg"
+              alt="U.S. Cotton logo"
+              className="w-9 h-9 shrink-0"
+            />
             <div>
-              <h1 className="text-sm font-bold text-white">FALU PMS</h1>
+              <h1 className="text-sm font-bold text-white leading-tight">U.S. COTTON Cleveland</h1>
               <p className="text-xs text-gray-500">Production Monitoring</p>
             </div>
           </div>

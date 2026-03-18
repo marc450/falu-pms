@@ -37,10 +37,12 @@ export default function LoginPage() {
 
         {/* Brand */}
         <div className="text-center mb-8">
-          <div className="w-14 h-14 bg-blue-600 rounded-2xl flex items-center justify-center mx-auto mb-4 shadow-lg shadow-blue-900/40">
-            <span className="text-white font-bold text-2xl">F</span>
-          </div>
-          <h1 className="text-white text-2xl font-bold tracking-tight">FALU PMS</h1>
+          <img
+            src="/usc-logo.svg"
+            alt="U.S. Cotton logo"
+            className="w-16 h-16 mx-auto mb-4"
+          />
+          <h1 className="text-white text-2xl font-bold tracking-tight">U.S. COTTON Cleveland</h1>
           <p className="text-gray-500 text-sm mt-1">Production Monitoring System</p>
         </div>
 
