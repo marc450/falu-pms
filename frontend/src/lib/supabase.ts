@@ -831,7 +831,7 @@ export interface MachineShiftRow {
   shift_label:    string;   // 'A' | 'B' | 'C' | 'D' (based on configured shift slots)
   machine_id:     string;
   machine_code:   string;
-  run_hours:      number;
+  run_hours:      number | null;
   swabs_produced: number;
   boxes_produced: number;
   bu_normalized:  number | null;
@@ -851,7 +851,7 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
     shift_label:    r.shift_label    as string,
     machine_id:     r.machine_id     as string,
     machine_code:   r.machine_code   as string,
-    run_hours:      Number(r.run_hours)      || 0,
+    run_hours:      r.run_hours != null ? Number(r.run_hours) : null,
     swabs_produced: Number(r.swabs_produced) || 0,
     boxes_produced: Number(r.boxes_produced) || 0,
     bu_normalized:  r.bu_normalized  != null ? Number(r.bu_normalized)  : null,

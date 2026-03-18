@@ -261,7 +261,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
     }
     if (metric === "hours") {
       const s = hoursStyle(r.run_hours, colorMode);
-      return { display: `${r.run_hours.toFixed(1)} h`, ...s };
+      return { display: r.run_hours != null ? `${r.run_hours.toFixed(1)} h` : "—", ...s };
     }
     if (metric === "efficiency") {
       const val = r.avg_efficiency;
@@ -282,10 +282,10 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
 
     if (metric === "bu") {
       if (normalized) {
-        const valid = machRows.filter(r => r.bu_normalized !== null && r.run_hours > 0);
+        const valid = machRows.filter(r => r.bu_normalized !== null && r.run_hours != null && r.run_hours > 0);
         if (valid.length === 0) return { display: "—", className: "text-gray-600" };
-        const totalHours = valid.reduce((s, r) => s + r.run_hours, 0);
-        const weighted   = valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours), 0);
+        const totalHours = valid.reduce((s, r) => s + r.run_hours!, 0);
+        const weighted   = valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours!), 0);
         const avg = totalHours > 0 ? weighted / totalHours : null;
         return { display: avg !== null ? avg.toFixed(1) : "—", ...buStyle(avg, tgt.bu_target, tgt.bu_mediocre, colorMode) };
       } else {
@@ -294,8 +294,10 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
       }
     }
     if (metric === "hours") {
-      const total = machRows.reduce((s, r) => s + r.run_hours, 0);
-      const avg   = total / machRows.length;
+      const valid = machRows.filter(r => r.run_hours != null);
+      if (valid.length === 0) return { display: "—", className: "bg-gray-900 text-gray-600" };
+      const total = valid.reduce((s, r) => s + r.run_hours!, 0);
+      const avg   = total / valid.length;
       const s = hoursStyle(avg, colorMode);
       return { display: `${total.toFixed(1)} h`, ...s };
     }
