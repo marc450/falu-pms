@@ -118,16 +118,22 @@ function scrapStyle(val: number | null, mode: ColorMode): CellStyle {
 }
 
 // Gradient legend swatch strip (used in gradient mode)
-function GradientSwatch({ fn, label }: { fn: (t: number) => string; label: string }) {
+// labelLeft appears to the left of the bar (low/bad end), labelRight to the right (high/good end).
+function GradientSwatch({ fn, labelLeft, labelRight }: {
+  fn: (t: number) => string;
+  labelLeft:  string;
+  labelRight: string;
+}) {
   const steps = 32;
   const gradient = Array.from({ length: steps }, (_, i) => fn(i / (steps - 1))).join(", ");
   return (
     <span className="flex items-center gap-1.5">
+      <span className="text-gray-500 text-xs">{labelLeft}</span>
       <span
         className="w-20 h-3 rounded-sm"
         style={{ background: `linear-gradient(to right, ${gradient})` }}
       />
-      <span className="text-gray-500 text-xs">{label}</span>
+      <span className="text-gray-500 text-xs">{labelRight}</span>
     </span>
   );
 }
@@ -447,7 +453,8 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
               <>
                 {metric === "bu" && (
                   <GradientSwatch
-                    label={`poor → ${BU_TARGET_DEFAULT} BU target`}
+                    labelLeft="poor"
+                    labelRight={`${BU_TARGET_DEFAULT} BU`}
                     fn={t => buGradientBg(
                       BU_MEDIOCRE_DEFAULT * 0.35 + t * (BU_TARGET_DEFAULT * 1.12 - BU_MEDIOCRE_DEFAULT * 0.35),
                       BU_TARGET_DEFAULT,
@@ -456,10 +463,10 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
                   />
                 )}
                 {metric === "efficiency" && (
-                  <GradientSwatch label="0 % → 100%" fn={t => effGradientBg(t * 100)} />
+                  <GradientSwatch labelLeft="0%" labelRight="100%" fn={t => effGradientBg(t * 100)} />
                 )}
                 {metric === "scrap" && (
-                  <GradientSwatch label="10% → 0% scrap" fn={t => scrapGradientBg(t * 10)} />
+                  <GradientSwatch labelLeft="0% scrap" labelRight="10%" fn={t => scrapGradientBg(t * 10)} />
                 )}
                 <span className="flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-sm bg-gray-900 border border-gray-700/40" />
