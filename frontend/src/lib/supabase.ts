@@ -572,10 +572,25 @@ export interface ShiftConfig {
 /** Generate evenly-spaced slots starting at firstStartHour for a given shift duration. */
 export function slotsFromDuration(hours: 6 | 8 | 12, firstStartHour: number = 0): TimeSlot[] {
   const count = 24 / hours;
+  const letters = ["A", "B", "C", "D"];
   return Array.from({ length: count }, (_, i) => ({
-    name:      `Slot ${i + 1}`,
+    name:      `Shift ${letters[i] ?? i + 1}`,
     startHour: (firstStartHour + i * hours) % 24,
   }));
+}
+
+/**
+ * Map a raw RPC shift label ('A' | 'B' | …) to a human-readable slot name.
+ * The RPC always returns at most two labels per work-day ('A' = 07:00–18:59,
+ * 'B' = 19:00–06:59).  We map those to the configured slot names so the UI
+ * reflects the names shown in the Shifts settings tab.
+ */
+export function shiftLabelToName(
+  label: string,
+  slots: TimeSlot[],
+): string {
+  const index = label === "A" ? 0 : label === "B" ? 1 : label === "C" ? 2 : 3;
+  return slots[index]?.name ?? `Shift ${label}`;
 }
 
 export const DEFAULT_SHIFT_CONFIG: ShiftConfig = {

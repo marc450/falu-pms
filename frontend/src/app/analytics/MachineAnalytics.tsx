@@ -5,8 +5,9 @@ import { format, parseISO } from "date-fns";
 import {
   fetchMachineShiftSummary,
   fetchProductionCells,
+  shiftLabelToName,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell, TimeSlot } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -134,13 +135,15 @@ function GradientSwatch({ fn, label }: { fn: (t: number) => string; label: strin
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface MachineAnalyticsProps {
-  dateRange: DateRange;
-  machines:  RegisteredMachine[];
+  dateRange:  DateRange;
+  machines:   RegisteredMachine[];
+  shiftSlots: TimeSlot[];
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function MachineAnalytics({ dateRange, machines }: MachineAnalyticsProps) {
+export default function MachineAnalytics({ dateRange, machines, shiftSlots }: MachineAnalyticsProps) {
+  const slotName = (label: string) => shiftLabelToName(label, shiftSlots);
   const [rows,       setRows]       = useState<MachineShiftRow[]>([]);
   const [cells,      setCells]      = useState<ProductionCell[]>([]);
   const [loading,    setLoading]    = useState(true);
@@ -471,7 +474,7 @@ export default function MachineAnalytics({ dateRange, machines }: MachineAnalyti
                       {dateLabel}
                     </td>
                     <td className="px-2 py-1.5 text-xs text-center font-medium text-gray-300 bg-gray-900/30 sticky left-[72px] z-10 border-r border-gray-700">
-                      {shift_label}
+                      {slotName(shift_label)}
                     </td>
                     {filteredCodes.map(code => {
                       const { display, className, style } = cellValue(code, work_day, shift_label);

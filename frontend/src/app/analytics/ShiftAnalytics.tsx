@@ -8,8 +8,9 @@ import {
 } from "recharts";
 import {
   fetchMachineShiftSummary,
+  shiftLabelToName,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -32,8 +33,9 @@ const AXIS_COLOR          = "#4b5563";
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface ShiftAnalyticsProps {
-  dateRange: DateRange;
-  machines:  RegisteredMachine[];
+  dateRange:  DateRange;
+  machines:   RegisteredMachine[];
+  shiftSlots: TimeSlot[];
 }
 
 // ─── KPI tile ─────────────────────────────────────────────────────────────────
@@ -75,7 +77,8 @@ function barColor(val: number): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function ShiftAnalytics({ dateRange, machines }: ShiftAnalyticsProps) {
+export default function ShiftAnalytics({ dateRange, machines, shiftSlots }: ShiftAnalyticsProps) {
+  const slotName = (label: string) => shiftLabelToName(label, shiftSlots);
   const [rows, setRows]       = useState<MachineShiftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError]     = useState<string | null>(null);
@@ -176,25 +179,25 @@ export default function ShiftAnalytics({ dateRange, machines }: ShiftAnalyticsPr
       {/* KPI tiles */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <KpiTile
-          label="Shift A Fleet Avg BU"
+          label={`${slotName("A")} Fleet Avg BU`}
           value={shiftAAvgBu !== null ? shiftAAvgBu.toFixed(1) : "—"}
           sub="Normalized to 12 h shift"
           colorClass={buColor(shiftAAvgBu)}
         />
         <KpiTile
-          label="Shift B Fleet Avg BU"
+          label={`${slotName("B")} Fleet Avg BU`}
           value={shiftBAvgBu !== null ? shiftBAvgBu.toFixed(1) : "—"}
           sub="Normalized to 12 h shift"
           colorClass={buColor(shiftBAvgBu)}
         />
         <KpiTile
-          label="Shift A Avg Run Hours"
+          label={`${slotName("A")} Avg Run Hours`}
           value={avgRunHoursA !== null ? `${avgRunHoursA.toFixed(1)} h` : "—"}
           sub="Per machine per shift"
           colorClass="text-gray-300"
         />
         <KpiTile
-          label="Shift B Avg Run Hours"
+          label={`${slotName("B")} Avg Run Hours`}
           value={avgRunHoursB !== null ? `${avgRunHoursB.toFixed(1)} h` : "—"}
           sub="Per machine per shift"
           colorClass="text-gray-300"
@@ -204,15 +207,15 @@ export default function ShiftAnalytics({ dateRange, machines }: ShiftAnalyticsPr
       {/* Bar chart */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-sm font-semibold text-white">Fleet Avg BU per Day (Shift A vs B)</h3>
+          <h3 className="text-sm font-semibold text-white">Fleet Avg BU per Day ({slotName("A")} vs {slotName("B")})</h3>
           <div className="flex items-center gap-3 text-xs text-gray-500">
             <span className="flex items-center gap-1.5">
               <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "#22d3ee" }}></span>
-              Shift A
+              {slotName("A")}
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "#a78bfa" }}></span>
-              Shift B
+              {slotName("B")}
             </span>
           </div>
         </div>
@@ -245,7 +248,7 @@ export default function ShiftAnalytics({ dateRange, machines }: ShiftAnalyticsPr
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
                 formatter={(v: any, name: any) => [
                   `${Number(v).toFixed(1)} BU`,
-                  name === "buA" ? "Shift A" : "Shift B",
+                  name === "buA" ? slotName("A") : slotName("B"),
                 ]}
               />
               <Bar dataKey="buA" name="buA" radius={[2, 2, 0, 0]} barSize={10}>
@@ -274,9 +277,9 @@ export default function ShiftAnalytics({ dateRange, machines }: ShiftAnalyticsPr
             <thead>
               <tr className="border-b border-gray-700 bg-gray-900/40">
                 <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Machine</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">Shift A Avg BU</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">Shift B Avg BU</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">Delta (A minus B)</th>
+                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">{slotName("A")} Avg BU</th>
+                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">{slotName("B")} Avg BU</th>
+                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">Delta ({slotName("A")} minus {slotName("B")})</th>
                 <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Better Shift</th>
               </tr>
             </thead>
@@ -303,7 +306,7 @@ export default function ShiftAnalytics({ dateRange, machines }: ShiftAnalyticsPr
                     : better === "B" ? "text-purple-400"
                     : "text-gray-500"
                   }`}>
-                    {better}
+                    {better === "A" ? slotName("A") : better === "B" ? slotName("B") : better}
                   </td>
                 </tr>
               ))}

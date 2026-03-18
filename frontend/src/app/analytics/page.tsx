@@ -12,11 +12,11 @@ import {
   startOfDay, startOfMonth, startOfQuarter, startOfYear,
 } from "date-fns";
 import {
-  fetchFleetTrend, fetchRegisteredMachines, fetchThresholds,
+  fetchFleetTrend, fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
   applyEfficiencyColor, applyScrapColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine } from "@/lib/supabase";
+import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, ShiftConfig, TimeSlot } from "@/lib/supabase";
 import MachineAnalytics from "./MachineAnalytics";
 import ShiftAnalytics   from "./ShiftAnalytics";
 import MachinePark      from "./MachinePark";
@@ -407,6 +407,7 @@ export default function Analytics() {
   const [error, setError]                 = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const [machines, setMachines]           = useState<RegisteredMachine[]>([]);
+  const [shiftSlots, setShiftSlots]       = useState<TimeSlot[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -419,11 +420,13 @@ export default function Analytics() {
         ? PRESETS.find(p => p.id === activePresetId)!.getRange()
         : dateRange;
     try {
-      const [result, machines, savedThresholds] = await Promise.all([
+      const [result, machines, savedThresholds, shiftCfg] = await Promise.all([
         fetchFleetTrend(effectiveRange),
         fetchRegisteredMachines(),
         fetchThresholds(),
+        fetchShiftConfig(),
       ]);
+      setShiftSlots(shiftCfg.slots);
       setRows(result.rows);
       setGranularity(result.granularity);
       setTotalReadings(result.totalReadings);
@@ -646,13 +649,13 @@ export default function Analytics() {
 
       {/* ── Non-fleet tabs ── */}
       {tab === "machines" && (
-        <MachineAnalytics dateRange={kpiRange} machines={machines} />
+        <MachineAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} />
       )}
       {tab === "shifts" && (
-        <ShiftAnalytics dateRange={kpiRange} machines={machines} />
+        <ShiftAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} />
       )}
       {tab === "park" && (
-        <MachinePark dateRange={kpiRange} machines={machines} />
+        <MachinePark dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} />
       )}
 
       {tab === "fleet" && (

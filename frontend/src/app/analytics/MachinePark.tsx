@@ -4,8 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { format, parseISO } from "date-fns";
 import {
   fetchMachineShiftSummary,
+  shiftLabelToName,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -15,8 +16,9 @@ const BU_MEDIOCRE_DEFAULT = 150;
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface MachineParkProps {
-  dateRange: DateRange;
-  machines:  RegisteredMachine[];
+  dateRange:  DateRange;
+  machines:   RegisteredMachine[];
+  shiftSlots: TimeSlot[];
 }
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
@@ -46,7 +48,7 @@ interface TooltipState {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function MachinePark({ dateRange, machines }: MachineParkProps) {
+export default function MachinePark({ dateRange, machines, shiftSlots }: MachineParkProps) {
   const [rows, setRows]           = useState<MachineShiftRow[]>([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
@@ -66,6 +68,8 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
   }, [dateRange]);
 
   useEffect(() => { load(); }, [load]);
+
+  const slotName = (label: string) => shiftLabelToName(label, shiftSlots);
 
   // ── Machine code → display name (user-set name, fallback to UID) ──
   const machineNameMap = new Map<string, string>();
@@ -132,12 +136,12 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
     if (best) {
       let dl = best.work_day;
       try { dl = format(parseISO(best.work_day), "dd.MM.yy"); } catch { /* noop */ }
-      bestLabel = `${dl} ${best.shift_label}`;
+      bestLabel = `${dl} ${slotName(best.shift_label)}`;
     }
     if (worst) {
       let dl = worst.work_day;
       try { dl = format(parseISO(worst.work_day), "dd.MM.yy"); } catch { /* noop */ }
-      worstLabel = `${dl} ${worst.shift_label}`;
+      worstLabel = `${dl} ${slotName(worst.shift_label)}`;
     }
 
     const avgRunHours = machRows.length > 0
@@ -209,7 +213,7 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
             </span>
           </div>
         </div>
-        <p className="text-xs text-gray-500 mb-3">Each column = one work day. Two cells per machine per day: Shift A (top), Shift B (bottom).</p>
+        <p className="text-xs text-gray-500 mb-3">Each column = one work day. Two cells per machine per day: {slotName("A")} (top), {slotName("B")} (bottom).</p>
         <div className="overflow-x-auto">
           <div style={{ minWidth: last60Days.length * 22 + 80 }}>
             {/* Date labels row */}
@@ -261,7 +265,7 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${displayName(code)} ${dateLabel} Shift A: ${buA !== null ? buA.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} ${slotName("A")}: ${buA !== null ? buA.toFixed(1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
@@ -277,7 +281,7 @@ export default function MachinePark({ dateRange, machines }: MachineParkProps) {
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${displayName(code)} ${dateLabel} Shift B: ${buB !== null ? buB.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} ${slotName("B")}: ${buB !== null ? buB.toFixed(1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
