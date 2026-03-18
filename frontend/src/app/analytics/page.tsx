@@ -650,7 +650,7 @@ export default function Analytics() {
                 : "text-gray-400 hover:text-white hover:bg-gray-700"
             }`}
           >
-            {t === "fleet" ? "Production Trend" : t === "machines" ? "Machine Performance" : t === "shifts" ? "Shift Comparison" : "Park History"}
+            {t === "fleet" ? "Output Trend" : t === "machines" ? "Shift Heatmap" : t === "shifts" ? "Crew Comparison" : "Fleet History"}
           </button>
         ))}
       </div>
