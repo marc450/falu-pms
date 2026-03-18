@@ -1118,6 +1118,7 @@ function ShiftsTab() {
   const [draftFirstStartDisplay, setDraftFirstStartDisplay] = useState<string>(String(DEFAULT_SHIFT_CONFIG.firstShiftStartHour));
   const [draftDowntime, setDraftDowntime] = useState<number>(0);
   const [downtimeDisplay, setDowntimeDisplay] = useState("0");
+  const [filling, setFilling] = useState(false);
   const [slotsDirty, setSlotsDirty] = useState(false);
   const [slotError, setSlotError] = useState<string | null>(null);
   const [slotSuccess, setSlotSuccess] = useState(false);
@@ -1336,6 +1337,55 @@ function ShiftsTab() {
     } catch (e) { console.error(e); }
   };
 
+  // Fill all past months (up to 6 months back) with rotating ABCD pattern,
+  // skipping any dates that already have assignments.
+  const fillHistoricalMonths = async () => {
+    setFilling(true);
+    try {
+      const today = new Date();
+      const sixMonthsAgo = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
+      const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
+
+      const fromStr = toISODate(sixMonthsAgo);
+      const toStr   = toISODate(yesterday);
+
+      // Fetch existing assignments so we don't overwrite them
+      const existing = await fetchShiftAssignments(fromStr, toStr);
+      const existingDates = new Set(existing.map(a => a.shift_date));
+
+      const teams    = config.teams;
+      const numSlots = config.slots.length;
+      const bulk: ShiftAssignment[] = [];
+
+      const d = new Date(sixMonthsAgo);
+      while (d <= yesterday) {
+        const dateStr = toISODate(d);
+        if (!existingDates.has(dateStr)) {
+          // epoch-day index for a deterministic, date-anchored cycle
+          const epochDay = Math.floor(d.getTime() / 86400000);
+          const slotTeams = Array.from({ length: numSlots }, (_, i) =>
+            teams[(epochDay + i) % teams.length]
+          );
+          bulk.push({ shift_date: dateStr, slot_teams: slotTeams });
+        }
+        d.setDate(d.getDate() + 1);
+      }
+
+      if (bulk.length > 0) {
+        await saveShiftAssignmentsBulk(bulk);
+        // Merge newly generated dates that fall in the currently displayed month into state
+        const map = { ...assignments };
+        for (const a of bulk) {
+          if (a.shift_date >= fromStr && a.shift_date <= toStr) {
+            map[a.shift_date] = a;
+          }
+        }
+        setAssignments(map);
+      }
+    } catch (e) { console.error(e); }
+    finally { setFilling(false); }
+  };
+
   const isToday = (d: Date) => toISODate(d) === toISODate(new Date());
 
   if (loading) return (
@@ -1540,9 +1590,22 @@ function ShiftsTab() {
             </h4>
             <p className="text-gray-500 text-xs mt-0.5">Assign teams to each day&apos;s shifts</p>
           </div>
-          <button onClick={copyPrevMonth} className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Copy assignments from previous month">
-            <i className="bi bi-clipboard mr-1"></i>Copy prev. month
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={fillHistoricalMonths}
+              disabled={filling}
+              className="px-2.5 py-1.5 text-xs text-cyan-400 hover:text-cyan-300 hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed rounded transition-colors"
+              title="Auto-fill all past months (up to 6 months back) with rotating ABCD pattern — skips dates already assigned"
+            >
+              {filling
+                ? <><span className="inline-block w-3 h-3 border border-cyan-400 border-t-transparent rounded-full animate-spin mr-1 align-middle"></span>Filling…</>
+                : <><i className="bi bi-magic mr-1"></i>Fill past months</>
+              }
+            </button>
+            <button onClick={copyPrevMonth} className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors" title="Copy assignments from previous month">
+              <i className="bi bi-clipboard mr-1"></i>Copy prev. month
+            </button>
+          </div>
         </div>
 
         {/* Month navigation */}
@@ -1605,7 +1668,7 @@ function ShiftsTab() {
                           key={slotIdx}
                           value={team ?? ""}
                           onChange={e => assign(dateStr, slotIdx, e.target.value || null)}
-                          title={`Slot ${slotIdx + 1} (${fmtHour(slot.startHour)})`}
+                          title={`${slot.name} (${fmtHour(slot.startHour)})`}
                           className={`w-full text-center text-[11px] font-semibold rounded py-0.5 px-0.5 border-0 cursor-pointer focus:outline-none focus:ring-1 focus:ring-cyan-500 transition-colors ${
                             team ? `${teamColor(team, config.teams)} text-white` : "bg-gray-700/50 text-gray-600"
                           }`}
@@ -1634,7 +1697,7 @@ function ShiftsTab() {
           <div className="flex items-center gap-3">
             {config.slots.map((slot, idx) => (
               <span key={idx} className="text-xs text-gray-500">
-                Row {idx + 1} = Slot {idx + 1} ({fmtHour(slot.startHour)})
+                Row {idx + 1} = {slot.name} ({fmtHour(slot.startHour)})
               </span>
             ))}
           </div>

@@ -804,7 +804,7 @@ export async function saveShiftAssignmentsBulk(
 
 export interface MachineShiftRow {
   work_day:       string;   // 'YYYY-MM-DD'
-  shift_label:    string;   // 'A' or 'B'
+  shift_label:    string;   // 'A' | 'B' | 'C' | 'D' (based on configured shift slots)
   machine_id:     string;
   machine_code:   string;
   run_hours:      number;
