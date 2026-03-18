@@ -704,10 +704,10 @@ function ParkSummaryTiles({
   const hasAnyBuTarget = all.some(m => m.buTarget && m.buTarget > 0);
 
   const buValue = floorTarget > 0
-    ? `${Math.round(floorProjected)} / ${Math.round(floorTarget)}`
+    ? `${fmtN(Math.round(floorProjected))} / ${fmtN(Math.round(floorTarget))}`
     : "—";
   const buSub = floorRate !== null
-    ? `${Math.round(floorRate * 100)}% of target`
+    ? `${fmtN(Math.round(floorRate * 100))}% of target`
     : hasAnyBuTarget ? "No live data" : "No targets set";
 
   return (
@@ -837,7 +837,7 @@ function ShiftAndBUProgress({
           <span className="text-white font-medium">{fmtDuration(totalShiftMins)}</span>
           {" elapsed"}
           <span className="mx-1.5 text-gray-600">|</span>
-          <span className="text-white font-medium">{shiftPct}%</span>
+          <span className="text-white font-medium">{fmtN(shiftPct)}%</span>
           {" of shift"}
         </p>
       </div>
@@ -860,7 +860,7 @@ function ShiftAndBUProgress({
             <span className="text-white font-medium">{Math.round(totalTargetBU).toLocaleString()} BUs</span>
             {" produced"}
             <span className="mx-1.5 text-gray-600">|</span>
-            <span className="text-white font-medium">{buPct}%</span>
+            <span className="text-white font-medium">{fmtN(buPct)}%</span>
             {" of target"}
           </p>
         </div>

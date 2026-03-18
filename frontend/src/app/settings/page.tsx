@@ -29,6 +29,7 @@ import {
   DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
 import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot } from "@/lib/supabase";
+import { fmtH } from "@/lib/fmt";
 
 type DropTarget = {
   cellId: string | null;      // destination cell (null = unassigned)
@@ -1535,7 +1536,7 @@ function ShiftsTab() {
           <div className="flex items-center justify-between py-2">
             <span className="text-sm text-white">Effective production time</span>
             <span className="text-sm text-cyan-400">
-              {`${(draftEffectiveMins / 60).toFixed(1)} hrs`}
+              {fmtH(draftEffectiveMins / 60, 1).replace(" h", " hrs")}
             </span>
           </div>
         </div>

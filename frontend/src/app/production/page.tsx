@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig, fetchShiftAssignments, PACKING_FORMATS } from "@/lib/supabase";
 import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat, Thresholds, ShiftConfig } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
+import { fmtN, fmtPct } from "@/lib/fmt";
 
 function ProductionContent() {
   const searchParams = useSearchParams();
@@ -200,8 +201,8 @@ function ProductionContent() {
     if (val === undefined || val === null) return <span className="text-gray-600">---</span>;
     switch (format) {
       case "time":    return formatMinutesToTime(val as number);
-      case "percent": return `${(val as number).toFixed(1)}%`;
-      default:        return (val as number).toLocaleString();
+      case "percent": return fmtPct(val as number, 1);
+      default:        return fmtN(val as number);
     }
   };
 
