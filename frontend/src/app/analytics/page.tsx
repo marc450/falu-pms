@@ -13,10 +13,11 @@ import {
 } from "date-fns";
 import {
   fetchFleetTrend, fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
+  fetchShiftAssignments,
   applyEfficiencyColor, applyScrapColor,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, ShiftConfig, TimeSlot } from "@/lib/supabase";
+import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, ShiftConfig, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 import MachineAnalytics from "./MachineAnalytics";
 import ShiftAnalytics   from "./ShiftAnalytics";
 import MachinePark      from "./MachinePark";
@@ -407,7 +408,8 @@ export default function Analytics() {
   const [error, setError]                 = useState<string | null>(null);
   const [lastRefreshed, setLastRefreshed] = useState<Date | null>(null);
   const [machines, setMachines]           = useState<RegisteredMachine[]>([]);
-  const [shiftSlots, setShiftSlots]       = useState<TimeSlot[]>([]);
+  const [shiftSlots, setShiftSlots]             = useState<TimeSlot[]>([]);
+  const [shiftAssignments, setShiftAssignments] = useState<Record<string, ShiftAssignment>>({});
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -420,13 +422,19 @@ export default function Analytics() {
         ? PRESETS.find(p => p.id === activePresetId)!.getRange()
         : dateRange;
     try {
-      const [result, machines, savedThresholds, shiftCfg] = await Promise.all([
+      const rangeFrom = effectiveRange.start.toISOString().slice(0, 10);
+      const rangeTo   = effectiveRange.end.toISOString().slice(0, 10);
+
+      const [result, machines, savedThresholds, shiftCfg, assignmentRows] = await Promise.all([
         fetchFleetTrend(effectiveRange),
         fetchRegisteredMachines(),
         fetchThresholds(),
         fetchShiftConfig(),
+        fetchShiftAssignments(rangeFrom, rangeTo),
       ]);
       setShiftSlots(shiftCfg.slots);
+      // Build a lookup map keyed by shift_date for O(1) access in child components
+      setShiftAssignments(Object.fromEntries(assignmentRows.map(a => [a.shift_date, a])));
       setRows(result.rows);
       setGranularity(result.granularity);
       setTotalReadings(result.totalReadings);
@@ -649,13 +657,13 @@ export default function Analytics() {
 
       {/* ── Non-fleet tabs ── */}
       {tab === "machines" && (
-        <MachineAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} />
+        <MachineAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
       )}
       {tab === "shifts" && (
         <ShiftAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} />
       )}
       {tab === "park" && (
-        <MachinePark dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} />
+        <MachinePark dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
       )}
 
       {tab === "fleet" && (

@@ -581,9 +581,7 @@ export function slotsFromDuration(hours: 6 | 8 | 12, firstStartHour: number = 0)
 
 /**
  * Map a raw RPC shift label ('A' | 'B' | …) to a human-readable slot name.
- * The RPC always returns at most two labels per work-day ('A' = 07:00–18:59,
- * 'B' = 19:00–06:59).  We map those to the configured slot names so the UI
- * reflects the names shown in the Shifts settings tab.
+ * Used as a fallback when no team assignment exists for the specific day.
  */
 export function shiftLabelToName(
   label: string,
@@ -591,6 +589,32 @@ export function shiftLabelToName(
 ): string {
   const index = label === "A" ? 0 : label === "B" ? 1 : label === "C" ? 2 : 3;
   return slots[index]?.name ?? `Shift ${label}`;
+}
+
+/**
+ * Return the team name assigned to a specific work-day + shift slot.
+ *
+ * The PLC sends shift_number 1 / 2 / 3 which the RPC maps to slot labels
+ * 'A' / 'B' / 'C' / 'D' based on time-of-day.  The shift_assignments
+ * calendar stores which TEAM worked each slot on each date.
+ *
+ * This function joins those two sources so analytics can display
+ * e.g. "SHIFT C" instead of the generic "Shift A".
+ *
+ * Falls back to the configured slot name when no assignment exists.
+ */
+export function teamNameForShift(
+  workDay:     string,
+  shiftLabel:  string,
+  assignments: Record<string, ShiftAssignment>,
+  slots:       TimeSlot[],
+): string {
+  const slotIndex = ["A", "B", "C", "D"].indexOf(shiftLabel);
+  if (slotIndex !== -1) {
+    const team = assignments[workDay]?.slot_teams?.[slotIndex];
+    if (team) return team;
+  }
+  return shiftLabelToName(shiftLabel, slots);
 }
 
 export const DEFAULT_SHIFT_CONFIG: ShiftConfig = {

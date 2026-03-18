@@ -1,25 +1,23 @@
 -- ============================================================================
 -- Realistic test data for FALU PMS
--- Four 6-hour shifts per machine per day for 6 months
+-- Per-machine, per-shift readings for 6 months
 -- ============================================================================
 --
--- BU formula (normalised to 12h equivalent):
+-- The PLC sends two 12-hour shifts per day (shift_number 1 and 2).
+-- The team assigned to each shift is configured separately in app_settings
+-- (shift_assignments table) and is looked up by the analytics at display time.
+--
+-- BU formula:
 --   bu_normalized = (swabs_produced / 7200) / run_hours * 12
 --
--- Rated capacity per 6h shift: 240 BU × 7 200 / 2 = 864 000 swabs
--- BU target per shift: 185 BU (machine must run ≥ 77 % to hit it)
+-- Rated capacity: 240 BU × 7200 = 1 728 000 swabs / 12h shift
+-- BU target: 185 BU  (machine must achieve ≥ 77 % uptime to hit this)
 --
 -- Performance design:
 --   base efficiency (fraction of shift spent running): 0.74 – 0.88
---   fleet average ≈ 0.81
+--   fleet average ≈ 0.81 → 240 × 0.81 ≈ 194 BU/shift ≈ 105 % of target
 --   Breakdown chance: 7 % per machine per shift
 --   Weekend factor: −5 %    Night-shift factor: −3 %
---
--- Shift schedule (matches app_settings shift_config):
---   Shift A (s=1): 07:00 – 12:59
---   Shift B (s=2): 13:00 – 18:59
---   Shift C (s=3): 19:00 – 00:59
---   Shift D (s=4): 01:00 – 06:59  (attributed to previous calendar work-day)
 -- ============================================================================
 
 -- Wipe ALL historical data so no old test runs accumulate on top of each other.
@@ -44,12 +42,11 @@ DECLARE
   machine_codes TEXT[];
   machine_count INT;
 
-  -- Rated capacity: 240 BU at 100 % uptime for a 6h shift
-  -- = 240 × 7200 swabs / 2  (half of 12h rated)
-  rated_swabs    CONSTANT BIGINT := 864000;
-  interval_rated CONSTANT BIGINT := 172800;   -- rated_swabs / 5 readings
-  -- Hard cap per interval: 185 × 1.15 × 7200 / 5
-  interval_cap   CONSTANT BIGINT := 198720;
+  -- Rated capacity: 240 BU at 100 % uptime (= target / 0.77)
+  rated_swabs    CONSTANT BIGINT := 1728000;  -- 240 BU × 7200 swabs/BU
+  interval_rated CONSTANT BIGINT := 288000;   -- rated_swabs / 6 readings
+  -- Hard cap per 2 h interval: 185 × 1.15 × 7200 / 6
+  interval_cap   CONSTANT BIGINT := 255300;
 
   -- Per-machine uptime profiles (fleet average 0.810)
   base_eff DOUBLE PRECISION[] := ARRAY[
@@ -72,16 +69,14 @@ DECLARE
   dow         INT;
 
   shift_start           TIMESTAMPTZ;
-  -- 6-hour shifts, 5 readings each (60-min intervals → last reading at +300 min,
-  -- safely within the 6h window and not spilling into the next slot)
-  shift_len_mins CONSTANT INT := 360;
-  n_readings     CONSTANT INT := 5;
-  interval_mins  CONSTANT INT := 60;
+  shift_len_mins CONSTANT INT := 720;   -- 12-hour PLC shift
+  n_readings     CONSTANT INT := 6;
+  interval_mins  CONSTANT INT := 120;   -- 720 / 6
 
-  mach_eff     DOUBLE PRECISION;
-  day_factor   DOUBLE PRECISION;
+  mach_eff    DOUBLE PRECISION;
+  day_factor  DOUBLE PRECISION;
   shift_factor DOUBLE PRECISION;
-  eff_factor   DOUBLE PRECISION;
+  eff_factor  DOUBLE PRECISION;
 
   is_breakdown BOOLEAN;
   bd_eff       DOUBLE PRECISION;
@@ -127,24 +122,18 @@ BEGIN
 
     day_factor := 1.0
       + CASE WHEN dow IN (0, 6) THEN -0.05 ELSE 0 END
-      + (random() - 0.5) * 0.06;   -- ±3 % daily noise
+      + (random() - 0.5) * 0.06;
 
-    -- Four 6-hour shifts:
-    --   s=1  Shift A  07:00–12:59
-    --   s=2  Shift B  13:00–18:59
-    --   s=3  Shift C  19:00–00:59
-    --   s=4  Shift D  01:00–06:59 (next calendar day, same work-day via -7h offset)
-    FOR s IN 1..4 LOOP
+    -- Two 12-hour PLC shifts per day:
+    --   s=1  Day shift   07:00 – 18:59
+    --   s=2  Night shift 19:00 – 06:59 (next calendar day)
+    FOR s IN 1..2 LOOP
       shift_factor := day_factor
-        + CASE WHEN s IN (3, 4) THEN -0.03 ELSE 0.01 END   -- night penalty
+        + CASE WHEN s = 2 THEN -0.03 ELSE 0.01 END
         + (random() - 0.5) * 0.04;
 
-      shift_start := CASE s
-        WHEN 1 THEN d::timestamptz + interval '7 hours'
-        WHEN 2 THEN d::timestamptz + interval '13 hours'
-        WHEN 3 THEN d::timestamptz + interval '19 hours'
-        WHEN 4 THEN d::timestamptz + interval '25 hours'   -- 01:00 next calendar day
-      END;
+      shift_start := d::timestamptz
+        + CASE WHEN s = 1 THEN interval '7 hours' ELSE interval '19 hours' END;
 
       FOR m_idx IN 1..machine_count LOOP
         m_id     := machine_ids[m_idx];
@@ -164,13 +153,12 @@ BEGIN
 
         FOR r IN 1..n_readings LOOP
 
-          -- ── Productive minutes this interval ─────────────────────────
-          IF is_breakdown AND r BETWEEN 3 AND 4 THEN
+          IF is_breakdown AND r BETWEEN 3 AND 5 THEN
             inc_prod_mins := GREATEST(5,
               (interval_mins * bd_eff * (0.7 + random() * 0.6))::int
             );
           ELSE
-            inc_prod_mins := GREATEST(10,
+            inc_prod_mins := GREATEST(20,
               (interval_mins * eff_factor * (0.94 + random() * 0.12))::int
             );
             inc_prod_mins := LEAST(interval_mins, inc_prod_mins);
@@ -179,7 +167,6 @@ BEGIN
           cum_prod_time := cum_prod_time + inc_prod_mins;
           cum_idle_time := cum_idle_time + (interval_mins - inc_prod_mins);
 
-          -- ── Swab production ──────────────────────────────────────────
           inc_swabs := (
             (rated_swabs::float8 / shift_len_mins)
             * inc_prod_mins
@@ -191,7 +178,6 @@ BEGIN
 
           cum_swabs := cum_swabs + inc_swabs;
 
-          -- ── Scrap ────────────────────────────────────────────────────
           inc_discarded := GREATEST(0, (
             inc_swabs * (
               CASE WHEN m_idx <= 18 THEN base_scrap[m_idx] ELSE 0.018 END
@@ -201,7 +187,6 @@ BEGIN
           )::bigint);
           cum_discarded := cum_discarded + inc_discarded;
 
-          -- ── Boxes ────────────────────────────────────────────────────
           inc_boxes    := GREATEST(0, inc_swabs / 7200);
           cum_boxes    := cum_boxes + inc_boxes;
           IF random() < 0.05 THEN
@@ -218,7 +203,6 @@ BEGIN
             THEN LEAST(100.0, cum_discarded::float8 / cum_swabs * 100)
             ELSE 0 END;
 
-          -- Reading timestamp: inside the 60-min interval window, with ±2 min jitter
           rec_at := shift_start
             + (r * interval_mins * interval '1 minute')
             + ((random() * 4 - 2) * interval '1 minute');
@@ -271,12 +255,12 @@ BEGIN
           cum_boxes, cum_boxes_lp,
           cum_discarded,
           ROUND(eff_pct::numeric, 1), ROUND(rej_pct::numeric, 1),
-          shift_start + interval '6 hours' - (random() * interval '3 minutes')
+          shift_start + interval '12 hours' - (random() * interval '3 minutes')
         );
 
       END LOOP; -- machines
     END LOOP;   -- shifts
   END LOOP;     -- days
 
-  RAISE NOTICE 'Done: % machines, 6 months, 4 shifts/day.', machine_count;
+  RAISE NOTICE 'Done: % machines, 6 months, 2 PLC shifts/day.', machine_count;
 END $$;

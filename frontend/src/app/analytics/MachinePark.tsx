@@ -4,9 +4,9 @@ import { useEffect, useState, useCallback } from "react";
 import { format, parseISO } from "date-fns";
 import {
   fetchMachineShiftSummary,
-  shiftLabelToName,
+  teamNameForShift,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -16,9 +16,10 @@ const BU_MEDIOCRE_DEFAULT = 150;
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface MachineParkProps {
-  dateRange:  DateRange;
-  machines:   RegisteredMachine[];
-  shiftSlots: TimeSlot[];
+  dateRange:        DateRange;
+  machines:         RegisteredMachine[];
+  shiftSlots:       TimeSlot[];
+  shiftAssignments: Record<string, ShiftAssignment>;
 }
 
 // ─── Color helpers ────────────────────────────────────────────────────────────
@@ -48,7 +49,7 @@ interface TooltipState {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function MachinePark({ dateRange, machines, shiftSlots }: MachineParkProps) {
+export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssignments }: MachineParkProps) {
   const [rows, setRows]           = useState<MachineShiftRow[]>([]);
   const [loading, setLoading]     = useState(true);
   const [error, setError]         = useState<string | null>(null);
@@ -69,7 +70,10 @@ export default function MachinePark({ dateRange, machines, shiftSlots }: Machine
 
   useEffect(() => { load(); }, [load]);
 
-  const slotName = (label: string) => shiftLabelToName(label, shiftSlots);
+  // Per-day team name lookup: uses the actual team assigned to that slot on that date.
+  // Falls back to generic slot name when no assignment exists for that day.
+  const slotName = (label: string, workDay?: string) =>
+    teamNameForShift(workDay ?? "", label, shiftAssignments, shiftSlots);
 
   // ── Machine code → display name (user-set name, fallback to UID) ──
   const machineNameMap = new Map<string, string>();
@@ -136,12 +140,12 @@ export default function MachinePark({ dateRange, machines, shiftSlots }: Machine
     if (best) {
       let dl = best.work_day;
       try { dl = format(parseISO(best.work_day), "dd.MM.yy"); } catch { /* noop */ }
-      bestLabel = `${dl} ${slotName(best.shift_label)}`;
+      bestLabel = `${dl} ${slotName(best.shift_label, best.work_day)}`;
     }
     if (worst) {
       let dl = worst.work_day;
       try { dl = format(parseISO(worst.work_day), "dd.MM.yy"); } catch { /* noop */ }
-      worstLabel = `${dl} ${slotName(worst.shift_label)}`;
+      worstLabel = `${dl} ${slotName(worst.shift_label, worst.work_day)}`;
     }
 
     const avgRunHours = machRows.length > 0
@@ -213,7 +217,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots }: Machine
             </span>
           </div>
         </div>
-        <p className="text-xs text-gray-500 mb-3">Each column = one work day. Two cells per machine per day: {slotName("A")} (top), {slotName("B")} (bottom).</p>
+        <p className="text-xs text-gray-500 mb-3">Each column = one work day. Two cells per machine per day: day shift (top), night shift (bottom). Hover a cell to see the assigned team.</p>
         <div className="overflow-x-auto">
           <div style={{ minWidth: last60Days.length * 22 + 80 }}>
             {/* Date labels row */}
@@ -265,7 +269,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots }: Machine
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${displayName(code)} ${dateLabel} ${slotName("A")}: ${buA !== null ? buA.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} ${slotName("A", day)}: ${buA !== null ? buA.toFixed(1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}
@@ -281,7 +285,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots }: Machine
                               visible: true,
                               x: e.clientX,
                               y: e.clientY,
-                              content: `${displayName(code)} ${dateLabel} ${slotName("B")}: ${buB !== null ? buB.toFixed(1) + " BU" : "No data"}`,
+                              content: `${displayName(code)} ${dateLabel} ${slotName("B", day)}: ${buB !== null ? buB.toFixed(1) + " BU" : "No data"}`,
                             });
                           }}
                           onMouseLeave={() => setTooltip(t => ({ ...t, visible: false }))}

@@ -5,9 +5,9 @@ import { format, parseISO } from "date-fns";
 import {
   fetchMachineShiftSummary,
   fetchProductionCells,
-  shiftLabelToName,
+  teamNameForShift,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell, TimeSlot } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -135,15 +135,19 @@ function GradientSwatch({ fn, label }: { fn: (t: number) => string; label: strin
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface MachineAnalyticsProps {
-  dateRange:  DateRange;
-  machines:   RegisteredMachine[];
-  shiftSlots: TimeSlot[];
+  dateRange:        DateRange;
+  machines:         RegisteredMachine[];
+  shiftSlots:       TimeSlot[];
+  shiftAssignments: Record<string, ShiftAssignment>;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function MachineAnalytics({ dateRange, machines, shiftSlots }: MachineAnalyticsProps) {
-  const slotName = (label: string) => shiftLabelToName(label, shiftSlots);
+export default function MachineAnalytics({ dateRange, machines, shiftSlots, shiftAssignments }: MachineAnalyticsProps) {
+  // Returns the team name assigned to a specific work-day and slot.
+  // Falls back to the configured slot name when no assignment exists.
+  const slotName = (workDay: string, label: string) =>
+    teamNameForShift(workDay, label, shiftAssignments, shiftSlots);
   const [rows,       setRows]       = useState<MachineShiftRow[]>([]);
   const [cells,      setCells]      = useState<ProductionCell[]>([]);
   const [loading,    setLoading]    = useState(true);
@@ -474,7 +478,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots }: Ma
                       {dateLabel}
                     </td>
                     <td className="px-2 py-1.5 text-xs text-center font-medium text-gray-300 bg-gray-900/30 sticky left-[72px] z-10 border-r border-gray-700">
-                      {slotName(shift_label)}
+                      {slotName(work_day, shift_label)}
                     </td>
                     {filteredCodes.map(code => {
                       const { display, className, style } = cellValue(code, work_day, shift_label);
