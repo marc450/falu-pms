@@ -103,7 +103,7 @@ function getSubscribeTopic() {
 async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
-    .select("id, machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since, active_error_codes")
+    .select("id, machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since, idle_time_calc, error_time_calc, active_error_codes")
     .eq("hidden", false)
     .order("machine_code");
 
@@ -132,6 +132,9 @@ async function loadRegisteredMachines() {
         lastSync: row.last_sync_status || row.last_sync_shift || null,
         // Restore the actual transition time so the status badge shows correctly.
         statusSince: row.status_since || new Date().toISOString(),
+        // Restore idle/error time so the REST API exposes them before the first MQTT tick.
+        idleTimeCalc:  row.idle_time_calc  || 0,
+        errorTimeCalc: row.error_time_calc || 0,
         // Restore active error codes so the dashboard continues showing them after restart.
         activeErrors: Array.isArray(row.active_error_codes) ? row.active_error_codes : [],
       };
@@ -270,6 +273,11 @@ async function handleShiftMessage(payload) {
     // Persist active error codes so they survive a bridge restart.
     active_error_codes: m.activeErrors || [],
   };
+
+  // Mirror the derived minute values onto the in-memory object so the REST
+  // API (/api/machines) exposes them and the dashboard can read them directly.
+  m.idleTimeCalc  = Math.round((data.IdleTime  || 0) / 60);
+  m.errorTimeCalc = Math.round((data.ErrorTime || 0) / 60);
   await supabase
     .from("machines")
     .update(updatePayload)
