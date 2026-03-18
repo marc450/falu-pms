@@ -154,7 +154,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
   const [error,      setError]      = useState<string | null>(null);
   const [metric,     setMetric]     = useState<Metric>("bu");
   const [cellFilter, setCellFilter] = useState<string | null>(null);  // null = All
-  const [normalized, setNormalized] = useState(true);
+  const [normalized, setNormalized] = useState(false);
   const [colorMode,  setColorMode]  = useState<ColorMode>("simple");
 
   const load = useCallback(async () => {
@@ -367,37 +367,59 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
           ))}
         </div>
 
-        {/* BU normalisation toggle */}
+        {/* BU normalisation switch */}
         {metric === "bu" && (
-          <button
-            onClick={() => setNormalized(v => !v)}
-            className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
-              normalized
-                ? "bg-blue-900/40 border-blue-600/60 text-blue-300"
-                : "bg-gray-800 border-gray-600 text-gray-400 hover:text-white hover:border-gray-500"
-            }`}
-            title={normalized
-              ? "Showing BU extrapolated to a full 12 h shift"
-              : "Showing actual BU produced during the shift"}
-          >
-            <i className="bi bi-toggles text-xs" />
-            {normalized ? "Normalized @ 12 h" : "Actual BU"}
-          </button>
+          <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1">
+            <button
+              onClick={() => setNormalized(false)}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                !normalized
+                  ? "bg-gray-600 text-white"
+                  : "text-gray-400 hover:text-white hover:bg-gray-700"
+              }`}
+              title="Actual BU produced during the shift"
+            >
+              Actual
+            </button>
+            <button
+              onClick={() => setNormalized(true)}
+              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                normalized
+                  ? "bg-gray-600 text-white"
+                  : "text-gray-400 hover:text-white hover:bg-gray-700"
+              }`}
+              title="BU extrapolated to a full 12 h shift"
+            >
+              Normalized
+            </button>
+          </div>
         )}
 
-        {/* Color mode toggle */}
-        <button
-          onClick={() => setColorMode(m => m === "simple" ? "gradient" : "simple")}
-          className={`flex items-center gap-1.5 px-3 py-1 rounded-md text-xs font-medium border transition-colors ${
-            colorMode === "gradient"
-              ? "bg-purple-900/40 border-purple-600/60 text-purple-300"
-              : "bg-gray-800 border-gray-600 text-gray-400 hover:text-white hover:border-gray-500"
-          }`}
-          title={colorMode === "gradient" ? "Switch to simple 3-color coding" : "Switch to continuous gradient for trend visibility"}
-        >
-          <i className="bi bi-palette text-xs" />
-          {colorMode === "gradient" ? "Gradient" : "Simple"}
-        </button>
+        {/* Color mode switch */}
+        <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1">
+          <button
+            onClick={() => setColorMode("simple")}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              colorMode === "simple"
+                ? "bg-gray-600 text-white"
+                : "text-gray-400 hover:text-white hover:bg-gray-700"
+            }`}
+            title="3-color zone coding"
+          >
+            Simple
+          </button>
+          <button
+            onClick={() => setColorMode("gradient")}
+            className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+              colorMode === "gradient"
+                ? "bg-gray-600 text-white"
+                : "text-gray-400 hover:text-white hover:bg-gray-700"
+            }`}
+            title="Continuous gradient for trend visibility"
+          >
+            Gradient
+          </button>
+        </div>
 
         {/* Legend */}
         {metric !== "hours" && (
