@@ -9,7 +9,7 @@ import {
 import {
   format, parseISO,
   subHours, subDays, subMonths,
-  startOfMonth, startOfQuarter, startOfYear,
+  startOfDay, startOfMonth, startOfQuarter, startOfYear,
 } from "date-fns";
 import {
   fetchFleetTrend, fetchRegisteredMachines, fetchThresholds,
@@ -49,15 +49,18 @@ interface Preset {
 const mkNow = () => new Date();
 
 const PRESETS: Preset[] = [
-  { id: "24h", label: "Last 24 hours",   getRange: () => ({ start: subHours(mkNow(), 24),    end: mkNow() }) },
-  { id: "7d",  label: "Last 7 days",     getRange: () => ({ start: subDays(mkNow(), 7),       end: mkNow() }) },
-  { id: "4w",  label: "Last 4 weeks",    getRange: () => ({ start: subDays(mkNow(), 28),      end: mkNow() }) },
-  { id: "6m",  label: "Last 6 months",   getRange: () => ({ start: subMonths(mkNow(), 6),     end: mkNow() }) },
-  { id: "12m", label: "Last 12 months",  getRange: () => ({ start: subMonths(mkNow(), 12),    end: mkNow() }) },
-  { id: "mtd", label: "Month to date",   getRange: () => ({ start: startOfMonth(mkNow()),     end: mkNow() }) },
-  { id: "qtd", label: "Quarter to date", getRange: () => ({ start: startOfQuarter(mkNow()),   end: mkNow() }) },
-  { id: "ytd", label: "Year to date",    getRange: () => ({ start: startOfYear(mkNow()),      end: mkNow() }) },
-  { id: "all", label: "All time",        getRange: () => ({ start: new Date(2020, 0, 1),       end: mkNow() }) },
+  // "Last 24 hours" stays time-based (hourly chart — partial hours are expected).
+  // All multi-day presets snap the start to midnight so the first bar always
+  // represents a full calendar day and is never penalised for being partial.
+  { id: "24h", label: "Last 24 hours",   getRange: () => ({ start: subHours(mkNow(), 24),              end: mkNow() }) },
+  { id: "7d",  label: "Last 7 days",     getRange: () => ({ start: startOfDay(subDays(mkNow(), 7)),    end: mkNow() }) },
+  { id: "4w",  label: "Last 4 weeks",    getRange: () => ({ start: startOfDay(subDays(mkNow(), 28)),   end: mkNow() }) },
+  { id: "6m",  label: "Last 6 months",   getRange: () => ({ start: startOfDay(subMonths(mkNow(), 6)),  end: mkNow() }) },
+  { id: "12m", label: "Last 12 months",  getRange: () => ({ start: startOfDay(subMonths(mkNow(), 12)), end: mkNow() }) },
+  { id: "mtd", label: "Month to date",   getRange: () => ({ start: startOfMonth(mkNow()),              end: mkNow() }) },
+  { id: "qtd", label: "Quarter to date", getRange: () => ({ start: startOfQuarter(mkNow()),            end: mkNow() }) },
+  { id: "ytd", label: "Year to date",    getRange: () => ({ start: startOfYear(mkNow()),               end: mkNow() }) },
+  { id: "all", label: "All time",        getRange: () => ({ start: new Date(2020, 0, 1),                end: mkNow() }) },
 ];
 
 const DEFAULT_PRESET_ID: PresetId = "24h";

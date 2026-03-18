@@ -121,7 +121,7 @@ BEGIN
     RAISE NOTICE 'No active machines — skipping.'; RETURN;
   END IF;
 
-  FOR d IN SELECT generate_series('2025-09-17'::date, '2026-03-16'::date, '1 day') LOOP
+  FOR d IN SELECT generate_series((CURRENT_DATE - INTERVAL '6 months')::date, (CURRENT_DATE - INTERVAL '1 day')::date, '1 day') LOOP
     dow := EXTRACT(dow FROM d)::int;
 
     day_factor := 1.0
