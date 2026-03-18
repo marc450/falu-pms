@@ -381,7 +381,7 @@ function CellSection({
   const sortedMachines = sortCellMachines(machines, sortCol, sortAsc, shiftLengthMinutes, shiftStartedAt, plannedDowntimeMins);
 
   // Compute cell-level stats
-  let running = 0, effSum = 0, effCount = 0;
+  let running = 0, nonOfflineCount = 0, effSum = 0, effCount = 0;
   let cellTotalBUs = 0, cellTotalIdleTime = 0, cellTotalErrorTime = 0;
   let totalDiscarded = 0, totalProduced = 0;
   let speedSum = 0, speedCount = 0, speedTargetSum = 0, speedTargetCount = 0;
@@ -403,6 +403,7 @@ function CellSection({
     const mActShift = m.machineStatus?.ActShift ?? 1;
     const mShiftData = mActShift === 2 ? m.shift2 : mActShift === 3 ? m.shift3 : m.shift1;
     if (!isOffline) {
+      nonOfflineCount++;
       cellTotalBUs += (mShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
       const mTimes = calcIdleErrorTime(m, Date.now());
       cellTotalIdleTime  += mTimes.idleMins;
@@ -544,13 +545,13 @@ function CellSection({
                   </div>
                 ) : null}
               </td>
-              {/* Speed col → avg speed with color if targets configured */}
+              {/* Speed col → avg speed of running machines, 0 when idle, hidden only when all offline */}
               <td className="px-4 py-3 whitespace-nowrap">
-                {avgSpeed !== null && (
+                {nonOfflineCount > 0 && (
                   <div className="flex flex-col gap-0.5">
                     {!open && <span className="text-[10px] text-gray-500">{colDefs[6].label}</span>}
                     <span className={`text-sm font-semibold ${spCc.text}`}>
-                      {Math.round(avgSpeed).toLocaleString()}{" "}
+                      {Math.round(avgSpeed ?? 0).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-60">pcs/min</span>
                     </span>
                   </div>
