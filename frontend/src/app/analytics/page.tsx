@@ -636,7 +636,7 @@ export default function Analytics() {
                 : "text-gray-400 hover:text-white hover:bg-gray-700"
             }`}
           >
-            {t === "fleet" ? "Fleet Trend" : t === "machines" ? "Machine Analytics" : t === "shifts" ? "Shift Analytics" : "Machine Park"}
+            {t === "fleet" ? "Production Trend" : t === "machines" ? "Machine Performance" : t === "shifts" ? "Shift Comparison" : "Park History"}
           </button>
         ))}
       </div>
