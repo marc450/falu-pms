@@ -64,7 +64,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <div className="flex items-center gap-2.5">
             <UscLogo className="w-9 h-9 shrink-0" />
             <div>
-              <h1 className="text-sm font-bold text-white leading-tight">U.S. COTTON Cleveland</h1>
+              <h1 className="text-sm font-bold text-white leading-tight">U.S. COTTON</h1>
               <p className="text-xs text-gray-500 mt-1.5">Production Monitoring</p>
             </div>
           </div>
