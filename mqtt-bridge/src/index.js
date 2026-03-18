@@ -129,10 +129,6 @@ async function loadRegisteredMachines() {
     machineIdCache[code] = row.id;
 
     if (!allMachines[code]) {
-      // idle_time_calc / error_time_calc in the DB are RUNNING TOTALS that
-      // already include the current ongoing stint (folded in every 5 s).
-      // Reset statusSince to now so the frontend's "current stint" starts
-      // fresh and doesn't double-count the time already in idleTimeCalc.
       allMachines[code] = {
         machine: code,
         machineStatus: {
@@ -146,9 +142,14 @@ async function loadRegisteredMachines() {
           Reject: row.current_reject || 0,
         },
         lastSync: row.last_sync_status || row.last_sync_shift || null,
-        statusSince: new Date().toISOString(), // reset — prev stint is in idleTimeCalc
-        idleTimeCalc: row.idle_time_calc || 0,
+        // Restore the actual transition time so the status badge shows correctly.
+        statusSince: row.status_since || new Date().toISOString(),
+        // Restore persisted running totals — the bridge accumulates directly
+        // on every tick so no extra "current stint" math is needed on restart.
+        idleTimeCalc:  row.idle_time_calc  || 0,
         errorTimeCalc: row.error_time_calc || 0,
+        // Tick clock: used to measure elapsed time each MQTT message.
+        lastTickTime: Date.now(),
       };
     }
   }
@@ -208,7 +209,7 @@ async function handleShiftMessage(payload) {
 
   // ── Update in-memory state ──
   if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode, idleTimeCalc: 0, errorTimeCalc: 0 };
+    allMachines[machineCode] = { machine: machineCode, idleTimeCalc: 0, errorTimeCalc: 0, lastTickTime: Date.now() };
   }
   const m = allMachines[machineCode];
 
@@ -219,6 +220,7 @@ async function handleShiftMessage(payload) {
     logger.info(`Machine ${machineCode} shift ${prevShift}→${incomingShift} — resetting idle/error accumulators`);
     m.idleTimeCalc  = 0;
     m.errorTimeCalc = 0;
+    m.lastTickTime  = Date.now();
     // Persist reset to DB so a restart doesn't restore stale values
     const machineIdForReset = machineIdCache[machineCode];
     if (machineIdForReset) {
@@ -232,25 +234,29 @@ async function handleShiftMessage(payload) {
     logger.info(`Global shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
   }
 
-  // ── Status transition detection for statusSince timer ──
+  // ── Status transition detection — update statusSince for the badge timer ──
   const prevStatus = (m.machineStatus?.Status || "").toLowerCase();
   const nextStatus = (data.Status || "offline").toLowerCase();
   if (prevStatus !== nextStatus) {
-    // Accumulate time spent in the previous status into idle/error buckets
-    if (m.statusSince && (prevStatus === "idle" || prevStatus === "error")) {
-      const durationMins = (Date.now() - new Date(m.statusSince).getTime()) / 60000;
-      if (durationMins > 0) {
-        if (prevStatus === "idle")  m.idleTimeCalc  = (m.idleTimeCalc  || 0) + durationMins;
-        if (prevStatus === "error") m.errorTimeCalc = (m.errorTimeCalc || 0) + durationMins;
-        logger.debug(`Accumulated ${durationMins.toFixed(1)} min of ${prevStatus} for ${machineCode} (idle=${(m.idleTimeCalc||0).toFixed(1)}, error=${(m.errorTimeCalc||0).toFixed(1)})`);
-      }
-    }
     m.statusSince = new Date().toISOString();
     logger.info(`Status change for ${machineCode}: ${prevStatus || "(none)"}→${nextStatus} at ${m.statusSince}`);
   }
   if (!m.statusSince) {
     m.statusSince = new Date().toISOString();
   }
+
+  // ── Per-tick idle/error accumulation ──────────────────────────────────────
+  // Accumulate directly on every MQTT tick (every 5 s) rather than relying on
+  // status transitions.  This means:
+  //   • idle_time_calc in the DB is always a complete running total
+  //   • A Railway restart loses at most one tick interval (~5 s)
+  //   • Accumulators are reset ONLY when the PLC reports a shift change above
+  // Cap the tick at 8 s so a restart gap doesn't spike the counter.
+  const nowMs = Date.now();
+  const tickMs = m.lastTickTime ? Math.min(nowMs - m.lastTickTime, 8000) : 0;
+  m.lastTickTime = nowMs;
+  if (nextStatus === "idle")  m.idleTimeCalc  = (m.idleTimeCalc  || 0) + tickMs / 60000;
+  if (nextStatus === "error") m.errorTimeCalc = (m.errorTimeCalc || 0) + tickMs / 60000;
 
   // Store as machineStatus, adding backward-compatible aliases so the frontend
   // keeps working with both old (Status-only) and new (combined) payloads.
@@ -275,17 +281,6 @@ async function handleShiftMessage(payload) {
   // Always update the machines table (status, speed, live counters)
   const now = new Date().toISOString();
 
-  // Include the CURRENT ongoing stint in the persisted totals so a Railway
-  // restart never loses more than ~5 s of accumulated idle/error time.
-  // m.idleTimeCalc only grows on status transitions; folding the live stint
-  // into the DB value here makes idle_time_calc a true running total that the
-  // bridge restores directly on the next startup.
-  const currentStintMs = m.statusSince
-    ? Math.max(0, Date.now() - new Date(m.statusSince).getTime())
-    : 0;
-  const extraIdleMins  = nextStatus === "idle"  ? currentStintMs / 60000 : 0;
-  const extraErrorMins = nextStatus === "error" ? currentStintMs / 60000 : 0;
-
   const updatePayload = {
     status: nextStatus,
     error_message: null, // errors now come via cloud/Error
@@ -297,12 +292,11 @@ async function handleShiftMessage(payload) {
     current_reject: data.Reject || 0,
     last_sync_status: now,
     hidden: false,
-    // Always persist so values survive Railway restarts (written every 5 s).
-    // idle/error totals include the current ongoing stint so the DB is always
-    // a complete snapshot; status_since records when this status started.
+    // Running totals — accumulated per tick above, saved every 5 s.
+    // Reset only on PLC shift change.  Survives Railway restarts intact.
     status_since:    m.statusSince || now,
-    idle_time_calc:  Math.round((m.idleTimeCalc  || 0) + extraIdleMins),
-    error_time_calc: Math.round((m.errorTimeCalc || 0) + extraErrorMins),
+    idle_time_calc:  Math.round(m.idleTimeCalc  || 0),
+    error_time_calc: Math.round(m.errorTimeCalc || 0),
   };
   await supabase
     .from("machines")

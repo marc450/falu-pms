@@ -117,15 +117,15 @@ function calcCorrectedEfficiency(m: DashboardMachine, plannedDowntimeMinutes: nu
   return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : null;
 }
 
-// Calculate total idle and error time for a machine.
-// The bridge accumulates completed stints; the frontend adds the current
-// ongoing stint so the display updates live without waiting for a transition.
-function calcIdleErrorTime(m: DashboardMachine, now: number): { idleMins: number; errorMins: number } {
-  const status = (m.machineStatus?.Status || "").toLowerCase();
-  const currentStintMins = m.statusSince ? Math.max(0, (now - m.statusSince) / 60000) : 0;
-  const idleMins  = (m.idleTimeCalc  ?? 0) + (status === "idle"  ? currentStintMins : 0);
-  const errorMins = (m.errorTimeCalc ?? 0) + (status === "error" ? currentStintMins : 0);
-  return { idleMins, errorMins };
+// The bridge accumulates idle/error time on every MQTT tick (every 5 s) and
+// saves the running totals directly to machines.idle_time_calc /
+// error_time_calc.  They are reset only when the PLC reports a shift change.
+// The frontend just reads the stored values — no need to add a current stint.
+function calcIdleErrorTime(m: DashboardMachine, _now: number): { idleMins: number; errorMins: number } {
+  return {
+    idleMins:  m.idleTimeCalc  ?? 0,
+    errorMins: m.errorTimeCalc ?? 0,
+  };
 }
 
 function offlinePlaceholder(row: RegisteredMachine): MachineData {
