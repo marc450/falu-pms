@@ -310,7 +310,7 @@ async function handleShiftMessage(payload) {
                   (data.ProducedBoxes || 0) > 0;
 
   if (hasData) {
-    await supabase.from("shift_readings").insert({
+    const { error: insertError } = await supabase.from("shift_readings").insert({
       machine_id: machineId,
       machine_code: machineCode,
       shift_number: data.Shift,
@@ -333,6 +333,9 @@ async function handleShiftMessage(payload) {
       save_flag:                 data.Save                    || false,
       raw_payload: data,
     });
+    if (insertError) {
+      logger.error(`shift_readings insert failed for ${machineCode} (Shift ${data.Shift}): ${insertError.message} | code: ${insertError.code}`);
+    }
 
     await supabase
       .from("machines")
