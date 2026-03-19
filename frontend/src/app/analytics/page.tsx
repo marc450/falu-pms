@@ -516,12 +516,8 @@ export default function Analytics() {
   // shiftsPerDay = 24 / shiftHours (e.g. 2 for 12h shifts).
   const shiftsPerDay = Math.max(1, Math.round(24 / shiftHours));
 
-  // Cap per-bucket BU output at a realistic hourly maximum to prevent shift
-  // boundary resets from producing huge artificial spikes in the chart.
-  const BU_HOURLY_CAP = granularity === "hour" ? 220 : Infinity;
-
   const buRows = rows.map(r => {
-    const totalBU = Math.min(Math.round((r.totalSwabs / 7200) * 10) / 10, BU_HOURLY_CAP);
+    const totalBU = Math.round((r.totalSwabs / 7200) * 10) / 10;
     // For coloring each bar: compare daily total against daily target.
     // For hourly buckets: compare hourly output against hourly target rate.
     const dayTarget = buTargetPerShift !== null
