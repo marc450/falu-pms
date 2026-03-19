@@ -12,7 +12,7 @@ import {
   startOfDay, startOfMonth, startOfQuarter, startOfYear,
 } from "date-fns";
 import {
-  fetchFleetTrend, fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
+  fetchFleetTrend, fetchHourlyAnalytics, fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments,
   applyEfficiencyColor, applyScrapColor,
   DEFAULT_THRESHOLDS,
@@ -445,7 +445,11 @@ export default function Analytics() {
       }
 
       const [result, machines, savedThresholds, shiftCfg, assignmentRows] = await Promise.all([
-        cachedResult ? Promise.resolve(cachedResult) : fetchFleetTrend(effectiveRange),
+        cachedResult
+          ? Promise.resolve(cachedResult)
+          : activePresetId === "24h"
+            ? fetchHourlyAnalytics(effectiveRange)
+            : fetchFleetTrend(effectiveRange),
         fetchRegisteredMachines(),
         fetchThresholds(),
         fetchShiftConfig(),

@@ -332,6 +332,7 @@ async function handleShiftMessage(payload) {
       reject_rate:               data.Reject                  || 0,
       save_flag:                 data.Save                    || false,
       raw_payload: data,
+      plc_timestamp: data.Timestamp ? new Date(data.Timestamp).toISOString() : null,
     });
     if (insertError) {
       logger.error(`shift_readings insert failed for ${machineCode} (Shift ${data.Shift}): ${insertError.message} | code: ${insertError.code}`);

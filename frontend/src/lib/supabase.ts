@@ -493,6 +493,109 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
 }
 
 // ============================================
+// HOURLY ANALYTICS (pre-aggregated 24h view)
+// ============================================
+
+interface HourlyAnalyticsRow {
+  plc_hour:                string;
+  machine_id:              string;
+  shift_number:            number;
+  swabs_produced:          number;
+  boxes_produced:          number;
+  production_time_seconds: number;
+  idle_time_seconds:       number;
+  error_time_seconds:      number;
+  discarded_swabs:         number;
+  reading_count:           number;
+  avg_efficiency:          number;
+  avg_scrap_rate:          number;
+}
+
+export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrendResult> {
+  const sb = getSupabase();
+
+  const { data, error } = await sb
+    .from("hourly_analytics")
+    .select(
+      "plc_hour, machine_id, shift_number, swabs_produced, boxes_produced, " +
+      "production_time_seconds, idle_time_seconds, error_time_seconds, " +
+      "discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate"
+    )
+    .gte("plc_hour", range.start.toISOString())
+    .lt("plc_hour",  range.end.toISOString())
+    .order("plc_hour");
+
+  if (error) throw new Error(error.message);
+  if (!data || (data as HourlyAnalyticsRow[]).length === 0) {
+    return { rows: [], granularity: "hour", totalReadings: 0 };
+  }
+
+  // Group by plc_hour bucket — aggregate across all machines and shifts
+  type BucketAcc = {
+    totalSwabs:   number;
+    totalBoxes:   number;
+    machineIds:   Set<string>;
+    shiftNumbers: Set<number>;
+    readingCount: number;
+    effSum:       number;   // weighted sum of avg_efficiency by reading_count
+    scrapSum:     number;   // weighted sum of avg_scrap_rate by reading_count
+    weightTotal:  number;   // total weight for the above sums
+  };
+
+  const bucketMap = new Map<string, BucketAcc>();
+
+  for (const row of data as HourlyAnalyticsRow[]) {
+    // Bucket key: "YYYY-MM-DDTHH" — matches fmtBucket used by the chart
+    const bucketKey = row.plc_hour.slice(0, 13);
+
+    if (!bucketMap.has(bucketKey)) {
+      bucketMap.set(bucketKey, {
+        totalSwabs:   0,
+        totalBoxes:   0,
+        machineIds:   new Set(),
+        shiftNumbers: new Set(),
+        readingCount: 0,
+        effSum:       0,
+        scrapSum:     0,
+        weightTotal:  0,
+      });
+    }
+
+    const b = bucketMap.get(bucketKey)!;
+    b.totalSwabs   += Number(row.swabs_produced)  || 0;
+    b.totalBoxes   += Number(row.boxes_produced)  || 0;
+    b.readingCount += Number(row.reading_count)   || 0;
+    b.machineIds.add(row.machine_id);
+    b.shiftNumbers.add(row.shift_number);
+
+    const w   = Number(row.reading_count)  || 1;
+    const eff = Number(row.avg_efficiency) || 0;
+    const sc  = Number(row.avg_scrap_rate) || 0;
+    if (eff > 0) {
+      b.effSum      += eff * w;
+      b.weightTotal += w;
+    }
+    b.scrapSum += sc * w;
+  }
+
+  const rows: FleetTrendRow[] = Array.from(bucketMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([bucket, b]) => ({
+      date:         bucket,
+      avgUptime:    b.weightTotal > 0 ? Math.round((b.effSum   / b.weightTotal) * 10) / 10 : 0,
+      avgScrap:     b.weightTotal > 0 ? Math.round((b.scrapSum / b.weightTotal) * 10) / 10 : 0,
+      totalBoxes:   b.totalBoxes,
+      totalSwabs:   b.totalSwabs,
+      machineCount: b.machineIds.size,
+      readingCount: b.readingCount,
+      shiftCount:   b.shiftNumbers.size,
+    }));
+
+  const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
+  return { rows, granularity: "hour", totalReadings };
+}
+
+// ============================================
 // BRIDGE API CLIENT
 // ============================================
 
