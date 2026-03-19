@@ -224,7 +224,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
           <div style={{ minWidth: last60Days.length * 22 + 80 }}>
             {/* Date labels row */}
             <div className="flex mb-1">
-              <div style={{ width: 76, minWidth: 76 }}></div>
+              <div style={{ width: 76, minWidth: 76 }} className="sticky left-0 z-10 bg-gray-900 shrink-0"></div>
               {last60Days.map((day, i) => {
                 let label = "";
                 try {
@@ -252,7 +252,7 @@ export default function MachinePark({ dateRange, machines, shiftSlots, shiftAssi
               const tgt = machineTargets.get(code) ?? { bu_target: BU_TARGET_DEFAULT, bu_mediocre: BU_MEDIOCRE_DEFAULT };
               return (
                 <div key={code} className="flex items-start mb-0.5">
-                  <div style={{ width: 76, minWidth: 76 }} className="text-xs text-gray-400 pr-2 flex items-center h-9 shrink-0" title={code}>
+                  <div style={{ width: 76, minWidth: 76 }} className="text-xs text-gray-400 pr-2 flex items-center h-9 shrink-0 sticky left-0 z-10 bg-gray-900" title={code}>
                     {displayName(code)}
                   </div>
                   {last60Days.map(day => {
