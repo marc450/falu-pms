@@ -412,7 +412,7 @@ export default function Analytics() {
   const [shiftSlots, setShiftSlots]             = useState<TimeSlot[]>([]);
   const [shiftAssignments, setShiftAssignments] = useState<Record<string, ShiftAssignment>>({});
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (bustCache = false) => {
     setLoading(true);
     setError(null);
     // For presets, always recompute the range so `end` = now() at call time.
@@ -426,13 +426,37 @@ export default function Analytics() {
       const rangeFrom = effectiveRange.start.toISOString().slice(0, 10);
       const rangeTo   = effectiveRange.end.toISOString().slice(0, 10);
 
+      // ── SessionStorage cache (2-minute TTL) ──────────────────────────────
+      // get_fleet_trend is expensive (~3-8s). Cache the full payload so that
+      // navigating away and back within two minutes skips the DB round-trip.
+      const CACHE_TTL_MS = 2 * 60 * 1000;
+      const cacheKey = `fleet_trend_${activePresetId}_${rangeFrom}_${rangeTo}`;
+
+      let cachedResult: Awaited<ReturnType<typeof fetchFleetTrend>> | null = null;
+      if (!bustCache) {
+        try {
+          const raw = sessionStorage.getItem(cacheKey);
+          if (raw) {
+            const { ts, payload } = JSON.parse(raw);
+            if (Date.now() - ts < CACHE_TTL_MS) cachedResult = payload;
+            else sessionStorage.removeItem(cacheKey);
+          }
+        } catch { /* sessionStorage unavailable — ignore */ }
+      }
+
       const [result, machines, savedThresholds, shiftCfg, assignmentRows] = await Promise.all([
-        fetchFleetTrend(effectiveRange),
+        cachedResult ? Promise.resolve(cachedResult) : fetchFleetTrend(effectiveRange),
         fetchRegisteredMachines(),
         fetchThresholds(),
         fetchShiftConfig(),
         fetchShiftAssignments(rangeFrom, rangeTo),
       ]);
+
+      if (!cachedResult) {
+        try {
+          sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), payload: result }));
+        } catch { /* quota exceeded or unavailable — ignore */ }
+      }
       setShiftSlots(shiftCfg.slots);
       // Build a lookup map keyed by shift_date for O(1) access in child components
       setShiftAssignments(Object.fromEntries(assignmentRows.map(a => [a.shift_date, a])));
@@ -483,7 +507,7 @@ export default function Analytics() {
 
   // Auto-refresh every 5 minutes so live production data stays current
   useEffect(() => {
-    const timer = setInterval(load, 5 * 60 * 1000);
+    const timer = setInterval(() => load(true), 5 * 60 * 1000);
     return () => clearInterval(timer);
   }, [load]);
 
@@ -628,7 +652,7 @@ export default function Analytics() {
               Updated {format(lastRefreshed, "HH:mm:ss")}
             </p>
             <button
-              onClick={load}
+              onClick={() => load(true)}
               disabled={loading}
               title="Refresh now"
               className="text-gray-600 hover:text-gray-300 disabled:opacity-40 transition-colors"
