@@ -526,7 +526,8 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
     .order("plc_hour");
 
   if (error) throw new Error(error.message);
-  if (!data || (data as HourlyAnalyticsRow[]).length === 0) {
+  const rows_raw = (data as unknown) as HourlyAnalyticsRow[];
+  if (!rows_raw || rows_raw.length === 0) {
     return { rows: [], granularity: "hour", totalReadings: 0 };
   }
 
@@ -544,7 +545,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
 
   const bucketMap = new Map<string, BucketAcc>();
 
-  for (const row of data as HourlyAnalyticsRow[]) {
+  for (const row of rows_raw) {
     // Bucket key: "YYYY-MM-DDTHH" — matches fmtBucket used by the chart
     const bucketKey = row.plc_hour.slice(0, 13);
 
