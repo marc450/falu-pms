@@ -224,6 +224,7 @@ hourly regardless of the factory timezone.
 | Stop simulator Railway service | Operational — stop before first real shift | Critical |
 | PLC HiveMQ credentials | Configure each Pi/PLC before factory start | Critical |
 | DB demo data cleanup | Truncate shift_readings, analytics_readings, saved_shift_logs, simulator_state | Critical |
+| Application monitoring | Build monitoring system to detect and alert on service failures (see section below) | Critical |
 | Machine naming + cell assignment | Settings UI after first real MQTT message | High |
 | Production targets and thresholds | Settings → Targets after naming | High |
 | `get_fleet_trend` — daily bucket | Replace `- interval '7 hours'` with `AT TIME ZONE 'America/New_York' - interval '7 hours'` | High — affects daily chart correctness |
@@ -231,6 +232,40 @@ hourly regardless of the factory timezone.
 | `downsample_to_analytics` — bucket alignment | Apply `AT TIME ZONE` to hour truncation | Low — minor alignment only |
 | MQTT bridge shift detection | No code change — verify PLC clock is in ET | Operational check |
 | pg_cron schedule | No change needed | None |
+
+---
+
+## Application Monitoring
+
+Before handing the system to the customer, a monitoring solution must be in place so that any failure in the data pipeline is detected and reported immediately rather than silently losing production data (as happened with the Railway redeploy incident on 2026-03-19).
+
+### What needs to be monitored
+
+| Component | Failure mode | Impact |
+|---|---|---|
+| Railway Bridge service | Crashes or is killed (SIGTERM on redeploy) | No data written to shift_readings |
+| Railway Simulator service | Crashes with unhandled error | No MQTT messages published |
+| HiveMQ MQTT broker | Connection dropped | Bridge receives no data |
+| Supabase | Insert failures (missing column, RLS, quota) | Silent data gap |
+| GitHub Pages / frontend | Failed deploy | Dashboard inaccessible |
+
+### Recommended approach
+
+**1. Uptime monitoring with alerting (e.g. Better Uptime, UptimeRobot, or Checkly)**
+- Monitor the Railway Bridge health endpoint: `GET /api/health`
+- Expected response: `{ "status": "ok", "mqttConnected": true }`
+- Alert via email or SMS if the endpoint is unreachable or returns `mqttConnected: false`
+- Check interval: every 1 minute
+
+**2. Data freshness check**
+- Set up a scheduled query (e.g. via Supabase pg_cron or an external cron) that checks whether a new `shift_readings` row has been inserted in the last 2 minutes during active shift hours
+- If no new row exists, fire an alert — this catches silent insert failures even when the bridge appears healthy
+
+**3. Railway deployment notifications**
+- Enable Railway deployment webhooks or email notifications so any crash or redeploy is immediately visible
+
+**4. Error log alerting**
+- Configure Railway log drain to forward `[ERROR]` lines to a notification channel (Slack, email, or PagerDuty) so errors like `shift_readings insert failed` are surfaced in real time rather than discovered after the fact
 
 ---
 
