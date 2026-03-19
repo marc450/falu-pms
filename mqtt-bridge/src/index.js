@@ -312,6 +312,7 @@ async function handleShiftMessage(payload) {
   if (hasData) {
     await supabase.from("shift_readings").insert({
       machine_id: machineId,
+      machine_code: machineCode,
       shift_number: data.Shift,
       status: (data.Status || "run").toLowerCase(),
       speed: data.Speed || 0,
