@@ -225,6 +225,7 @@ hourly regardless of the factory timezone.
 | PLC HiveMQ credentials | Configure each Pi/PLC before factory start | Critical |
 | DB demo data cleanup | Truncate shift_readings, analytics_readings, saved_shift_logs, simulator_state | Critical |
 | Application monitoring | Build monitoring system to detect and alert on service failures (see section below) | Critical |
+| Independent MQTT logger service | Deploy a separate Railway service that subscribes directly to HiveMQ and writes every raw message to `mqtt_raw_log` in Supabase — independent of the bridge so data is never lost during bridge failures (see section below) | Critical |
 | Machine naming + cell assignment | Settings UI after first real MQTT message | High |
 | Production targets and thresholds | Settings → Targets after naming | High |
 | `get_fleet_trend` — daily bucket | Replace `- interval '7 hours'` with `AT TIME ZONE 'America/New_York' - interval '7 hours'` | High — affects daily chart correctness |
@@ -266,6 +267,60 @@ Before handing the system to the customer, a monitoring solution must be in plac
 
 **4. Error log alerting**
 - Configure Railway log drain to forward `[ERROR]` lines to a notification channel (Slack, email, or PagerDuty) so errors like `shift_readings insert failed` are surfaced in real time rather than discovered after the fact
+
+---
+
+## Independent MQTT Logger Service
+
+The bridge is the only component that currently receives and persists MQTT data. If it crashes, restarts, or has a schema mismatch, production data is silently lost for the duration of the outage. An independent logger eliminates this single point of failure.
+
+### Architecture
+
+```
+Raspberry Pi / PLC
+      │
+      ▼
+   HiveMQ (cloud broker)
+      │
+      ├──► Bridge service (existing) ──► machines table + shift_readings
+      │
+      └──► Logger service (new)      ──► mqtt_raw_log table (raw backup)
+```
+
+The logger service has no knowledge of the bridge. It connects to HiveMQ independently and writes every message to `mqtt_raw_log`. If the bridge is down, the logger keeps running. Once the bridge is restored, any gap in `shift_readings` can be replayed from `mqtt_raw_log`.
+
+### What needs to be built
+
+**1. Supabase table `mqtt_raw_log`**
+```sql
+CREATE TABLE IF NOT EXISTS mqtt_raw_log (
+  id          bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  recorded_at timestamptz NOT NULL DEFAULT now(),
+  topic       text        NOT NULL,
+  payload     jsonb       NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS mqtt_raw_log_recorded_at_idx
+  ON mqtt_raw_log (recorded_at DESC);
+
+SELECT cron.schedule(
+  'purge-mqtt-raw-log',
+  '0 3 * * *',
+  $$DELETE FROM mqtt_raw_log WHERE recorded_at < now() - interval '7 days';$$
+);
+```
+
+**2. New Railway service `mqtt-logger/`**
+- Separate folder in the repo (`mqtt-logger/src/index.js`)
+- Connects to HiveMQ using the same credentials as the bridge
+- Subscribes to `cloud/#`
+- On every message: inserts `{ topic, payload, recorded_at }` into `mqtt_raw_log`
+- No shift detection, no machine state, no REST API — single responsibility
+- Deployed as a second Railway service pointing at the same repo
+
+**3. Replay script**
+- A one-off Node.js script (`mqtt-logger/scripts/replay.js`) that reads rows from `mqtt_raw_log` within a given time range and re-inserts them into `shift_readings` via the same logic as the bridge
+- Run manually after any bridge outage to fill gaps in `shift_readings`
 
 ---
 
