@@ -161,7 +161,7 @@ export interface MachineLiveData {
   error_message: string | null;
   active_shift: number | null;
   speed: number | null;
-  current_swabs: number | null;
+  current_swaps: number | null;   // DB column is current_swaps (legacy typo)
   current_boxes: number | null;
   current_efficiency: number | null;
   current_reject: number | null;
@@ -175,7 +175,7 @@ export async function fetchMachineLiveData(): Promise<MachineLiveData[]> {
     .from("machines")
     .select(
       "id, machine_code, status, error_message, active_shift, speed, " +
-      "current_swabs, current_boxes, current_efficiency, current_reject, " +
+      "current_swaps, current_boxes, current_efficiency, current_reject, " +
       "last_sync_status, last_sync_shift"
     )
     .eq("hidden", false)
