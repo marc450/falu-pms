@@ -1041,7 +1041,9 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
   for (const row of (data ?? []) as Record<string, unknown>[]) {
     const savedAt    = new Date(String(row.saved_at));
     const utcHour    = savedAt.getUTCHours();
-    const shiftLabel = utcHour >= 7 && utcHour < 19 ? "A" : "B";
+    // Night shift (A) ends at ~06:00 UTC → hour < 12.
+    // Day shift  (B) ends at ~18:00 UTC → hour >= 12.
+    const shiftLabel = utcHour < 12 ? "A" : "B";
     const workDay    = savedAt.toISOString().slice(0, 10); // 'YYYY-MM-DD' UTC
     const key        = `${workDay}|${shiftLabel}|${String(row.machine_id)}`;
 
