@@ -458,8 +458,8 @@ export interface DateRange {
 
 export interface FleetTrendRow {
   date: string;        // "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH" (hourly)
-  avgUptime: number;   // avg efficiency % across all machines in bucket
-  avgScrap: number;    // avg reject_rate % across all machines in bucket
+  avgUptime: number;   // avg efficiency % across all machines in bucket (0 for idle hours)
+  avgScrap: number;    // avg reject_rate % across all machines in bucket (0 for idle hours)
   totalBoxes: number;  // sum of per-(machine_id, shift_number) MAX produced_boxes
   totalSwabs: number;  // sum of per-(machine_id, shift_number) MAX produced_swabs
   machineCount: number;// unique machines with readings in bucket
@@ -627,6 +627,8 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
         shiftCount:   b.shiftNumbers.size,
       });
     } else {
+      // No machine data for this hour (factory idle / shift gap).
+      // Emit a zeroed row so every chart shows the same x-axis ticks.
       filledRows.push({
         date:         key,
         avgUptime:    0,

@@ -529,8 +529,15 @@ export default function Analytics() {
 
   // ── Summary KPIs ──
   const hasData    = rows.length > 0;
-  const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
-  const avgScrap   = hasData ? rows.reduce((s, d) => s + d.avgScrap,  0) / rows.length : null;
+  // Only average over hours/days that actually had machine readings.
+  // Zero-filled idle rows (readingCount === 0) must not dilute the averages.
+  const activeRows = rows.filter(d => d.readingCount > 0);
+  const avgUptime  = activeRows.length > 0
+    ? activeRows.reduce((s, d) => s + d.avgUptime, 0) / activeRows.length
+    : null;
+  const avgScrap   = activeRows.length > 0
+    ? activeRows.reduce((s, d) => s + d.avgScrap, 0) / activeRows.length
+    : null;
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
   const totalBUs   = Math.round(totalSwabs / 7200);
 
@@ -546,6 +553,8 @@ export default function Analytics() {
   // shiftsPerDay = 24 / shiftHours (e.g. 2 for 12h shifts).
   const shiftsPerDay = Math.max(1, Math.round(24 / shiftHours));
 
+  // Include ALL rows so the BU bar chart shows the same x-axis ticks as the
+  // uptime and scrap line charts (idle hours appear as zero-height bars).
   const buRows = rows.map(r => {
     const totalBU = Math.round((r.totalSwabs / 7200) * 10) / 10;
     // For coloring each bar: compare daily total against daily target.
