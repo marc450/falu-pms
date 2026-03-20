@@ -484,7 +484,7 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
   // Exclude today (incomplete day) by using lt(today).
   const { data, error } = await sb
     .from("daily_fleet_summary")
-    .select("summary_date, total_swabs, total_boxes, machine_count, shift_count, reading_count, avg_uptime, avg_scrap")
+    .select("summary_date, total_swabs, total_boxes, total_discarded_swabs, machine_count, shift_count, reading_count, avg_uptime")
     .gte("summary_date", fmtDate(range.start))
     .lt("summary_date",  fmtDate(new Date()))
     .order("summary_date");
@@ -494,16 +494,24 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
     return { rows: [], granularity: "day", totalReadings: 0 };
   }
 
-  const rows: FleetTrendRow[] = (data as Record<string, unknown>[]).map(r => ({
-    date:         String(r.summary_date),
-    avgUptime:    Number(r.avg_uptime)    || 0,
-    avgScrap:     Number(r.avg_scrap)     || 0,
-    totalBoxes:   Number(r.total_boxes)   || 0,
-    totalSwabs:   Number(r.total_swabs)   || 0,
-    machineCount: Number(r.machine_count) || 0,
-    readingCount: Number(r.reading_count) || 0,
-    shiftCount:   Number(r.shift_count)   || 1,
-  }));
+  const rows: FleetTrendRow[] = (data as Record<string, unknown>[]).map(r => {
+    const totalSwabs     = Number(r.total_swabs)           || 0;
+    const totalDiscarded = Number(r.total_discarded_swabs) || 0;
+    return {
+      date:         String(r.summary_date),
+      // avg_uptime already includes idle machines (fixed in migration 046)
+      avgUptime:    Number(r.avg_uptime)    || 0,
+      // Scrap: volume-weighted ratio — discarded swabs / produced swabs
+      avgScrap:     totalSwabs > 0
+        ? Math.round((totalDiscarded / totalSwabs) * 1000) / 10
+        : 0,
+      totalBoxes:   Number(r.total_boxes)   || 0,
+      totalSwabs,
+      machineCount: Number(r.machine_count) || 0,
+      readingCount: Number(r.reading_count) || 0,
+      shiftCount:   Number(r.shift_count)   || 1,
+    };
+  });
 
   const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
   return { rows, granularity: "day", totalReadings };
@@ -550,14 +558,14 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
 
   // Group by plc_hour bucket — aggregate across all machines and shifts
   type BucketAcc = {
-    totalSwabs:   number;
-    totalBoxes:   number;
-    machineIds:   Set<string>;
-    shiftNumbers: Set<number>;
-    readingCount: number;
-    effSum:       number;   // weighted sum of avg_efficiency by reading_count
-    scrapSum:     number;   // weighted sum of avg_scrap_rate by reading_count
-    weightTotal:  number;   // total weight for the above sums
+    totalSwabs:     number;
+    totalBoxes:     number;
+    totalDiscarded: number;  // for volume-weighted scrap: discarded / produced
+    machineIds:     Set<string>;
+    shiftNumbers:   Set<number>;
+    readingCount:   number;
+    effSum:         number;  // weighted sum of avg_efficiency by reading_count
+    weightTotal:    number;  // total reading_count weight (all machines, incl. idle)
   };
 
   const bucketMap = new Map<string, BucketAcc>();
@@ -568,40 +576,45 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
 
     if (!bucketMap.has(bucketKey)) {
       bucketMap.set(bucketKey, {
-        totalSwabs:   0,
-        totalBoxes:   0,
-        machineIds:   new Set(),
-        shiftNumbers: new Set(),
-        readingCount: 0,
-        effSum:       0,
-        scrapSum:     0,
-        weightTotal:  0,
+        totalSwabs:     0,
+        totalBoxes:     0,
+        totalDiscarded: 0,
+        machineIds:     new Set(),
+        shiftNumbers:   new Set(),
+        readingCount:   0,
+        effSum:         0,
+        weightTotal:    0,
       });
     }
 
     const b = bucketMap.get(bucketKey)!;
-    b.totalSwabs   += Number(row.swabs_produced)  || 0;
-    b.totalBoxes   += Number(row.boxes_produced)  || 0;
-    b.readingCount += Number(row.reading_count)   || 0;
+    b.totalSwabs     += Number(row.swabs_produced)  || 0;
+    b.totalBoxes     += Number(row.boxes_produced)  || 0;
+    b.totalDiscarded += Number(row.discarded_swabs) || 0;
+    b.readingCount   += Number(row.reading_count)   || 0;
     b.machineIds.add(row.machine_id);
     b.shiftNumbers.add(row.shift_number);
 
+    // Uptime: include ALL machines weighted by reading_count.
+    // Idle machines report efficiency = 0 and must count toward the average.
     const w   = Number(row.reading_count)  || 1;
     const eff = Number(row.avg_efficiency) || 0;
-    const sc  = Number(row.avg_scrap_rate) || 0;
-    if (eff > 0) {
-      b.effSum      += eff * w;
-      b.weightTotal += w;
-    }
-    b.scrapSum += sc * w;
+    b.effSum      += eff * w;
+    b.weightTotal += w;
   }
 
   const rows: FleetTrendRow[] = Array.from(bucketMap.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([bucket, b]) => ({
       date:         bucket,
-      avgUptime:    b.weightTotal > 0 ? Math.round((b.effSum   / b.weightTotal) * 10) / 10 : 0,
-      avgScrap:     b.weightTotal > 0 ? Math.round((b.scrapSum / b.weightTotal) * 10) / 10 : 0,
+      // Uptime: weighted avg across all machines (idle = 0%)
+      avgUptime:    b.weightTotal > 0
+        ? Math.round((b.effSum / b.weightTotal) * 10) / 10
+        : 0,
+      // Scrap: volume-weighted ratio — discarded swabs / produced swabs
+      avgScrap:     b.totalSwabs > 0
+        ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
+        : 0,
       totalBoxes:   b.totalBoxes,
       totalSwabs:   b.totalSwabs,
       machineCount: b.machineIds.size,
