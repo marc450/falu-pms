@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useMemo } from "react";
 import { format, parseISO } from "date-fns";
-import { fmtN, fmtH } from "@/lib/fmt";
+import { fmtN, fmtH, fmtPct } from "@/lib/fmt";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, ReferenceLine,
+  ResponsiveContainer, Cell, ReferenceLine, Legend,
 } from "recharts";
 import {
   fetchMachineShiftSummary,
@@ -32,8 +32,7 @@ const TICK_STYLE          = { fill: "#9ca3af", fontSize: 11 };
 const GRID_COLOR          = "#374151";
 const AXIS_COLOR          = "#4b5563";
 
-// Colors for first four slots/teams
-const SLOT_COLORS = ["#22d3ee", "#a78bfa", "#4ade80", "#fb923c"];
+const CREW_COLORS = ["#22d3ee", "#a78bfa", "#4ade80", "#fb923c", "#f472b6", "#facc15"];
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -44,21 +43,11 @@ interface ShiftAnalyticsProps {
   shiftAssignments: Record<string, ShiftAssignment>;
 }
 
-// ─── KPI tile ─────────────────────────────────────────────────────────────────
-
-function KpiTile({ label, value, sub, colorClass }: {
-  label: string; value: string; sub?: string; colorClass: string;
-}) {
-  return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-5 py-4 flex flex-col gap-1">
-      <div className="text-xs text-gray-400">{label}</div>
-      <div className={`text-2xl font-bold ${colorClass}`}>{value}</div>
-      {sub && <div className="text-xs text-gray-500">{sub}</div>}
-    </div>
-  );
-}
-
 // ─── Helpers ──────────────────────────────────────────────────────────────────
+
+interface AnnotatedRow extends MachineShiftRow {
+  crewName: string;
+}
 
 function avgBu(rows: MachineShiftRow[]): number | null {
   const valid = rows.filter(r => r.bu_normalized !== null && r.run_hours != null && r.run_hours > 0);
@@ -68,6 +57,19 @@ function avgBu(rows: MachineShiftRow[]): number | null {
   return valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours!), 0) / totalHours;
 }
 
+function avgField(rows: MachineShiftRow[], field: "run_hours" | "avg_efficiency" | "avg_scrap"): number | null {
+  const valid = rows.filter(r => r[field] != null && r[field]! > 0);
+  if (valid.length === 0) return null;
+  return valid.reduce((s, r) => s + r[field]!, 0) / valid.length;
+}
+
+function stdDev(values: number[]): number | null {
+  if (values.length < 2) return null;
+  const mean = values.reduce((s, v) => s + v, 0) / values.length;
+  const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1);
+  return Math.sqrt(variance);
+}
+
 function buColor(val: number | null): string {
   if (val === null) return "text-gray-500";
   if (val >= BU_TARGET_DEFAULT)   return "text-green-400";
@@ -75,17 +77,55 @@ function buColor(val: number | null): string {
   return "text-red-400";
 }
 
-function barColor(val: number): string {
-  if (val >= BU_TARGET_DEFAULT)   return "#4ade80";
-  if (val >= BU_MEDIOCRE_DEFAULT) return "#eab308";
-  return "#ef4444";
+// ─── Crew Scorecard ──────────────────────────────────────────────────────────
+
+interface CrewStats {
+  name:       string;
+  color:      string;
+  avgBu:      number | null;
+  avgRun:     number | null;
+  avgEff:     number | null;
+  avgScrap:   number | null;
+  shiftCount: number;
+  winRate:    number | null;  // % of shifts beating fleet avg
 }
 
-// ─── Annotated row type ───────────────────────────────────────────────────────
+function CrewCard({ crew, isBest }: { crew: CrewStats; isBest: boolean }) {
+  return (
+    <div className={`relative bg-gray-800/50 border rounded-lg px-4 py-4 flex flex-col gap-2 ${
+      isBest ? "border-yellow-500/60 ring-1 ring-yellow-500/20" : "border-gray-700"
+    }`}>
+      {isBest && (
+        <span className="absolute -top-2.5 right-3 bg-yellow-500/20 text-yellow-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-yellow-500/30 uppercase tracking-wider">
+          Top Crew
+        </span>
+      )}
+      <div className="flex items-center gap-2">
+        <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: crew.color }}></span>
+        <span className="text-sm font-bold text-white">{crew.name}</span>
+        <span className="ml-auto text-[10px] text-gray-500">{crew.shiftCount} shifts</span>
+      </div>
 
-interface AnnotatedRow extends MachineShiftRow {
-  crewName: string;   // team name from assignments, e.g. "SHIFT C"
-  slotName: string;   // generic slot name, e.g. "Shift A"
+      <div className="grid grid-cols-2 gap-x-4 gap-y-1 mt-1">
+        <div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide">Avg BU</div>
+          <div className={`text-lg font-bold ${buColor(crew.avgBu)}`}>{fmtN(crew.avgBu, 1)}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide">Win Rate</div>
+          <div className="text-lg font-bold text-gray-200">{crew.winRate !== null ? fmtPct(crew.winRate, 0) : "—"}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide">Avg Run</div>
+          <div className="text-sm text-gray-300">{fmtH(crew.avgRun, 1)}</div>
+        </div>
+        <div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide">Avg Eff</div>
+          <div className="text-sm text-gray-300">{fmtPct(crew.avgEff, 1)}</div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -113,84 +153,150 @@ export default function ShiftAnalytics({
   useEffect(() => { load(); }, [load]);
 
   // ── Machine code → display name ──
-  const machineNameMap = new Map<string, string>();
-  for (const m of machines) machineNameMap.set(m.machine_code, m.name || m.machine_code);
+  const machineNameMap = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const mc of machines) m.set(mc.machine_code, mc.name || mc.machine_code);
+    return m;
+  }, [machines]);
   const displayName = (code: string) => machineNameMap.get(code) ?? code;
 
   // ── Annotate rows with crew name from shift assignments ──
-  // crewName: the actual team assigned to that slot on that day (e.g. "SHIFT C")
-  // slotName: the generic configured slot name (e.g. "Shift A")
-  const annotated: AnnotatedRow[] = rows.map(r => ({
+  const annotated: AnnotatedRow[] = useMemo(() => rows.map(r => ({
     ...r,
     crewName: teamNameForShift(r.work_day, r.shift_label, shiftAssignments, shiftSlots),
-    slotName: shiftLabelToName(r.shift_label, shiftSlots),
-  }));
+  })), [rows, shiftAssignments, shiftSlots]);
 
-  // ── Available slot labels and crew names in the data ──
-  const availableSlots = Array.from(new Set(annotated.map(r => r.shift_label))).sort();
-  const availableCrews = Array.from(new Set(annotated.map(r => r.crewName))).sort();
+  // ── Crew list (from configured teams, filtered to those with data) ──
+  const crewsInData = useMemo(() => {
+    const dataCrews = new Set(annotated.map(r => r.crewName));
+    // Return only crews that actually have data, ordered by config
+    return Array.from(dataCrews).sort();
+  }, [annotated]);
+
+  // ── Fleet avg BU (for win rate calculation) ──
+  const fleetAvgBu = useMemo(() => avgBu(annotated), [annotated]);
+
+  // ── Per-crew stats ──
+  const crewStats: CrewStats[] = useMemo(() => {
+    return crewsInData.map((name, i) => {
+      const crewR = annotated.filter(r => r.crewName === name);
+
+      // Count "shifts" as unique (work_day, shift_label) combos
+      const shiftKeys = new Set(crewR.map(r => `${r.work_day}|${r.shift_label}`));
+      const shiftCount = shiftKeys.size;
+
+      // Win rate: % of shift-days where crew avg BU > fleet avg
+      let wins = 0;
+      let counted = 0;
+      if (fleetAvgBu !== null) {
+        for (const sk of shiftKeys) {
+          const [wd, sl] = sk.split("|");
+          const shiftR = crewR.filter(r => r.work_day === wd && r.shift_label === sl);
+          const shiftBu = avgBu(shiftR);
+          if (shiftBu !== null) {
+            counted++;
+            if (shiftBu >= fleetAvgBu) wins++;
+          }
+        }
+      }
+
+      return {
+        name,
+        color: CREW_COLORS[i % CREW_COLORS.length],
+        avgBu: avgBu(crewR),
+        avgRun: avgField(crewR, "run_hours"),
+        avgEff: avgField(crewR, "avg_efficiency"),
+        avgScrap: avgField(crewR, "avg_scrap"),
+        shiftCount,
+        winRate: counted > 0 ? (wins / counted) * 100 : null,
+      };
+    });
+  }, [crewsInData, annotated, fleetAvgBu]);
+
+  // ── Best crew ──
+  const bestCrew = useMemo(() => {
+    let best: string | null = null;
+    let bestVal = -Infinity;
+    for (const c of crewStats) {
+      if (c.avgBu !== null && c.avgBu > bestVal) {
+        bestVal = c.avgBu;
+        best = c.name;
+      }
+    }
+    return best;
+  }, [crewStats]);
+
+  // ── Crew color map ──
+  const crewColorMap = useMemo(() => {
+    const m = new Map<string, string>();
+    crewStats.forEach(c => m.set(c.name, c.color));
+    return m;
+  }, [crewStats]);
 
   // ── Pairwise comparison selection ──
-  // Default to first two available slots/crews on first load
   const [pick1, setPick1] = useState<string>("");
   const [pick2, setPick2] = useState<string>("");
+  const pick1Eff = pick1 || crewsInData[0] || "";
+  const pick2Eff = pick2 || crewsInData[1] || crewsInData[0] || "";
 
-  // Set defaults when crews are first known
-  const pick1Eff = pick1 || availableCrews[0] || "";
-  const pick2Eff = pick2 || availableCrews[1] || availableCrews[0] || "";
+  const crew1Color = crewColorMap.get(pick1Eff) ?? "#22d3ee";
+  const crew2Color = crewColorMap.get(pick2Eff) ?? "#a78bfa";
 
-  // ── Per-crew aggregation: groups ALL shifts a crew worked (any slot, any day) ──
-  function crewRows(crewName: string): AnnotatedRow[] {
-    return annotated.filter(r => r.crewName === crewName);
-  }
+  // ── Per-day chart data for two selected crews ──
+  const chartData = useMemo(() => {
+    const workDays = Array.from(new Set(annotated.map(r => r.work_day))).sort();
+    const days = workDays.slice(-30);
+    return days.map(day => {
+      const d1 = annotated.filter(r => r.work_day === day && r.crewName === pick1Eff);
+      const d2 = annotated.filter(r => r.work_day === day && r.crewName === pick2Eff);
+      let dateLabel = day;
+      try { dateLabel = format(parseISO(day), "dd.MM"); } catch { /* noop */ }
+      return { day, dateLabel, bu1: avgBu(d1) ?? 0, bu2: avgBu(d2) ?? 0 };
+    });
+  }, [annotated, pick1Eff, pick2Eff]);
 
-  // ── Slot-based overview data ──
-  // Groups by slot label (time-window) to show overall slot performance
-  const slotOverview = availableSlots.map((label, i) => {
-    const slotR = annotated.filter(r => r.shift_label === label);
-    return {
-      label,
-      name:  shiftLabelToName(label, shiftSlots),
-      bu:    avgBu(slotR),
-      hours: (() => { const v = slotR.filter(r => r.run_hours != null); return v.length > 0 ? v.reduce((s, r) => s + r.run_hours!, 0) / v.length : null; })(),
-      color: SLOT_COLORS[i] ?? "#9ca3af",
-    };
-  });
+  // ── Verdict ──
+  const verdict = useMemo(() => {
+    const c1Rows = annotated.filter(r => r.crewName === pick1Eff);
+    const c2Rows = annotated.filter(r => r.crewName === pick2Eff);
+    const bu1 = avgBu(c1Rows);
+    const bu2 = avgBu(c2Rows);
+    if (bu1 === null || bu2 === null) return null;
+    const diff = bu1 - bu2;
+    if (Math.abs(diff) < 0.5) return { text: "Virtually tied", leader: null, diff: 0 };
+    const leader = diff > 0 ? pick1Eff : pick2Eff;
+    return { text: `${leader} leads by +${fmtN(Math.abs(diff), 1)} BU`, leader, diff: Math.abs(diff) };
+  }, [annotated, pick1Eff, pick2Eff]);
 
-  // ── Per-day chart data for the two selected crews ──
-  const workDays = Array.from(new Set(annotated.map(r => r.work_day))).sort();
-  const chartDays = workDays.slice(-30);
+  // ── Machine comparison for two selected crews ──
+  const machineComparison = useMemo(() => {
+    const allCodes = Array.from(new Set(annotated.map(r => r.machine_code))).sort();
+    return allCodes.map(code => {
+      const m1 = annotated.filter(r => r.machine_code === code && r.crewName === pick1Eff);
+      const m2 = annotated.filter(r => r.machine_code === code && r.crewName === pick2Eff);
+      const bu1 = avgBu(m1);
+      const bu2 = avgBu(m2);
+      const delta = bu1 !== null && bu2 !== null ? bu1 - bu2 : null;
+      const better = delta === null ? "N/A" : delta > 0.5 ? "1" : delta < -0.5 ? "2" : "Even";
 
-  const chartData = chartDays.map(day => {
-    const d1 = annotated.filter(r => r.work_day === day && r.crewName === pick1Eff);
-    const d2 = annotated.filter(r => r.work_day === day && r.crewName === pick2Eff);
-    let dateLabel = day;
-    try { dateLabel = format(parseISO(day), "dd.MM"); } catch { /* noop */ }
-    return { day, dateLabel, bu1: avgBu(d1) ?? 0, bu2: avgBu(d2) ?? 0 };
-  });
+      // Consistency: std dev of BU values per shift for each crew
+      const buVals1 = m1.filter(r => r.bu_normalized !== null).map(r => r.bu_normalized!);
+      const buVals2 = m2.filter(r => r.bu_normalized !== null).map(r => r.bu_normalized!);
 
-  // ── Machine comparison for the two selected crews ──
-  const allMachineCodes = Array.from(new Set(annotated.map(r => r.machine_code))).sort();
-  const machineComparison = allMachineCodes.map(code => {
-    const m1 = annotated.filter(r => r.machine_code === code && r.crewName === pick1Eff);
-    const m2 = annotated.filter(r => r.machine_code === code && r.crewName === pick2Eff);
-    const bu1 = avgBu(m1);
-    const bu2 = avgBu(m2);
-    const delta = bu1 !== null && bu2 !== null ? bu1 - bu2 : null;
-    const better = delta === null ? "N/A" : delta > 0.5 ? "1" : delta < -0.5 ? "2" : "Even";
-    return { code, bu1, bu2, delta, better };
-  }).sort((a, b) => {
-    const sA = a.bu1 !== null && a.bu2 !== null ? (a.bu1 + a.bu2) / 2 : a.bu1 ?? a.bu2 ?? 0;
-    const sB = b.bu1 !== null && b.bu2 !== null ? (b.bu1 + b.bu2) / 2 : b.bu1 ?? b.bu2 ?? 0;
-    return sB - sA;
-  });
+      return { code, bu1, bu2, delta, better, std1: stdDev(buVals1), std2: stdDev(buVals2) };
+    }).sort((a, b) => {
+      const sA = a.bu1 !== null && a.bu2 !== null ? (a.bu1 + a.bu2) / 2 : a.bu1 ?? a.bu2 ?? 0;
+      const sB = b.bu1 !== null && b.bu2 !== null ? (b.bu1 + b.bu2) / 2 : b.bu1 ?? b.bu2 ?? 0;
+      return sB - sA;
+    });
+  }, [annotated, pick1Eff, pick2Eff]);
 
   // ── Render ──
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64 gap-2 text-gray-500 text-sm">
         <span className="inline-block w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></span>
-        Loading shift data...
+        Loading crew data...
       </div>
     );
   }
@@ -215,95 +321,127 @@ export default function ShiftAnalytics({
   return (
     <div className="flex flex-col gap-5">
 
-      {/* ── Slot overview: one KPI tile per time slot ─────────────────────── */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION 1: CREW SCORECARD
+          ═══════════════════════════════════════════════════════════════════ */}
       <div>
         <p className="text-xs text-gray-500 mb-2 flex items-center gap-1.5">
-          <i className="bi bi-clock"></i>
-          Overview by time slot
+          <i className="bi bi-trophy"></i>
+          Crew Scorecard
         </p>
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          {slotOverview.map(s => (
-            <KpiTile
-              key={s.label}
-              label={`${s.name} Fleet Avg BU`}
-              value={fmtN(s.bu, 1)}
-              sub="Normalized to 12 h shift"
-              colorClass={buColor(s.bu)}
-            />
-          ))}
+        <div className={`grid gap-3 ${
+          crewStats.length <= 2 ? "grid-cols-2" :
+          crewStats.length === 3 ? "grid-cols-3" :
+          "grid-cols-2 sm:grid-cols-4"
+        }`}>
+          {crewStats
+            .slice()
+            .sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0))
+            .map(crew => (
+              <CrewCard key={crew.name} crew={crew} isBest={crew.name === bestCrew} />
+            ))
+          }
         </div>
       </div>
 
-      {/* ── Crew comparison selector ──────────────────────────────────────── */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION 2: HEAD-TO-HEAD COMPARISON
+          ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+        {/* Picker row */}
         <div className="flex flex-wrap items-center gap-3 mb-4">
           <span className="text-sm font-semibold text-white flex items-center gap-2">
             <i className="bi bi-people-fill text-cyan-400"></i>
-            Compare crews
+            Head to Head
           </span>
           <div className="flex items-center gap-2 ml-auto">
-            {/* Crew 1 picker */}
             <select
-              value={pick1 || availableCrews[0] || ""}
+              value={pick1Eff}
               onChange={e => setPick1(e.target.value)}
-              className="bg-gray-900 border border-cyan-700/60 text-cyan-300 text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none focus:border-cyan-400"
+              className="bg-gray-900 border text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none"
+              style={{ borderColor: crew1Color + "99", color: crew1Color }}
             >
-              {availableCrews.map(c => (
+              {crewsInData.map(c => (
                 <option key={c} value={c} className="bg-gray-800 text-white">{c}</option>
               ))}
             </select>
-            <span className="text-xs text-gray-500">vs</span>
-            {/* Crew 2 picker */}
+            <span className="text-xs text-gray-500 font-medium">vs</span>
             <select
-              value={pick2 || availableCrews[1] || availableCrews[0] || ""}
+              value={pick2Eff}
               onChange={e => setPick2(e.target.value)}
-              className="bg-gray-900 border border-purple-700/60 text-purple-300 text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none focus:border-purple-400"
+              className="bg-gray-900 border text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none"
+              style={{ borderColor: crew2Color + "99", color: crew2Color }}
             >
-              {availableCrews.map(c => (
+              {crewsInData.map(c => (
                 <option key={c} value={c} className="bg-gray-800 text-white">{c}</option>
               ))}
             </select>
           </div>
         </div>
 
-        {/* KPI row for the selected two crews */}
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4 mb-4">
-          <KpiTile
-            label={`${pick1Eff} Fleet Avg BU`}
-            value={fmtN(avgBu(crewRows(pick1Eff)), 1)}
-            sub="Normalized to 12 h shift"
-            colorClass={buColor(avgBu(crewRows(pick1Eff)))}
-          />
-          <KpiTile
-            label={`${pick2Eff} Fleet Avg BU`}
-            value={fmtN(avgBu(crewRows(pick2Eff)), 1)}
-            sub="Normalized to 12 h shift"
-            colorClass={buColor(avgBu(crewRows(pick2Eff)))}
-          />
-          <KpiTile
-            label={`${pick1Eff} Avg Run Hours`}
-            value={(() => { const v = crewRows(pick1Eff).filter(r => r.run_hours != null); return v.length > 0 ? fmtH(v.reduce((s, r) => s + r.run_hours!, 0) / v.length, 1) : "—"; })()}
-            sub="Per machine per shift"
-            colorClass="text-gray-300"
-          />
-          <KpiTile
-            label={`${pick2Eff} Avg Run Hours`}
-            value={(() => { const v = crewRows(pick2Eff).filter(r => r.run_hours != null); return v.length > 0 ? fmtH(v.reduce((s, r) => s + r.run_hours!, 0) / v.length, 1) : "—"; })()}
-            sub="Per machine per shift"
-            colorClass="text-gray-300"
-          />
-        </div>
+        {/* KPI comparison row */}
+        {(() => {
+          const c1 = annotated.filter(r => r.crewName === pick1Eff);
+          const c2 = annotated.filter(r => r.crewName === pick2Eff);
+          const kpis = [
+            { label: "Avg BU", v1: avgBu(c1), v2: avgBu(c2), fmt: (v: number | null) => fmtN(v, 1), colorFn: buColor },
+            { label: "Avg Run", v1: avgField(c1, "run_hours"), v2: avgField(c2, "run_hours"), fmt: (v: number | null) => fmtH(v, 1), colorFn: () => "text-gray-200" },
+            { label: "Avg Eff", v1: avgField(c1, "avg_efficiency"), v2: avgField(c2, "avg_efficiency"), fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200" },
+            { label: "Avg Scrap", v1: avgField(c1, "avg_scrap"), v2: avgField(c2, "avg_scrap"), fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200" },
+          ];
+          return (
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+              {kpis.map(k => {
+                const better = k.label === "Avg Scrap"
+                  ? (k.v1 !== null && k.v2 !== null ? (k.v1 < k.v2 ? 1 : k.v1 > k.v2 ? 2 : 0) : 0)
+                  : (k.v1 !== null && k.v2 !== null ? (k.v1 > k.v2 ? 1 : k.v1 < k.v2 ? 2 : 0) : 0);
+                return (
+                  <div key={k.label} className="bg-gray-900/40 rounded-lg px-3 py-3">
+                    <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">{k.label}</div>
+                    <div className="flex items-end justify-between gap-2">
+                      <div>
+                        <div className={`text-base font-bold ${k.colorFn(k.v1)}`} style={better === 1 ? { textDecoration: "underline", textDecorationColor: crew1Color, textUnderlineOffset: "3px" } : {}}>
+                          {k.fmt(k.v1)}
+                        </div>
+                        <div className="text-[10px] mt-0.5" style={{ color: crew1Color }}>{pick1Eff}</div>
+                      </div>
+                      <div className="text-gray-600 text-xs pb-1">vs</div>
+                      <div className="text-right">
+                        <div className={`text-base font-bold ${k.colorFn(k.v2)}`} style={better === 2 ? { textDecoration: "underline", textDecorationColor: crew2Color, textUnderlineOffset: "3px" } : {}}>
+                          {k.fmt(k.v2)}
+                        </div>
+                        <div className="text-[10px] mt-0.5 text-right" style={{ color: crew2Color }}>{pick2Eff}</div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
 
-        {/* Bar chart: selected two crews over time */}
+        {/* Verdict badge */}
+        {verdict && (
+          <div className={`text-center text-xs font-medium py-1.5 px-3 rounded-full w-fit mx-auto mb-4 ${
+            verdict.leader ? "bg-gray-700/60 text-gray-200" : "bg-gray-700/40 text-gray-400"
+          }`}>
+            {verdict.leader && (
+              <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: crewColorMap.get(verdict.leader) ?? "#9ca3af" }}></span>
+            )}
+            {verdict.text}
+          </div>
+        )}
+
+        {/* Bar chart */}
         <div className="flex items-center justify-between mb-3">
           <span className="text-xs text-gray-400">Fleet Avg BU per Day</span>
           <div className="flex items-center gap-3 text-xs text-gray-500">
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "#22d3ee" }}></span>
+              <span className="w-3 h-2 rounded-sm inline-block" style={{ background: crew1Color }}></span>
               {pick1Eff}
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-3 h-2 rounded-sm inline-block" style={{ background: "#a78bfa" }}></span>
+              <span className="w-3 h-2 rounded-sm inline-block" style={{ background: crew2Color }}></span>
               {pick2Eff}
             </span>
           </div>
@@ -342,12 +480,12 @@ export default function ShiftAnalytics({
               />
               <Bar dataKey="bu1" name="bu1" radius={[2, 2, 0, 0]} barSize={10}>
                 {chartData.map((d, i) => (
-                  <Cell key={`1-${i}`} fill={d.bu1 > 0 ? barColor(d.bu1) : "#374151"} fillOpacity={0.85} />
+                  <Cell key={`1-${i}`} fill={d.bu1 > 0 ? crew1Color : "#374151"} fillOpacity={0.85} />
                 ))}
               </Bar>
               <Bar dataKey="bu2" name="bu2" radius={[2, 2, 0, 0]} barSize={10}>
                 {chartData.map((d, i) => (
-                  <Cell key={`2-${i}`} fill={d.bu2 > 0 ? "#a78bfa" : "#374151"} fillOpacity={0.75} />
+                  <Cell key={`2-${i}`} fill={d.bu2 > 0 ? crew2Color : "#374151"} fillOpacity={0.75} />
                 ))}
               </Bar>
             </BarChart>
@@ -355,12 +493,14 @@ export default function ShiftAnalytics({
         )}
       </div>
 
-      {/* Comparison table */}
+      {/* ═══════════════════════════════════════════════════════════════════
+          SECTION 3: PER-MACHINE BREAKDOWN
+          ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-700">
-          <h3 className="text-sm font-semibold text-white">Machine Crew Comparison</h3>
+          <h3 className="text-sm font-semibold text-white">Per-Machine Breakdown</h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            {pick1Eff} vs {pick2Eff} — ranked by avg BU across both crews
+            {pick1Eff} vs {pick2Eff} — ranked by avg BU, with consistency (lower = more consistent)
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -368,16 +508,16 @@ export default function ShiftAnalytics({
             <thead>
               <tr className="border-b border-gray-700 bg-gray-900/40">
                 <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Machine</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-cyan-400">{pick1Eff} Avg BU</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-purple-400">{pick2Eff} Avg BU</th>
-                <th className="text-right  px-4 py-2 text-xs font-semibold text-gray-400">
-                  Delta ({pick1Eff} − {pick2Eff})
-                </th>
-                <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Better</th>
+                <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: crew1Color }}>{pick1Eff} BU</th>
+                <th className="text-right px-3 py-2 text-[10px] font-medium text-gray-500">Consistency</th>
+                <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: crew2Color }}>{pick2Eff} BU</th>
+                <th className="text-right px-3 py-2 text-[10px] font-medium text-gray-500">Consistency</th>
+                <th className="text-right px-4 py-2 text-xs font-semibold text-gray-400">Delta</th>
+                <th className="text-center px-3 py-2 text-xs font-semibold text-gray-400">Better</th>
               </tr>
             </thead>
             <tbody>
-              {machineComparison.map(({ code, bu1, bu2, delta, better }) => (
+              {machineComparison.map(({ code, bu1, bu2, delta, better, std1, std2 }) => (
                 <tr key={code} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
                   <td className="px-4 py-2 text-xs font-medium text-gray-300 text-center" title={code}>
                     {displayName(code)}
@@ -385,8 +525,14 @@ export default function ShiftAnalytics({
                   <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu1)}`}>
                     {fmtN(bu1, 1)}
                   </td>
+                  <td className="px-3 py-2 text-[10px] text-right font-mono text-gray-500">
+                    {std1 !== null ? `±${fmtN(std1, 1)}` : "—"}
+                  </td>
                   <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu2)}`}>
                     {fmtN(bu2, 1)}
+                  </td>
+                  <td className="px-3 py-2 text-[10px] text-right font-mono text-gray-500">
+                    {std2 !== null ? `±${fmtN(std2, 1)}` : "—"}
                   </td>
                   <td className={`px-4 py-2 text-xs text-right font-mono ${
                     delta === null ? "text-gray-600"
@@ -396,12 +542,13 @@ export default function ShiftAnalytics({
                   }`}>
                     {delta !== null ? `${delta > 0 ? "+" : ""}${fmtN(delta, 1)}` : "—"}
                   </td>
-                  <td className={`px-4 py-2 text-xs text-center font-medium ${
-                    better === "1" ? "text-cyan-400"
-                    : better === "2" ? "text-purple-400"
-                    : "text-gray-500"
-                  }`}>
-                    {better === "1" ? pick1Eff : better === "2" ? pick2Eff : better}
+                  <td className="px-3 py-2 text-xs text-center font-medium">
+                    {better === "1"
+                      ? <span style={{ color: crew1Color }}>{pick1Eff}</span>
+                      : better === "2"
+                      ? <span style={{ color: crew2Color }}>{pick2Eff}</span>
+                      : <span className="text-gray-500">{better}</span>
+                    }
                   </td>
                 </tr>
               ))}
