@@ -1104,9 +1104,10 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
     // key = "shiftDate|slotIndex|machineId"
     const machineId = key.split("|")[2];
 
-    // Resolve crew name from the monthly schedule
-    const crew = assignMap[b.shiftDate]?.slot_teams?.[b.slotIndex];
-    const shiftLabel = crew ?? (b.slotIndex === 0 ? "Day" : "Night");
+    // Store the slot letter ("A", "B", …) so the display layer (teamNameForShift)
+    // can resolve the crew name from shift_assignments at render time.
+    // Using a raw slot letter here avoids "Shift SHIFT A" double-prefix bugs.
+    const shiftLabel = String.fromCharCode(65 + b.slotIndex); // 0→"A", 1→"B", …
 
     const runHours = b.prodTimeSecs > 0 ? b.prodTimeSecs / 3600 : null;
     const buNorm   = runHours && runHours > 0
