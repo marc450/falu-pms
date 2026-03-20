@@ -464,8 +464,17 @@ export default function Analytics() {
         } catch { /* quota exceeded or unavailable — ignore */ }
       }
       setShiftSlots(shiftCfg.slots);
-      // Build a lookup map keyed by shift_date for O(1) access in child components
-      setShiftAssignments(Object.fromEntries(assignmentRows.map(a => [a.shift_date, a])));
+      // Build a lookup map keyed by shift_date for O(1) access in child components.
+      // Normalise team names against the configured list (case-insensitive) so legacy
+      // values like "Shift C" resolve to the canonical "SHIFT C" even before the
+      // DB migration runs.
+      const canonMap = new Map<string, string>();
+      for (const t of shiftCfg.teams) canonMap.set(t.toUpperCase(), t);
+      const normalisedRows = assignmentRows.map(a => ({
+        ...a,
+        slot_teams: a.slot_teams.map(v => (v ? (canonMap.get(v.toUpperCase()) ?? v) : v)),
+      }));
+      setShiftAssignments(Object.fromEntries(normalisedRows.map(a => [a.shift_date, a])));
       setRows(result.rows);
       setGranularity(result.granularity);
       setTotalReadings(result.totalReadings);

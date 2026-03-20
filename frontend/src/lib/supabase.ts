@@ -925,6 +925,7 @@ export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShi
 export async function fetchShiftAssignments(
   from: string,
   to: string,
+  knownTeams?: string[],
 ): Promise<ShiftAssignment[]> {
   const sb = getSupabase();
   const { data, error } = await sb
@@ -935,15 +936,25 @@ export async function fetchShiftAssignments(
     .order("shift_date", { ascending: true });
   if (error) throw new Error(error.message);
 
+  // Build a case-insensitive lookup map so legacy values like "Shift C"
+  // are silently resolved to the canonical name "SHIFT C".
+  const canonMap = new Map<string, string>();
+  for (const t of (knownTeams ?? [])) canonMap.set(t.toUpperCase(), t);
+  const canonicalise = (v: string | null): string | null => {
+    if (!v) return v;
+    return canonMap.get(v.toUpperCase()) ?? v;
+  };
+
   // Normalize: old rows have day_team/night_team, new rows have slot_teams
   return (data ?? []).map((r: Record<string, unknown>) => {
     const raw = r.slot_teams as (string | null)[] | null;
     const hasSlotTeams = Array.isArray(raw) && raw.length > 0;
+    const teams = hasSlotTeams
+      ? raw!
+      : [r.day_team as string | null, r.night_team as string | null];
     return {
       shift_date: r.shift_date as string,
-      slot_teams: hasSlotTeams
-        ? raw!
-        : [r.day_team as string | null, r.night_team as string | null],
+      slot_teams: teams.map(canonicalise),
     };
   });
 }

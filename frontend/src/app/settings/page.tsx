@@ -1166,8 +1166,9 @@ function ShiftsTab() {
   const initialLoad = useRef(true);
   useEffect(() => {
     if (initialLoad.current) setLoading(true);
-    Promise.all([fetchShiftConfig(), fetchShiftAssignments(fromStr, toStr)])
-      .then(([cfg, rows]) => {
+    fetchShiftConfig()
+      .then(cfg => fetchShiftAssignments(fromStr, toStr, cfg.teams).then(rows => ({ cfg, rows })))
+      .then(({ cfg, rows }) => {
         setConfig(cfg);
         setDraftDurationHours(cfg.shiftDurationHours);
         setDraftFirstStart(cfg.firstShiftStartHour);
