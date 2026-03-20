@@ -1017,8 +1017,10 @@ export interface MachineShiftRow {
   avg_scrap:      number | null;
 }
 
-export async function fetchMachineShiftSummary(range: DateRange, slotCount: number = 2): Promise<MachineShiftRow[]> {
+export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot[] = slotsFromDuration(12, 7)): Promise<MachineShiftRow[]> {
   const sb = getSupabase();
+  const slotCount    = slots.length;
+  const durationHrs  = slotCount > 0 ? 24 / slotCount : 12;
 
   // Helper: local YYYY-MM-DD string (no UTC offset shift)
   const toLocalDate = (d: Date) => {
@@ -1028,11 +1030,29 @@ export async function fetchMachineShiftSummary(range: DateRange, slotCount: numb
     return `${y}-${m}-${day}`;
   };
 
-  // Crew resolution happens at render time using the shiftAssignments prop
-  // passed down from the parent component (normalised against config.teams).
-  // No internal assignment lookup needed here — shift_label is always a slot
-  // letter ("A", "B", …) derived from shift_number, and teamNameForShift()
-  // maps that to the crew name at display time.
+  // Determine which configured slot a save timestamp belongs to.
+  // We completely ignore the PLC shift_number — it only signals that a shift
+  // transition occurred. The actual slot is derived from the saved_at time
+  // and the configured slot start hours.
+  // Because saved_shift_logs are written at the END of a shift, saved_at right
+  // at a slot boundary (e.g. 07:00 local) means the PREVIOUS slot just ended.
+  // Subtracting 1 hour pushes the check into the correct slot.
+  const resolveSlot = (savedAt: Date): number => {
+    const localHour = savedAt.getHours(); // browser local time
+    const adjusted  = (localHour - 1 + 24) % 24;
+    for (let i = 0; i < slots.length; i++) {
+      const start = slots[i].startHour;
+      const end   = (start + durationHrs) % 24;
+      if (start < end) {
+        if (adjusted >= start && adjusted < end) return i;
+      } else {
+        // Wraps midnight (e.g. 19:00 – 07:00)
+        if (adjusted >= start || adjusted < end) return i;
+      }
+    }
+    return 0; // fallback
+  };
+
   const logsResult = await sb
     .from("saved_shift_logs")
     .select("machine_id, machine_code, shift_number, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
@@ -1043,15 +1063,9 @@ export async function fetchMachineShiftSummary(range: DateRange, slotCount: numb
   if (logsResult.error) throw new Error(logsResult.error.message);
 
   // Aggregate by (shift_date, slot_index, machine_id).
-  // slot_index = shift_number - 1 (PLC sends 1-based slot numbers).
-  // shift_date = calendar date when the slot STARTED:
-  //   - UTC hour < 12 means this slot ended in the early morning, so it started
-  //     the previous evening — subtract 1 day from the UTC date.
-  //   - UTC hour >= 12 means this slot ended in the afternoon/evening on the same day.
-  // Using shift_number for slot_index is more reliable than UTC-hour thresholds,
-  // especially for 3- or 4-slot configurations.
+  // slot_index is derived from the saved_at timestamp and the configured time slots.
+  // shift_date = calendar date when the slot STARTED (derived from local time).
   // The crew label comes from shift_assignments[shift_date].slot_teams[slotIndex].
-  // Falls back to "Slot 1" / "Slot 2" when no assignment is configured.
   type Acc = {
     machineCode:  string;
     shiftDate:    string;
@@ -1067,31 +1081,20 @@ export async function fetchMachineShiftSummary(range: DateRange, slotCount: numb
 
   for (const row of (logsResult.data ?? []) as Record<string, unknown>[]) {
     const savedAt   = new Date(String(row.saved_at));
-    const utcHour   = savedAt.getUTCHours();
-    // Use shift_number from the DB (1-based) to determine which configured slot
-    // this log belongs to. Falls back to UTC-hour heuristic if absent.
-    const shiftNum  = Number(row.shift_number);
-    // Map PLC shift_number (1-based) to a 0-based slot index.
-    // If the PLC sends a number that exceeds the configured slot count
-    // (e.g. shift_number=3 on a 2-slot/12h config), fall back to the
-    // UTC-hour heuristic so it maps to an existing slot.
-    const rawSlot   = shiftNum > 0 ? shiftNum - 1 : -1;
-    const slotIndex = (rawSlot >= 0 && rawSlot < slotCount)
-      ? rawSlot
-      : (utcHour < 12 ? 1 : 0);
+    const slotIndex = resolveSlot(savedAt);
 
-    // shift_date: calendar date when this slot STARTED.
-    // A slot that saves in the early morning (UTC hour < 12) started the
-    // previous evening — subtract one UTC day.
-    const isNight   = utcHour < 12;
-    const utcDateStr = savedAt.toISOString().slice(0, 10);
-    let shiftDate = utcDateStr;
-    if (isNight) {
-      // The slot started the previous evening — subtract one day
-      const prev = new Date(savedAt);
-      prev.setUTCDate(prev.getUTCDate() - 1);
-      shiftDate = prev.toISOString().slice(0, 10);
+    // shift_date: calendar date when this slot STARTED (local time).
+    // For the first slot (e.g. 07:00–19:00) this is the same calendar day.
+    // For a night slot (e.g. 19:00–07:00) that saves after midnight, the slot
+    // started the previous evening — subtract one day.
+    const slotStart = slots[slotIndex].startHour;
+    const localHour = savedAt.getHours();
+    const startedYesterday = localHour < slotStart; // e.g. 06:00 local < 19:00 start
+    const shiftDateObj = new Date(savedAt);
+    if (startedYesterday) {
+      shiftDateObj.setDate(shiftDateObj.getDate() - 1);
     }
+    const shiftDate = toLocalDate(shiftDateObj);
 
     const key = `${shiftDate}|${slotIndex}|${String(row.machine_id)}`;
     if (!map.has(key)) {

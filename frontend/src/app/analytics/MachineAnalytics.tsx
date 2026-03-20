@@ -159,7 +159,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchMachineShiftSummary(dateRange, shiftSlots.length);
+      const data = await fetchMachineShiftSummary(dateRange, shiftSlots);
       setRows(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");
