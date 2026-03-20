@@ -446,7 +446,13 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
   const rangeStartStr = `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, "0")}-${String(range.start.getDate()).padStart(2, "0")}`;
   const rangeEndStr   = `${range.end.getFullYear()}-${String(range.end.getMonth() + 1).padStart(2, "0")}-${String(range.end.getDate()).padStart(2, "0")}`;
 
-  // Read pre-aggregated daily data from daily_machine_summary
+  // Exclude today: the day is incomplete so showing partial data is misleading.
+  // Use .lt(todayStr) to only include fully completed calendar days.
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+
+  // Read pre-aggregated daily data from daily_machine_summary.
+  // .range(0, 49999) overrides the default PostgREST 1000-row cap.
   const { data, error } = await sb
     .from("daily_machine_summary")
     .select(
@@ -455,8 +461,9 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
       "reading_count, avg_efficiency, avg_scrap_rate"
     )
     .gte("summary_date", rangeStartStr)
-    .lte("summary_date", rangeEndStr)
-    .order("summary_date");
+    .lt("summary_date", todayStr)
+    .order("summary_date")
+    .range(0, 49999);
 
   if (error) throw new Error(error.message);
   if (!data || data.length === 0) {
@@ -981,13 +988,15 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
   const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
   const rangeStartStr = `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, "0")}-${String(range.start.getDate()).padStart(2, "0")}`;
 
-  // 1) Pre-aggregated data for past days (fast indexed table scan)
+  // 1) Pre-aggregated data for past days (fast indexed table scan).
+  // .range(0, 49999) overrides the default PostgREST 1000-row cap.
   const preAggPromise = sb
     .from("daily_machine_summary")
     .select("summary_date, shift_label, machine_id, machine_code, swabs_produced, boxes_produced, production_time_seconds, avg_efficiency, avg_scrap_rate")
     .gte("summary_date", rangeStartStr)
     .lt("summary_date", todayStr)
-    .order("summary_date", { ascending: false });
+    .order("summary_date", { ascending: false })
+    .range(0, 49999);
 
   // 2) Live RPC for today only (scans just one day of shift_readings)
   const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
