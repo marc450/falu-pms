@@ -603,27 +603,46 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
     b.weightTotal += w;
   }
 
-  const rows: FleetTrendRow[] = Array.from(bucketMap.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([bucket, b]) => ({
-      date:         bucket,
-      // Uptime: weighted avg across all machines (idle = 0%)
-      avgUptime:    b.weightTotal > 0
-        ? Math.round((b.effSum / b.weightTotal) * 10) / 10
-        : 0,
-      // Scrap: volume-weighted ratio — discarded swabs / produced swabs
-      avgScrap:     b.totalSwabs > 0
-        ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
-        : 0,
-      totalBoxes:   b.totalBoxes,
-      totalSwabs:   b.totalSwabs,
-      machineCount: b.machineIds.size,
-      readingCount: b.readingCount,
-      shiftCount:   b.shiftNumbers.size,
-    }));
+  // Fill every hour in the requested range so the chart has no gaps.
+  // Hours with no machine data get zeroed-out entries (machines offline/idle).
+  const filledRows: FleetTrendRow[] = [];
+  const cursor = new Date(range.start);
+  cursor.setUTCMinutes(0, 0, 0);
+  while (cursor < range.end) {
+    const key = cursor.toISOString().slice(0, 13); // "YYYY-MM-DDTHH"
+    const b = bucketMap.get(key);
+    if (b) {
+      filledRows.push({
+        date:         key,
+        avgUptime:    b.weightTotal > 0
+          ? Math.round((b.effSum / b.weightTotal) * 10) / 10
+          : 0,
+        avgScrap:     b.totalSwabs > 0
+          ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
+          : 0,
+        totalBoxes:   b.totalBoxes,
+        totalSwabs:   b.totalSwabs,
+        machineCount: b.machineIds.size,
+        readingCount: b.readingCount,
+        shiftCount:   b.shiftNumbers.size,
+      });
+    } else {
+      filledRows.push({
+        date:         key,
+        avgUptime:    0,
+        avgScrap:     0,
+        totalBoxes:   0,
+        totalSwabs:   0,
+        machineCount: 0,
+        readingCount: 0,
+        shiftCount:   0,
+      });
+    }
+    cursor.setUTCHours(cursor.getUTCHours() + 1);
+  }
 
-  const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
-  return { rows, granularity: "hour", totalReadings };
+  const totalReadings = filledRows.reduce((s, r) => s + r.readingCount, 0);
+  return { rows: filledRows, granularity: "hour", totalReadings };
 }
 
 // ============================================
