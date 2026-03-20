@@ -118,8 +118,8 @@ BEGIN
       SUM(faulty_pickups)::bigint                               AS faulty_pickups,
       SUM(other_errors)::bigint                                 AS other_errors,
       COUNT(*)::integer                                         AS reading_count,
-      ROUND(AVG(efficiency) FILTER (WHERE efficiency > 0), 2)  AS avg_efficiency,
-      ROUND(AVG(reject_rate), 2)                                AS avg_scrap_rate
+      ROUND(AVG(efficiency)::numeric FILTER (WHERE efficiency > 0), 2)  AS avg_efficiency,
+      ROUND(AVG(reject_rate)::numeric, 2)                              AS avg_scrap_rate
     FROM ssl_data
     GROUP BY summary_date, shift_label, machine_id, machine_code, cell_id
   ),
