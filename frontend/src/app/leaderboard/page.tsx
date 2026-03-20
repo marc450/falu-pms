@@ -83,6 +83,97 @@ function scrapColor(val: number | null): string {
   return "text-red-400";
 }
 
+// ─── Gauge component ─────────────────────────────────────────────────────────
+
+/**
+ * Semicircle gauge with red → yellow → green zones.
+ * `value` is the current reading, `min`/`max` define the arc range.
+ * `zones` defines where colors change: [redEnd, yellowEnd] as values.
+ * If `invert` is true, low values are good (green on left, red on right).
+ */
+function Gauge({
+  value, min, max, zones, label, display, invert = false,
+}: {
+  value:   number | null;
+  min:     number;
+  max:     number;
+  zones:   [number, number]; // [boundary1, boundary2] — thresholds between zones
+  label:   string;
+  display: string;
+  invert?: boolean;
+}) {
+  const cx = 120, cy = 110, r = 90, stroke = 18;
+  // Arc from 180deg (left) to 0deg (right) = PI to 0
+  const startAngle = Math.PI;
+  const endAngle   = 0;
+  const totalArc   = Math.PI; // semicircle
+
+  // Clamp value to [min, max]
+  const clamped = value !== null ? Math.max(min, Math.min(max, value)) : min;
+  const pct = (clamped - min) / (max - min);
+  const needleAngle = startAngle - pct * totalArc;
+
+  // Zone boundaries as fractions
+  const z1 = (zones[0] - min) / (max - min);
+  const z2 = (zones[1] - min) / (max - min);
+
+  // Colors: normal = red→yellow→green (left to right), inverted = green→yellow→red
+  const c1 = invert ? "#22c55e" : "#ef4444";
+  const c2 = "#eab308";
+  const c3 = invert ? "#ef4444" : "#22c55e";
+
+  // Helper to draw an arc path
+  const arcPath = (fromFrac: number, toFrac: number) => {
+    const a1 = startAngle - fromFrac * totalArc;
+    const a2 = startAngle - toFrac * totalArc;
+    const x1 = cx + r * Math.cos(a1);
+    const y1 = cy - r * Math.sin(a1);
+    const x2 = cx + r * Math.cos(a2);
+    const y2 = cy - r * Math.sin(a2);
+    const largeArc = (toFrac - fromFrac) > 0.5 ? 1 : 0;
+    return `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`;
+  };
+
+  // Needle endpoint
+  const needleLen = r - 8;
+  const nx = cx + needleLen * Math.cos(needleAngle);
+  const ny = cy - needleLen * Math.sin(needleAngle);
+
+  // Needle color from value
+  const needleColor = value === null ? "#6b7280"
+    : invert
+      ? (value <= zones[0] ? "#22c55e" : value <= zones[1] ? "#eab308" : "#ef4444")
+      : (value >= zones[1] ? "#22c55e" : value >= zones[0] ? "#eab308" : "#ef4444");
+
+  return (
+    <div className="flex flex-col items-center">
+      <p className="text-sm text-gray-400 uppercase tracking-wider font-bold mb-1">{label}</p>
+      <svg viewBox="0 0 240 135" className="w-full max-w-[280px]">
+        {/* Zone arcs */}
+        <path d={arcPath(0, z1)} fill="none" stroke={c1} strokeWidth={stroke} strokeLinecap="butt" />
+        <path d={arcPath(z1, z2)} fill="none" stroke={c2} strokeWidth={stroke} strokeLinecap="butt" />
+        <path d={arcPath(z2, 1)} fill="none" stroke={c3} strokeWidth={stroke} strokeLinecap="butt" />
+
+        {/* Needle */}
+        {value !== null && (
+          <>
+            <line x1={cx} y1={cy} x2={nx} y2={ny} stroke={needleColor} strokeWidth={4} strokeLinecap="round" />
+            <circle cx={cx} cy={cy} r={6} fill={needleColor} />
+          </>
+        )}
+
+        {/* Center dot */}
+        <circle cx={cx} cy={cy} r={3} fill="#1f2937" />
+      </svg>
+      <p className={`-mt-3 text-4xl font-black tabular-nums ${
+        value === null ? "text-gray-600" : ""
+      }`} style={value !== null ? { color: needleColor } : {}}>
+        {display}
+      </p>
+    </div>
+  );
+}
+
 // ─── Auto-refresh interval (ms) ──────────────────────────────────────────────
 
 const REFRESH_MS = 5 * 60 * 1000; // 5 minutes
@@ -273,43 +364,41 @@ export default function LeaderboardPage() {
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          FLOOR KPI TILES
+          FLOOR KPI GAUGES
           ═══════════════════════════════════════════════════════════════════ */}
       <div className="grid grid-cols-3 gap-4">
-        {/* Fleet Avg BU */}
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-8 py-6 flex items-center gap-6">
-          <i className="bi bi-box-seam text-5xl text-blue-400"></i>
-          <div>
-            <p className="text-sm text-gray-500 uppercase tracking-wider font-semibold">Fleet Avg BU</p>
-            <p className={`text-5xl font-black tabular-nums ${buColor(fleetBu, buGood, buMed)}`}>
-              {fmtN(fleetBu, 1)}
-            </p>
-            <p className="text-xs text-gray-600 mt-1">Normalized to 12 h shift</p>
-          </div>
+        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-6 py-5">
+          <Gauge
+            value={fleetEff}
+            min={0}
+            max={100}
+            zones={[55, 75]}
+            label="Floor Efficiency"
+            display={fmtPct(fleetEff, 1)}
+          />
         </div>
 
-        {/* Floor Efficiency */}
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-8 py-6 flex items-center gap-6">
-          <i className="bi bi-speedometer2 text-5xl text-cyan-400"></i>
-          <div>
-            <p className="text-sm text-gray-500 uppercase tracking-wider font-semibold">Floor Efficiency</p>
-            <p className={`text-5xl font-black tabular-nums ${effColor(fleetEff)}`}>
-              {fmtPct(fleetEff, 1)}
-            </p>
-            <p className="text-xs text-gray-600 mt-1">Last 7 days</p>
-          </div>
+        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-6 py-5">
+          <Gauge
+            value={fleetBu}
+            min={0}
+            max={buGood * 1.3}
+            zones={[buMed, buGood]}
+            label="Fleet Avg BU"
+            display={fmtN(fleetBu, 1)}
+          />
         </div>
 
-        {/* Floor Waste */}
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-8 py-6 flex items-center gap-6">
-          <i className="bi bi-trash3 text-5xl text-orange-400"></i>
-          <div>
-            <p className="text-sm text-gray-500 uppercase tracking-wider font-semibold">Floor Waste</p>
-            <p className={`text-5xl font-black tabular-nums ${scrapColor(fleetScrap)}`}>
-              {fmtPct(fleetScrap, 1)}
-            </p>
-            <p className="text-xs text-gray-600 mt-1">Last 7 days</p>
-          </div>
+        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-6 py-5">
+          <Gauge
+            value={fleetScrap}
+            min={0}
+            max={10}
+            zones={[3, 5]}
+            label="Floor Waste"
+            display={fmtPct(fleetScrap, 1)}
+            invert
+          />
         </div>
       </div>
 
