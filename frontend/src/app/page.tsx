@@ -92,14 +92,16 @@ function calcBuRunRate(
 
   // Determine effective BU rate:
   //   - Machine running: use live speed for real-time accuracy.
-  //   - Machine idle/error (speed = 0): fall back to the average rate from PLC
-  //     ProductionTime so breaks and errors do not freeze the forecast at zero.
+  //   - Machine idle/error (speed = 0): fall back to the average BU/min rate
+  //     over the elapsed shift time so breaks do not freeze the forecast.
+  //     Using elapsed (not ProductionTime) because PLC production counters
+  //     accumulate across shifts and cannot be trusted as a per-shift value.
   const currentSpeed = m.machineStatus?.Speed ?? 0;
   let buPerMin: number;
   if (currentSpeed > 0) {
     buPerMin = currentSpeed / 7200;
-  } else if (productionTimeMins > 0 && currentBUs > 0) {
-    buPerMin = currentBUs / productionTimeMins;
+  } else if (elapsed > 0 && currentBUs > 0) {
+    buPerMin = currentBUs / elapsed;
   } else {
     buPerMin = 0;
   }
