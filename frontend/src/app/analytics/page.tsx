@@ -87,7 +87,9 @@ function fmtDateShort(d: Date): string {
 
 function fmtBucket(key: string, granularity: "hour" | "day"): string {
   try {
-    if (granularity === "hour") return format(parseISO(key + ":00:00"), "HH:mm");
+    // Append "Z" so the UTC bucket key is parsed as UTC and then converted
+    // to local time by date-fns for display.
+    if (granularity === "hour") return format(parseISO(key + ":00:00Z"), "HH:mm");
     return fmtDateShort(parseISO(key));
   } catch { return key; }
 }
@@ -95,7 +97,7 @@ function fmtBucket(key: string, granularity: "hour" | "day"): string {
 function fmtBucketFull(key: string, granularity: "hour" | "day"): string {
   try {
     if (granularity === "hour") {
-      const d = parseISO(key + ":00:00");
+      const d = parseISO(key + ":00:00Z");
       return `${fmtDateShort(d)} ${format(d, "HH:mm")}`;
     }
     return fmtDateShort(parseISO(key));
@@ -105,7 +107,7 @@ function fmtBucketFull(key: string, granularity: "hour" | "day"): string {
 function fmtBucketRange(key: string, granularity: "hour" | "day"): [string, string] {
   try {
     if (granularity === "hour") {
-      const d = parseISO(key + ":00:00");
+      const d = parseISO(key + ":00:00Z");
       const next = new Date(d.getTime() + 3_600_000);
       return [format(d, "HH:mm"), format(next, "HH:mm")];
     }
