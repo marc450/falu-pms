@@ -1009,26 +1009,52 @@ export interface MachineShiftRow {
 export async function fetchMachineShiftSummary(range: DateRange): Promise<MachineShiftRow[]> {
   const sb = getSupabase();
 
-  // Query saved_shift_logs directly — one row per completed shift-end event
-  // per machine. Only finished shifts are ever written here, so in-progress
-  // and not-yet-started shifts never appear.
-  // Multiple rows can exist for the same machine + shift + day (e.g. partial
-  // saves within a shift), so we aggregate them in JS.
-  // Shift label matches aggregate_daily_summary: UTC hour 7–18 → 'A', else → 'B'.
-  // production_time is in seconds (same unit stored as production_time_seconds
-  // in daily_machine_summary).
-  const { data, error } = await sb
-    .from("saved_shift_logs")
-    .select("machine_id, machine_code, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
-    .gte("saved_at", range.start.toISOString())
-    .lte("saved_at", range.end.toISOString())
-    .order("saved_at", { ascending: false });
+  // Helper: local YYYY-MM-DD string (no UTC offset shift)
+  const toLocalDate = (d: Date) => {
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, "0");
+    const day = String(d.getDate()).padStart(2, "0");
+    return `${y}-${m}-${day}`;
+  };
 
-  if (error) throw new Error(error.message);
+  // Fetch both tables in parallel.
+  // shift_assignments: include one extra day before range.start because night
+  // shifts save in the early morning of the NEXT day (e.g. a shift that ran on
+  // March 19 night saves at 06:00 UTC March 20 — its shift_date is March 19).
+  const rangeStartOneDayBefore = new Date(range.start);
+  rangeStartOneDayBefore.setDate(rangeStartOneDayBefore.getDate() - 1);
 
-  // Aggregate by (work_day, shift_label, machine_id).
+  const [logsResult, assignmentsResult] = await Promise.all([
+    sb
+      .from("saved_shift_logs")
+      .select("machine_id, machine_code, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
+      .gte("saved_at", range.start.toISOString())
+      .lte("saved_at", range.end.toISOString())
+      .order("saved_at", { ascending: false }),
+    fetchShiftAssignments(
+      toLocalDate(rangeStartOneDayBefore),
+      toLocalDate(range.end),
+    ),
+  ]);
+
+  if (logsResult.error) throw new Error(logsResult.error.message);
+
+  // Build a fast lookup: shift_date → ShiftAssignment
+  const assignMap: Record<string, ShiftAssignment> = {};
+  for (const a of assignmentsResult) assignMap[a.shift_date] = a;
+
+  // Aggregate by (shift_date, slot_index, machine_id).
+  // For each saved_shift_log row:
+  //   - saved_at UTC hour < 12  → Night slot (index 1) just ended
+  //     shift_date = UTC date of saved_at MINUS 1 day (shift started previous evening)
+  //   - saved_at UTC hour >= 12 → Day slot (index 0) just ended
+  //     shift_date = UTC date of saved_at (shift started same day morning)
+  // The crew label comes from shift_assignments[shift_date].slot_teams[slotIndex].
+  // Falls back to "Slot 1" / "Slot 2" when no assignment is configured.
   type Acc = {
     machineCode:  string;
+    shiftDate:    string;
+    slotIndex:    number;
     swabs:        number;
     boxes:        number;
     prodTimeSecs: number;
@@ -1038,17 +1064,25 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
   };
   const map = new Map<string, Acc>();
 
-  for (const row of (data ?? []) as Record<string, unknown>[]) {
-    const savedAt    = new Date(String(row.saved_at));
-    const utcHour    = savedAt.getUTCHours();
-    // Night shift (A) ends at ~06:00 UTC → hour < 12.
-    // Day shift  (B) ends at ~18:00 UTC → hour >= 12.
-    const shiftLabel = utcHour < 12 ? "A" : "B";
-    const workDay    = savedAt.toISOString().slice(0, 10); // 'YYYY-MM-DD' UTC
-    const key        = `${workDay}|${shiftLabel}|${String(row.machine_id)}`;
+  for (const row of (logsResult.data ?? []) as Record<string, unknown>[]) {
+    const savedAt  = new Date(String(row.saved_at));
+    const utcHour  = savedAt.getUTCHours();
+    const isNight  = utcHour < 12; // night slot ends in the morning
+    const slotIndex = isNight ? 1 : 0;
 
+    // shift_date: calendar date when this slot STARTED
+    const utcDateStr = savedAt.toISOString().slice(0, 10);
+    let shiftDate = utcDateStr;
+    if (isNight) {
+      // The night slot started the previous evening — subtract one day
+      const prev = new Date(savedAt);
+      prev.setUTCDate(prev.getUTCDate() - 1);
+      shiftDate = prev.toISOString().slice(0, 10);
+    }
+
+    const key = `${shiftDate}|${slotIndex}|${String(row.machine_id)}`;
     if (!map.has(key)) {
-      map.set(key, { machineCode: String(row.machine_code), swabs: 0, boxes: 0, prodTimeSecs: 0, discarded: 0, effSum: 0, effCount: 0 });
+      map.set(key, { machineCode: String(row.machine_code), shiftDate, slotIndex, swabs: 0, boxes: 0, prodTimeSecs: 0, discarded: 0, effSum: 0, effCount: 0 });
     }
     const b = map.get(key)!;
     b.swabs        += Number(row.produced_swabs)  || 0;
@@ -1060,16 +1094,19 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
   }
 
   return Array.from(map.entries()).map(([key, b]) => {
-    const parts      = key.split("|");
-    const workDay    = parts[0];
-    const shiftLabel = parts[1];
-    const machineId  = parts[2];
-    const runHours   = b.prodTimeSecs > 0 ? b.prodTimeSecs / 3600 : null;
-    const buNorm     = runHours && runHours > 0
+    // key = "shiftDate|slotIndex|machineId"
+    const machineId = key.split("|")[2];
+
+    // Resolve crew name from the monthly schedule
+    const crew = assignMap[b.shiftDate]?.slot_teams?.[b.slotIndex];
+    const shiftLabel = crew ?? (b.slotIndex === 0 ? "Day" : "Night");
+
+    const runHours = b.prodTimeSecs > 0 ? b.prodTimeSecs / 3600 : null;
+    const buNorm   = runHours && runHours > 0
       ? Math.round(((b.swabs / 7200) / runHours * 12) * 10) / 10
       : null;
     return {
-      work_day:       workDay,
+      work_day:       b.shiftDate,
       shift_label:    shiftLabel,
       machine_id:     machineId,
       machine_code:   b.machineCode,

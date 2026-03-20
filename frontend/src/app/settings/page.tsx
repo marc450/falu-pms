@@ -1083,7 +1083,13 @@ function ThresholdsTab() {
 // ─────────────────────────────────────────────────────────────
 
 function toISODate(d: Date): string {
-  return d.toISOString().slice(0, 10);
+  // Use local date components, not UTC, so the calendar shows the correct day
+  // in the user's timezone (toISOString() converts to UTC which shifts the date
+  // by the UTC offset and causes the calendar to highlight the wrong day).
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 const WEEKDAYS = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
