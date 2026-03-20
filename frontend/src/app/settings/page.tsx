@@ -201,9 +201,14 @@ function MachinesTab() {
 
   const confirmDeleteCell = async () => {
     if (!confirmDelete) return;
-    await deleteProductionCell(confirmDelete.cellId);
-    setConfirmDelete(null);
-    await reload();
+    try {
+      await deleteProductionCell(confirmDelete.cellId);
+      setConfirmDelete(null);
+      await reload();
+    } catch (e) {
+      console.error("Failed to delete cell:", e);
+      alert(`Could not delete cell: ${e instanceof Error ? e.message : String(e)}`);
+    }
   };
 
   const handleDeleteMachine = async () => {
