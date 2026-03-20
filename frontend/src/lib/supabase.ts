@@ -1028,31 +1028,19 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
     return `${y}-${m}-${day}`;
   };
 
-  // Fetch both tables in parallel.
-  // shift_assignments: include one extra day before range.start because night
-  // shifts save in the early morning of the NEXT day (e.g. a shift that ran on
-  // March 19 night saves at 06:00 UTC March 20 — its shift_date is March 19).
-  const rangeStartOneDayBefore = new Date(range.start);
-  rangeStartOneDayBefore.setDate(rangeStartOneDayBefore.getDate() - 1);
-
-  const [logsResult, assignmentsResult] = await Promise.all([
-    sb
-      .from("saved_shift_logs")
-      .select("machine_id, machine_code, shift_number, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
-      .gte("saved_at", range.start.toISOString())
-      .lte("saved_at", range.end.toISOString())
-      .order("saved_at", { ascending: false }),
-    fetchShiftAssignments(
-      toLocalDate(rangeStartOneDayBefore),
-      toLocalDate(range.end),
-    ),
-  ]);
+  // Crew resolution happens at render time using the shiftAssignments prop
+  // passed down from the parent component (normalised against config.teams).
+  // No internal assignment lookup needed here — shift_label is always a slot
+  // letter ("A", "B", …) derived from shift_number, and teamNameForShift()
+  // maps that to the crew name at display time.
+  const logsResult = await sb
+    .from("saved_shift_logs")
+    .select("machine_id, machine_code, shift_number, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
+    .gte("saved_at", range.start.toISOString())
+    .lte("saved_at", range.end.toISOString())
+    .order("saved_at", { ascending: false });
 
   if (logsResult.error) throw new Error(logsResult.error.message);
-
-  // Build a fast lookup: shift_date → ShiftAssignment
-  const assignMap: Record<string, ShiftAssignment> = {};
-  for (const a of assignmentsResult) assignMap[a.shift_date] = a;
 
   // Aggregate by (shift_date, slot_index, machine_id).
   // slot_index = shift_number - 1 (PLC sends 1-based slot numbers).
