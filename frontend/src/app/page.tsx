@@ -57,11 +57,10 @@ function formatStateDuration(sinceMs: number, nowMs: number): string {
   return `${h}h ${String(m).padStart(2, "0")}m`;
 }
 
-// BU run rate: projected BUs at end of shift using user's formula
-// projected = currentBUs + (currentSpeed / 7200) * remaining
-// Elapsed is derived from the wall clock: (now - shiftStartedAt).
-// The bridge records shiftStartedAt when it sees ActShift change, so
-// this is always anchored to the real shift boundary, not PLC counters.
+// BU run rate: projected BUs at end of shift.
+// When the machine is running, the live speed is used.
+// When idle or in error (speed = 0), the historical average production rate
+// from PLC ProductionTime is used so planned breaks do not freeze the forecast.
 function calcBuRunRate(
   m: DashboardMachine,
   shiftLengthMinutes: number,
@@ -70,36 +69,48 @@ function calcBuRunRate(
 ): { projected: number; target: number; rate: number } | null {
   const target = m.buTarget;
   if (!target || target <= 0) return null;
-  // Show expected output for all non-offline machines (including idle/error).
-  // When idle or in error, speed is 0 so projected = currentBUs (no growth).
   const s = m.machineStatus?.Status?.toLowerCase();
   if (!s || s === "offline") return null;
 
   // Read production from the shift that is actually active, not always shift1.
   const activeShift = m.machineStatus?.ActShift ?? 1;
   const activeShiftData = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
-  const currentBUs = (activeShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
-  const buPerMin   = (m.machineStatus?.Speed ?? 0) / 7200;
+  const currentBUs      = (activeShiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0) / 7200;
 
   // Use PLC-reported ProductionTime + IdleTime as elapsed shift time.
   // The wall clock (shiftStartedAt) resets every time the bridge restarts, which
   // makes elapsed ≈ 0 and inflates the projection to near a full shift.
   // The PLC counters are unaffected by bridge restarts and reflect actual machine time.
   // Fall back to wall clock only when no PLC shift data has arrived yet.
-  const idleTime   = activeShiftData?.IdleTime ?? 0;
-  const plcElapsed = (activeShiftData?.ProductionTime ?? 0) + idleTime;
-  const elapsed    = plcElapsed > 0
+  const productionTimeMins = activeShiftData?.ProductionTime ?? 0;
+  const idleTime           = activeShiftData?.IdleTime ?? 0;
+  const plcElapsed         = productionTimeMins + idleTime;
+  const elapsed            = plcElapsed > 0
     ? plcElapsed
     : (Date.now() - shiftStartedAt) / 60000;
   if (elapsed <= 0) return null;
+
+  // Determine effective BU rate:
+  //   - Machine running: use live speed for real-time accuracy.
+  //   - Machine idle/error (speed = 0): fall back to the average rate from PLC
+  //     ProductionTime so breaks and errors do not freeze the forecast at zero.
+  const currentSpeed = m.machineStatus?.Speed ?? 0;
+  let buPerMin: number;
+  if (currentSpeed > 0) {
+    buPerMin = currentSpeed / 7200;
+  } else if (productionTimeMins > 0 && currentBUs > 0) {
+    buPerMin = currentBUs / productionTimeMins;
+  } else {
+    buPerMin = 0;
+  }
 
   // Treat planned downtime as a budget that drains as idle time accumulates.
   // Only subtract downtime that has NOT yet been consumed — avoids double-counting
   // breaks that are already baked into elapsed time.
   // Error time is excluded: it is unplanned and should not consume the budget.
   const remainingDowntimeBudget = Math.max(0, plannedDowntimeMinutes - idleTime);
-  const remaining = Math.max(0, shiftLengthMinutes - elapsed - remainingDowntimeBudget);
-  const projected = currentBUs + buPerMin * remaining;
+  const remaining  = Math.max(0, shiftLengthMinutes - elapsed - remainingDowntimeBudget);
+  const projected  = currentBUs + buPerMin * remaining;
   return { projected, target, rate: projected / target };
 }
 
