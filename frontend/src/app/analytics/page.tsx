@@ -528,16 +528,10 @@ export default function Analytics() {
   }
 
   // ── Summary KPIs ──
+  // Idle hours count as 0% uptime and 0% scrap — if machines are off, uptime suffers.
   const hasData    = rows.length > 0;
-  // Only average over hours/days that actually had machine readings.
-  // Zero-filled idle rows (readingCount === 0) must not dilute the averages.
-  const activeRows = rows.filter(d => d.readingCount > 0);
-  const avgUptime  = activeRows.length > 0
-    ? activeRows.reduce((s, d) => s + d.avgUptime, 0) / activeRows.length
-    : null;
-  const avgScrap   = activeRows.length > 0
-    ? activeRows.reduce((s, d) => s + d.avgScrap, 0) / activeRows.length
-    : null;
+  const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
+  const avgScrap   = hasData ? rows.reduce((s, d) => s + d.avgScrap,  0) / rows.length : null;
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
   const totalBUs   = Math.round(totalSwabs / 7200);
 
