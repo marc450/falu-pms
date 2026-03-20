@@ -440,57 +440,86 @@ export interface FleetTrendResult {
   totalReadings: number;
 }
 
-// Row type returned by the get_fleet_trend Postgres RPC function
-interface RpcFleetTrendRow {
-  bucket:        string;
-  avg_uptime:    number;
-  avg_scrap:     number;
-  total_boxes:   number;
-  total_swabs:   number;
-  machine_count: number;
-  reading_count: number;
-  shift_count:   number;
-}
-
 export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResult> {
-  const diffMs   = range.end.getTime() - range.start.getTime();
-  const diffDays = diffMs / (1000 * 60 * 60 * 24);
-  const granularity: "hour" | "day" = diffDays <= 2 ? "hour" : "day";
-
   const sb = getSupabase();
 
-  // Call the server-side aggregation function (migration 005_fleet_trend_rpc.sql).
-  // This avoids PostgREST's max-rows cap (default 1 000) that would otherwise
-  // truncate raw row fetches and make recent data invisible.
-  // The function handles: time bucketing, efficiency=0 exclusion, MAX per
-  // (machine, shift) for cumulative production counters.
-  const { data, error } = await sb.rpc("get_fleet_trend", {
-    range_start:        range.start.toISOString(),
-    range_end:          range.end.toISOString(),
-    bucket_granularity: granularity,
-  });
+  const rangeStartStr = `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, "0")}-${String(range.start.getDate()).padStart(2, "0")}`;
+  const rangeEndStr   = `${range.end.getFullYear()}-${String(range.end.getMonth() + 1).padStart(2, "0")}-${String(range.end.getDate()).padStart(2, "0")}`;
+
+  // Read pre-aggregated daily data from daily_machine_summary
+  const { data, error } = await sb
+    .from("daily_machine_summary")
+    .select(
+      "summary_date, shift_label, machine_id, " +
+      "swabs_produced, boxes_produced, " +
+      "reading_count, avg_efficiency, avg_scrap_rate"
+    )
+    .gte("summary_date", rangeStartStr)
+    .lte("summary_date", rangeEndStr)
+    .order("summary_date");
 
   if (error) throw new Error(error.message);
-  if (!data || (data as RpcFleetTrendRow[]).length === 0) {
-    return { rows: [], granularity, totalReadings: 0 };
+  if (!data || data.length === 0) {
+    return { rows: [], granularity: "day", totalReadings: 0 };
   }
 
-  const rpcRows = data as RpcFleetTrendRow[];
+  // Group per-machine rows into daily fleet-level buckets
+  type BucketAcc = {
+    totalSwabs:   number;
+    totalBoxes:   number;
+    machineIds:   Set<string>;
+    shiftLabels:  Set<string>;
+    readingCount: number;
+    effSum:       number;
+    scrapSum:     number;
+    weightTotal:  number;
+  };
 
-  const rows: FleetTrendRow[] = rpcRows.map(r => ({
-    date:         r.bucket,
-    avgUptime:    Number(r.avg_uptime)    || 0,
-    avgScrap:     Number(r.avg_scrap)     || 0,
-    totalBoxes:   Number(r.total_boxes)   || 0,
-    totalSwabs:   Number(r.total_swabs)   || 0,
-    machineCount: Number(r.machine_count) || 0,
-    readingCount: Number(r.reading_count) || 0,
-    shiftCount:   Number(r.shift_count)   || 1,
-  }));
+  const bucketMap = new Map<string, BucketAcc>();
+
+  for (const row of (data as unknown) as Record<string, unknown>[]) {
+    const bucketKey = String(row.summary_date);
+
+    if (!bucketMap.has(bucketKey)) {
+      bucketMap.set(bucketKey, {
+        totalSwabs: 0, totalBoxes: 0,
+        machineIds: new Set(), shiftLabels: new Set(),
+        readingCount: 0, effSum: 0, scrapSum: 0, weightTotal: 0,
+      });
+    }
+
+    const b = bucketMap.get(bucketKey)!;
+    b.totalSwabs   += Number(row.swabs_produced)  || 0;
+    b.totalBoxes   += Number(row.boxes_produced)  || 0;
+    b.readingCount += Number(row.reading_count)   || 0;
+    b.machineIds.add(String(row.machine_id));
+    b.shiftLabels.add(String(row.shift_label));
+
+    const w   = Number(row.reading_count) || 1;
+    const eff = Number(row.avg_efficiency) || 0;
+    const sc  = Number(row.avg_scrap_rate) || 0;
+    if (eff > 0) {
+      b.effSum      += eff * w;
+      b.weightTotal += w;
+    }
+    b.scrapSum += sc * w;
+  }
+
+  const rows: FleetTrendRow[] = Array.from(bucketMap.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([bucket, b]) => ({
+      date:         bucket,
+      avgUptime:    b.weightTotal > 0 ? Math.round((b.effSum   / b.weightTotal) * 10) / 10 : 0,
+      avgScrap:     b.weightTotal > 0 ? Math.round((b.scrapSum / b.weightTotal) * 10) / 10 : 0,
+      totalBoxes:   b.totalBoxes,
+      totalSwabs:   b.totalSwabs,
+      machineCount: b.machineIds.size,
+      readingCount: b.readingCount,
+      shiftCount:   b.shiftLabels.size,
+    }));
 
   const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
-
-  return { rows, granularity, totalReadings };
+  return { rows, granularity: "day", totalReadings };
 }
 
 // ============================================
