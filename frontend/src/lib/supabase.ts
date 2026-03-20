@@ -1027,7 +1027,7 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
   const [logsResult, assignmentsResult] = await Promise.all([
     sb
       .from("saved_shift_logs")
-      .select("machine_id, machine_code, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
+      .select("machine_id, machine_code, shift_number, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
       .gte("saved_at", range.start.toISOString())
       .lte("saved_at", range.end.toISOString())
       .order("saved_at", { ascending: false }),
@@ -1044,11 +1044,13 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
   for (const a of assignmentsResult) assignMap[a.shift_date] = a;
 
   // Aggregate by (shift_date, slot_index, machine_id).
-  // For each saved_shift_log row:
-  //   - saved_at UTC hour < 12  → Night slot (index 1) just ended
-  //     shift_date = UTC date of saved_at MINUS 1 day (shift started previous evening)
-  //   - saved_at UTC hour >= 12 → Day slot (index 0) just ended
-  //     shift_date = UTC date of saved_at (shift started same day morning)
+  // slot_index = shift_number - 1 (PLC sends 1-based slot numbers).
+  // shift_date = calendar date when the slot STARTED:
+  //   - UTC hour < 12 means this slot ended in the early morning, so it started
+  //     the previous evening — subtract 1 day from the UTC date.
+  //   - UTC hour >= 12 means this slot ended in the afternoon/evening on the same day.
+  // Using shift_number for slot_index is more reliable than UTC-hour thresholds,
+  // especially for 3- or 4-slot configurations.
   // The crew label comes from shift_assignments[shift_date].slot_teams[slotIndex].
   // Falls back to "Slot 1" / "Slot 2" when no assignment is configured.
   type Acc = {
@@ -1065,16 +1067,21 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
   const map = new Map<string, Acc>();
 
   for (const row of (logsResult.data ?? []) as Record<string, unknown>[]) {
-    const savedAt  = new Date(String(row.saved_at));
-    const utcHour  = savedAt.getUTCHours();
-    const isNight  = utcHour < 12; // night slot ends in the morning
-    const slotIndex = isNight ? 1 : 0;
+    const savedAt   = new Date(String(row.saved_at));
+    const utcHour   = savedAt.getUTCHours();
+    // Use shift_number from the DB (1-based) to determine which configured slot
+    // this log belongs to. Falls back to UTC-hour heuristic if absent.
+    const shiftNum  = Number(row.shift_number);
+    const slotIndex = shiftNum > 0 ? shiftNum - 1 : (utcHour < 12 ? 1 : 0);
 
-    // shift_date: calendar date when this slot STARTED
+    // shift_date: calendar date when this slot STARTED.
+    // A slot that saves in the early morning (UTC hour < 12) started the
+    // previous evening — subtract one UTC day.
+    const isNight   = utcHour < 12;
     const utcDateStr = savedAt.toISOString().slice(0, 10);
     let shiftDate = utcDateStr;
     if (isNight) {
-      // The night slot started the previous evening — subtract one day
+      // The slot started the previous evening — subtract one day
       const prev = new Date(savedAt);
       prev.setUTCDate(prev.getUTCDate() - 1);
       shiftDate = prev.toISOString().slice(0, 10);
