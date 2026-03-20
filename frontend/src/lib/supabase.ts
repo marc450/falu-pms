@@ -479,15 +479,18 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
   const fmtDate = (d: Date) =>
     `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-  // RPC aggregates server-side: one row per day, no PostgREST row-limit issues.
-  // Passing today as p_range_end excludes incomplete data (the function uses <).
-  const { data, error } = await sb.rpc("get_fleet_trend_daily", {
-    p_range_start: fmtDate(range.start),
-    p_range_end:   fmtDate(new Date()),
-  });
+  // daily_fleet_summary has one row per calendar day — max ~365 rows/year.
+  // A plain SELECT is safe; the PostgREST row limit is never a concern.
+  // Exclude today (incomplete day) by using lt(today).
+  const { data, error } = await sb
+    .from("daily_fleet_summary")
+    .select("summary_date, total_swabs, total_boxes, machine_count, shift_count, reading_count, avg_uptime, avg_scrap")
+    .gte("summary_date", fmtDate(range.start))
+    .lt("summary_date",  fmtDate(new Date()))
+    .order("summary_date");
 
   if (error) throw new Error(error.message);
-  if (!data || (data as Record<string, unknown>[]).length === 0) {
+  if (!data || data.length === 0) {
     return { rows: [], granularity: "day", totalReadings: 0 };
   }
 
