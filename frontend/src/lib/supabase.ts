@@ -946,12 +946,57 @@ export interface MachineShiftRow {
 
 export async function fetchMachineShiftSummary(range: DateRange): Promise<MachineShiftRow[]> {
   const sb = getSupabase();
-  const { data, error } = await sb.rpc("get_machine_shift_summary", {
-    p_range_start: range.start.toISOString(),
-    p_range_end:   range.end.toISOString(),
+
+  // Today's calendar date as YYYY-MM-DD
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+  const rangeStartStr = `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, "0")}-${String(range.start.getDate()).padStart(2, "0")}`;
+
+  // 1) Pre-aggregated data for past days (fast indexed table scan)
+  const preAggPromise = sb
+    .from("daily_machine_summary")
+    .select("summary_date, shift_label, machine_id, machine_code, swabs_produced, boxes_produced, production_time_seconds, avg_efficiency, avg_scrap_rate")
+    .gte("summary_date", rangeStartStr)
+    .lt("summary_date", todayStr)
+    .order("summary_date", { ascending: false });
+
+  // 2) Live RPC for today only (scans just one day of shift_readings)
+  const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
+  const liveRpcPromise = range.end >= todayStart
+    ? sb.rpc("get_machine_shift_summary", {
+        p_range_start: todayStart.toISOString(),
+        p_range_end:   range.end.toISOString(),
+      })
+    : Promise.resolve({ data: [], error: null });
+
+  const [preAggResult, liveResult] = await Promise.all([preAggPromise, liveRpcPromise]);
+
+  if (preAggResult.error) throw new Error(preAggResult.error.message);
+  if (liveResult.error) throw new Error(liveResult.error.message);
+
+  // Map pre-aggregated rows to MachineShiftRow
+  const historicalRows: MachineShiftRow[] = (preAggResult.data ?? []).map((r: Record<string, unknown>) => {
+    const runHours = Number(r.production_time_seconds) > 0 ? Number(r.production_time_seconds) / 3600 : null;
+    const swabs = Number(r.swabs_produced) || 0;
+    const buNorm = runHours && runHours > 0
+      ? Math.round(((swabs / 7200) / runHours * 12) * 10) / 10
+      : null;
+    return {
+      work_day:       String(r.summary_date),
+      shift_label:    String(r.shift_label),
+      machine_id:     String(r.machine_id),
+      machine_code:   String(r.machine_code),
+      run_hours:      runHours != null ? Math.round(runHours * 100) / 100 : null,
+      swabs_produced: swabs,
+      boxes_produced: Number(r.boxes_produced) || 0,
+      bu_normalized:  buNorm,
+      avg_efficiency: r.avg_efficiency != null ? Number(r.avg_efficiency) : null,
+      avg_scrap:      r.avg_scrap_rate != null ? Number(r.avg_scrap_rate) : null,
+    };
   });
-  if (error) throw new Error(error.message);
-  return (data ?? []).map((r: Record<string, unknown>) => ({
+
+  // Map live RPC rows (same shape as before)
+  const liveRows: MachineShiftRow[] = (liveResult.data ?? []).map((r: Record<string, unknown>) => ({
     work_day:       r.work_day       as string,
     shift_label:    r.shift_label    as string,
     machine_id:     r.machine_id     as string,
@@ -963,4 +1008,11 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
     avg_efficiency: r.avg_efficiency != null ? Number(r.avg_efficiency) : null,
     avg_scrap:      r.avg_scrap      != null ? Number(r.avg_scrap)      : null,
   }));
+
+  // Merge and sort: newest first, then shift label, then machine
+  return [...historicalRows, ...liveRows].sort((a, b) =>
+    b.work_day.localeCompare(a.work_day)
+    || a.shift_label.localeCompare(b.shift_label)
+    || a.machine_code.localeCompare(b.machine_code)
+  );
 }
