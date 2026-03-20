@@ -333,17 +333,20 @@ export default function LeaderboardPage() {
   // ── Compute true shift start from configured slot times (same as dashboard) ──
   const shiftStartedAt = useMemo(() => {
     if (!config || config.slots.length === 0) return 0;
-    const now = new Date();
+    const now = clock;
     const hour = now.getHours();
-    let activeSlotIdx = 0;
-    for (let i = config.slots.length - 1; i >= 0; i--) {
-      if (hour >= config.slots[i].startHour) { activeSlotIdx = i; break; }
+    // Sort slots by startHour then pick the latest one whose startHour <= current hour.
+    // If none match (e.g. 2am, all slots start later), default to the last sorted slot
+    // (the night shift that started yesterday). This matches the dashboard logic exactly.
+    const sorted = config.slots.map((s, i) => ({ i, startHour: s.startHour })).sort((a, b) => a.startHour - b.startHour);
+    let activeSlotIdx = sorted[sorted.length - 1].i; // default: last slot
+    for (const s of sorted) {
+      if (hour >= s.startHour) activeSlotIdx = s.i;
     }
     const slot = config.slots[activeSlotIdx];
     if (!slot) return 0;
-    const d = new Date();
+    const d = new Date(now);
     d.setHours(slot.startHour, 0, 0, 0);
-    // Cross-midnight: if computed start is in the future the shift began yesterday
     if (d.getTime() > now.getTime()) d.setDate(d.getDate() - 1);
     return d.getTime();
   }, [config, clock]);
