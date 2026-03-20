@@ -1009,110 +1009,65 @@ export interface MachineShiftRow {
 export async function fetchMachineShiftSummary(range: DateRange): Promise<MachineShiftRow[]> {
   const sb = getSupabase();
 
-  // Today's calendar date as YYYY-MM-DD
-  const now = new Date();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-  const rangeStartStr = `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, "0")}-${String(range.start.getDate()).padStart(2, "0")}`;
+  // Query saved_shift_logs directly — one row per completed shift-end event
+  // per machine. Only finished shifts are ever written here, so in-progress
+  // and not-yet-started shifts never appear.
+  // Multiple rows can exist for the same machine + shift + day (e.g. partial
+  // saves within a shift), so we aggregate them in JS.
+  // Shift label matches aggregate_daily_summary: UTC hour 7–18 → 'A', else → 'B'.
+  // production_time is in seconds (same unit stored as production_time_seconds
+  // in daily_machine_summary).
+  const { data, error } = await sb
+    .from("saved_shift_logs")
+    .select("machine_id, machine_code, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
+    .gte("saved_at", range.start.toISOString())
+    .lte("saved_at", range.end.toISOString())
+    .order("saved_at", { ascending: false });
 
-  const todayStart   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-  const tomorrowStart = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0);
+  if (error) throw new Error(error.message);
 
-  // 1) Pre-aggregated data for past completed days — fast indexed scan.
-  //    Include discarded_swabs so scrap can be computed as a volume ratio.
-  const preAggPromise = sb
-    .from("daily_machine_summary")
-    .select("summary_date, shift_label, machine_id, machine_code, swabs_produced, boxes_produced, production_time_seconds, discarded_swabs, avg_efficiency")
-    .gte("summary_date", rangeStartStr)
-    .lt("summary_date", todayStr)
-    .order("summary_date", { ascending: false })
-    .range(0, 49999);
-
-  // 2) Today's in-progress data — aggregate from hourly_analytics instead of
-  //    scanning raw shift_readings (which times out).  hourly_analytics has at
-  //    most 18 machines × 24 hours = 432 rows for a single day.
-  const todayHourlyPromise = range.end >= todayStart
-    ? sb
-        .from("hourly_analytics")
-        .select("machine_id, machine_code, plc_hour, swabs_produced, boxes_produced, production_time_seconds, discarded_swabs, reading_count, avg_efficiency")
-        .gte("plc_hour", todayStart.toISOString())
-        .lt("plc_hour",  tomorrowStart.toISOString())
-    : Promise.resolve({ data: [], error: null });
-
-  const [preAggResult, todayHourlyResult] = await Promise.all([preAggPromise, todayHourlyPromise]);
-
-  if (preAggResult.error)      throw new Error(preAggResult.error.message);
-  if (todayHourlyResult.error) throw new Error(todayHourlyResult.error.message);
-
-  // Map pre-aggregated rows — scrap as discarded/produced ratio
-  const historicalRows: MachineShiftRow[] = (preAggResult.data ?? []).map((r: Record<string, unknown>) => {
-    const runHours = Number(r.production_time_seconds) > 0 ? Number(r.production_time_seconds) / 3600 : null;
-    const swabs    = Number(r.swabs_produced)  || 0;
-    const discarded = Number(r.discarded_swabs) || 0;
-    const buNorm = runHours && runHours > 0
-      ? Math.round(((swabs / 7200) / runHours * 12) * 10) / 10
-      : null;
-    return {
-      work_day:       String(r.summary_date),
-      shift_label:    String(r.shift_label),
-      machine_id:     String(r.machine_id),
-      machine_code:   String(r.machine_code),
-      run_hours:      runHours != null ? Math.round(runHours * 100) / 100 : null,
-      swabs_produced: swabs,
-      boxes_produced: Number(r.boxes_produced) || 0,
-      bu_normalized:  buNorm,
-      avg_efficiency: r.avg_efficiency != null ? Number(r.avg_efficiency) : null,
-      avg_scrap:      swabs > 0 ? Math.round((discarded / swabs) * 1000) / 10 : null,
-    };
-  });
-
-  // Aggregate today's hourly rows into per-machine per-shift buckets.
-  // Shift label derived from UTC hour of plc_hour, matching aggregate_daily_summary:
-  //   hour 7–18 UTC = Shift A, else = Shift B.
-  type TodayAcc = {
-    machineCode:   string;
-    swabs:         number;
-    boxes:         number;
-    prodTimeSecs:  number;
-    discarded:     number;
-    effSum:        number;
-    weightTotal:   number;
+  // Aggregate by (work_day, shift_label, machine_id).
+  type Acc = {
+    machineCode:  string;
+    swabs:        number;
+    boxes:        number;
+    prodTimeSecs: number;
+    discarded:    number;
+    effSum:       number;
+    effCount:     number;
   };
-  const todayMap = new Map<string, TodayAcc>();
+  const map = new Map<string, Acc>();
 
-  for (const row of (todayHourlyResult.data ?? []) as Record<string, unknown>[]) {
-    const plcHour   = new Date(String(row.plc_hour));
-    const utcHour   = plcHour.getUTCHours();
-    const shiftLabel = (utcHour >= 7 && utcHour < 19) ? "A" : "B";
-    const key       = `${String(row.machine_id)}|${shiftLabel}`;
+  for (const row of (data ?? []) as Record<string, unknown>[]) {
+    const savedAt    = new Date(String(row.saved_at));
+    const utcHour    = savedAt.getUTCHours();
+    const shiftLabel = utcHour >= 7 && utcHour < 19 ? "A" : "B";
+    const workDay    = savedAt.toISOString().slice(0, 10); // 'YYYY-MM-DD' UTC
+    const key        = `${workDay}|${shiftLabel}|${String(row.machine_id)}`;
 
-    if (!todayMap.has(key)) {
-      todayMap.set(key, {
-        machineCode:  String(row.machine_code),
-        swabs:        0, boxes:   0,
-        prodTimeSecs: 0, discarded: 0,
-        effSum:       0, weightTotal: 0,
-      });
+    if (!map.has(key)) {
+      map.set(key, { machineCode: String(row.machine_code), swabs: 0, boxes: 0, prodTimeSecs: 0, discarded: 0, effSum: 0, effCount: 0 });
     }
-    const b = todayMap.get(key)!;
-    b.swabs        += Number(row.swabs_produced)          || 0;
-    b.boxes        += Number(row.boxes_produced)          || 0;
-    b.prodTimeSecs += Number(row.production_time_seconds) || 0;
-    b.discarded    += Number(row.discarded_swabs)         || 0;
-
-    const w   = Number(row.reading_count)  || 1;
-    const eff = Number(row.avg_efficiency) || 0;
-    b.effSum      += eff * w;
-    b.weightTotal += w;
+    const b = map.get(key)!;
+    b.swabs        += Number(row.produced_swabs)  || 0;
+    b.boxes        += Number(row.produced_boxes)  || 0;
+    b.prodTimeSecs += Number(row.production_time) || 0;
+    b.discarded    += Number(row.discarded_swabs) || 0;
+    const eff = Number(row.efficiency);
+    if (eff > 0) { b.effSum += eff; b.effCount += 1; }
   }
 
-  const liveRows: MachineShiftRow[] = Array.from(todayMap.entries()).map(([key, b]) => {
-    const [machineId, shiftLabel] = key.split("|");
-    const runHours = b.prodTimeSecs > 0 ? b.prodTimeSecs / 3600 : null;
-    const buNorm   = runHours && runHours > 0
+  return Array.from(map.entries()).map(([key, b]) => {
+    const parts      = key.split("|");
+    const workDay    = parts[0];
+    const shiftLabel = parts[1];
+    const machineId  = parts[2];
+    const runHours   = b.prodTimeSecs > 0 ? b.prodTimeSecs / 3600 : null;
+    const buNorm     = runHours && runHours > 0
       ? Math.round(((b.swabs / 7200) / runHours * 12) * 10) / 10
       : null;
     return {
-      work_day:       todayStr,
+      work_day:       workDay,
       shift_label:    shiftLabel,
       machine_id:     machineId,
       machine_code:   b.machineCode,
@@ -1120,13 +1075,10 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
       swabs_produced: b.swabs,
       boxes_produced: b.boxes,
       bu_normalized:  buNorm,
-      avg_efficiency: b.weightTotal > 0 ? Math.round((b.effSum / b.weightTotal) * 10) / 10 : null,
+      avg_efficiency: b.effCount > 0 ? Math.round((b.effSum / b.effCount) * 10) / 10 : null,
       avg_scrap:      b.swabs > 0 ? Math.round((b.discarded / b.swabs) * 1000) / 10 : null,
     };
-  });
-
-  // Merge and sort: newest first, then shift label, then machine
-  return [...historicalRows, ...liveRows].sort((a, b) =>
+  }).sort((a, b) =>
     b.work_day.localeCompare(a.work_day)
     || a.shift_label.localeCompare(b.shift_label)
     || a.machine_code.localeCompare(b.machine_code)
