@@ -8,10 +8,11 @@ import {
   fetchRegisteredMachines,
   fetchShiftConfig,
   fetchShiftAssignments,
+  fetchMachines,
 } from "@/lib/supabase";
 import type {
   RegisteredMachine, MachineShiftRow,
-  ProductionCell, ShiftConfig, ShiftAssignment,
+  ProductionCell, ShiftConfig, ShiftAssignment, BridgeState,
 } from "@/lib/supabase";
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -187,21 +188,23 @@ export default function LeaderboardPage() {
   const [machines, setMachines] = useState<RegisteredMachine[]>([]);
   const [config,   setConfig]   = useState<ShiftConfig | null>(null);
   const [assigns,  setAssigns]  = useState<Record<string, ShiftAssignment>>({});
+  const [bridge,   setBridge]   = useState<BridgeState | null>(null);
   const [loading,  setLoading]  = useState(true);
   const [lastLoad, setLastLoad] = useState<Date>(new Date());
 
+  // Heavy load: historical data (every 5 min)
   const load = useCallback(async () => {
     try {
-      // Date range: last 7 days
       const to   = new Date();
       const from = new Date();
       from.setDate(from.getDate() - 7);
       const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-      const [shiftCfg, machineList, cellList] = await Promise.all([
+      const [shiftCfg, machineList, cellList, bridgeData] = await Promise.all([
         fetchShiftConfig(),
         fetchRegisteredMachines(),
         fetchProductionCells(),
+        fetchMachines().catch(() => null),
       ]);
 
       const assignRows = await fetchShiftAssignments(fmt(from), fmt(to), shiftCfg.teams);
@@ -216,6 +219,7 @@ export default function LeaderboardPage() {
       setCells(cellList);
       setAssigns(Object.fromEntries(assignRows.map(a => [a.shift_date, a])));
       setRows(shiftData);
+      if (bridgeData) setBridge(bridgeData);
       setLastLoad(new Date());
     } catch (e) {
       console.error("Leaderboard load error:", e);
@@ -226,11 +230,18 @@ export default function LeaderboardPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  // Auto-refresh
+  // Heavy refresh every 5 min
   useEffect(() => {
     const interval = setInterval(load, REFRESH_MS);
     return () => clearInterval(interval);
   }, [load]);
+
+  // Light poll: bridge state only (every 10s for live bars)
+  useEffect(() => {
+    const poll = () => fetchMachines().then(setBridge).catch(() => {});
+    const t = setInterval(poll, 10_000);
+    return () => clearInterval(t);
+  }, []);
 
   // ── Maps ──
   const machineCellMap = useMemo(() => {
@@ -319,6 +330,43 @@ export default function LeaderboardPage() {
   const timeStr = clock.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const dateStr = clock.toLocaleDateString("de-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
+  // ── Live shift race bars ──
+  const shiftRace = useMemo(() => {
+    if (!bridge || !config) return null;
+    const shiftMins = config.shiftDurationHours * 60;
+    const plannedDown = config.plannedDowntimeMinutes ?? 0;
+    const elapsed = Math.max(0, (Date.now() - bridge.shiftStartedAt) / 60000);
+    const shiftPct = Math.min(100, (elapsed / shiftMins) * 100);
+
+    // Sum BU across all machines
+    let totalCurrentBU = 0;
+    let totalTargetBU  = 0;
+    for (const m of Object.values(bridge.machines)) {
+      // Find matching registered machine for BU target
+      const reg = machines.find(rm => rm.machine_code === m.machine);
+      if (reg?.bu_target && reg.bu_target > 0) totalTargetBU += reg.bu_target;
+      const activeShift = m.machineStatus?.ActShift ?? 1;
+      const shiftData = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
+      const swabs = shiftData?.ProducedSwabs ?? m.machineStatus?.Swabs ?? 0;
+      totalCurrentBU += swabs / 7200;
+    }
+    const buPct = totalTargetBU > 0 ? Math.min(100, (totalCurrentBU / totalTargetBU) * 100) : 0;
+
+    // Color: is BU pacing ahead of time or behind?
+    const buBarColor = buPct >= shiftPct ? "bg-green-500" : buPct >= shiftPct * 0.85 ? "bg-yellow-500" : "bg-red-500";
+
+    return {
+      shiftPct: Math.round(shiftPct),
+      buPct: Math.round(buPct),
+      buBarColor,
+      elapsedH: Math.floor(elapsed / 60),
+      elapsedM: Math.round(elapsed % 60),
+      totalH: Math.floor(shiftMins / 60),
+      totalCurrentBU: Math.round(totalCurrentBU),
+      totalTargetBU: Math.round(totalTargetBU),
+    };
+  }, [bridge, config, machines, clock]); // clock triggers re-render every second
+
   // ── Fleet avg divider index ──
   const dividerIdx = fleetBu !== null
     ? cellStats.findIndex(c => c.avgBu !== null && c.avgBu < fleetBu)
@@ -365,31 +413,22 @@ export default function LeaderboardPage() {
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          FLOOR KPI GAUGES
+          TOP ROW: Gauges + Shift Race
           ═══════════════════════════════════════════════════════════════════ */}
-      <div className="grid grid-cols-3 gap-4">
+      <div className="grid grid-cols-[1fr_1fr_2fr] gap-4">
+        {/* Gauge: Floor Uptime */}
         <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-6 py-5">
           <Gauge
             value={fleetEff}
             min={0}
             max={100}
             zones={[55, 75]}
-            label="Floor Efficiency"
+            label="Floor Uptime"
             display={fmtPct(fleetEff, 1)}
           />
         </div>
 
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-6 py-5">
-          <Gauge
-            value={fleetBu}
-            min={0}
-            max={buGood * 1.3}
-            zones={[buMed, buGood]}
-            label="Fleet Avg BU"
-            display={fmtN(fleetBu, 1)}
-          />
-        </div>
-
+        {/* Gauge: Floor Waste */}
         <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-6 py-5">
           <Gauge
             value={fleetScrap}
@@ -400,6 +439,65 @@ export default function LeaderboardPage() {
             display={fmtPct(fleetScrap, 1)}
             invert
           />
+        </div>
+
+        {/* Shift Race */}
+        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl px-6 py-5 flex flex-col justify-center gap-4">
+          <p className="text-sm text-gray-400 uppercase tracking-wider font-bold text-center">Current Shift</p>
+
+          {shiftRace ? (
+            <>
+              {/* Elapsed time bar */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                    <i className="bi bi-clock text-cyan-400 text-lg"></i>
+                    Time Elapsed
+                  </span>
+                  <span className="text-2xl font-black text-cyan-400 tabular-nums">
+                    {shiftRace.shiftPct}%
+                  </span>
+                </div>
+                <div className="h-5 bg-gray-800 rounded-full overflow-hidden">
+                  <div
+                    className="h-full rounded-full transition-all duration-1000 bg-cyan-500"
+                    style={{ width: `${shiftRace.shiftPct}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {shiftRace.elapsedH}h {String(shiftRace.elapsedM).padStart(2, "0")}m / {shiftRace.totalH}h
+                </p>
+              </div>
+
+              {/* BU output bar */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-sm font-semibold text-gray-300 flex items-center gap-2">
+                    <i className="bi bi-box-seam text-green-400 text-lg"></i>
+                    BU Output
+                  </span>
+                  <span className={`text-2xl font-black tabular-nums ${
+                    shiftRace.buPct >= shiftRace.shiftPct ? "text-green-400"
+                    : shiftRace.buPct >= shiftRace.shiftPct * 0.85 ? "text-yellow-400"
+                    : "text-red-400"
+                  }`}>
+                    {shiftRace.buPct}%
+                  </span>
+                </div>
+                <div className="h-5 bg-gray-800 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full rounded-full transition-all duration-1000 ${shiftRace.buBarColor}`}
+                    style={{ width: `${Math.min(100, shiftRace.buPct)}%` }}
+                  />
+                </div>
+                <p className="text-xs text-gray-500 mt-1">
+                  {shiftRace.totalCurrentBU.toLocaleString()} / {shiftRace.totalTargetBU.toLocaleString()} BU
+                </p>
+              </div>
+            </>
+          ) : (
+            <p className="text-gray-600 text-center text-sm">Waiting for live data...</p>
+          )}
         </div>
       </div>
 
