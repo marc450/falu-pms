@@ -778,14 +778,11 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={shouldAngle
-                        ? (props: any) => <LineTick {...props} granularity={granularity} angled />
-                        : TICK_STYLE}
+                      tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
-                      tickFormatter={shouldAngle ? undefined : fmtTick}
                       interval={tickInterval}
-                      height={xAxisHeight}
+                      height={shouldAngle ? 56 : 36}
                       {...(dailyTicks ? { ticks: dailyTicks } : {})}
                     />
                     <YAxis
@@ -837,14 +834,11 @@ export default function Analytics() {
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
-                      tick={shouldAngle
-                        ? (props: any) => <LineTick {...props} granularity={granularity} angled />
-                        : TICK_STYLE}
+                      tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                       tickLine={false}
                       axisLine={{ stroke: AXIS_COLOR }}
-                      tickFormatter={shouldAngle ? undefined : fmtTick}
                       interval={tickInterval}
-                      height={xAxisHeight}
+                      height={shouldAngle ? 56 : 36}
                       {...(dailyTicks ? { ticks: dailyTicks } : {})}
                     />
                     <YAxis
