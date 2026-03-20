@@ -614,9 +614,17 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
   cursor.setUTCMinutes(0, 0, 0);
   while (cursor < range.end) {
     const key = cursor.toISOString().slice(0, 13); // "YYYY-MM-DDTHH"
+    // Never render an hour that has not yet fully elapsed — the cron job
+    // for that hour has not run yet so any data would be partial/incomplete.
+    const hourEnd = new Date(cursor);
+    hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
+    if (hourEnd > now) {
+      cursor.setUTCHours(cursor.getUTCHours() + 1);
+      continue;
+    }
     const b = bucketMap.get(key);
     if (b) {
-      // Real data from hourly_analytics — always include.
+      // Real data from hourly_analytics — include now that the hour is complete.
       filledRows.push({
         date:         key,
         avgUptime:    b.weightTotal > 0
@@ -632,22 +640,17 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
         shiftCount:   b.shiftNumbers.size,
       });
     } else {
-      // No DB row for this hour. Only emit a zero slot if the hour has fully
-      // elapsed (hourEnd <= now), so incomplete/future hours stay off the chart.
-      const hourEnd = new Date(cursor);
-      hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
-      if (hourEnd <= now) {
-        filledRows.push({
-          date:         key,
-          avgUptime:    0,
-          avgScrap:     0,
-          totalBoxes:   0,
-          totalSwabs:   0,
-          machineCount: 0,
-          readingCount: 0,
-          shiftCount:   0,
-        });
-      }
+      // No DB row — emit a zero slot (hour is idle/offline).
+      filledRows.push({
+        date:         key,
+        avgUptime:    0,
+        avgScrap:     0,
+        totalBoxes:   0,
+        totalSwabs:   0,
+        machineCount: 0,
+        readingCount: 0,
+        shiftCount:   0,
+      });
     }
     cursor.setUTCHours(cursor.getUTCHours() + 1);
   }
