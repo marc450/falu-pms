@@ -152,6 +152,39 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   return data ?? [];
 }
 
+// Lightweight version: only the columns that change every few seconds.
+// Used by the polling interval to minimise Supabase egress.
+export interface MachineLiveData {
+  id: string;
+  machine_code: string;
+  status: string | null;
+  error_message: string | null;
+  active_shift: number | null;
+  speed: number | null;
+  current_swabs: number | null;
+  current_boxes: number | null;
+  current_efficiency: number | null;
+  current_reject: number | null;
+  last_sync_status: string | null;
+  last_sync_shift: number | null;
+}
+
+export async function fetchMachineLiveData(): Promise<MachineLiveData[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("machines")
+    .select(
+      "id, machine_code, status, error_message, active_shift, speed, " +
+      "current_swabs, current_boxes, current_efficiency, current_reject, " +
+      "last_sync_status, last_sync_shift"
+    )
+    .eq("hidden", false)
+    .order("machine_code");
+
+  if (error) throw new Error(error.message);
+  return (data ?? []) as unknown as MachineLiveData[];
+}
+
 export interface MachineTargets {
   efficiency_good: number | null;
   efficiency_mediocre: number | null;
@@ -443,87 +476,31 @@ export interface FleetTrendResult {
 export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResult> {
   const sb = getSupabase();
 
-  const rangeStartStr = `${range.start.getFullYear()}-${String(range.start.getMonth() + 1).padStart(2, "0")}-${String(range.start.getDate()).padStart(2, "0")}`;
-  const rangeEndStr   = `${range.end.getFullYear()}-${String(range.end.getMonth() + 1).padStart(2, "0")}-${String(range.end.getDate()).padStart(2, "0")}`;
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-  // Exclude today: the day is incomplete so showing partial data is misleading.
-  // Use .lt(todayStr) to only include fully completed calendar days.
-  const now = new Date();
-  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
-
-  // Read pre-aggregated daily data from daily_machine_summary.
-  // .range(0, 49999) overrides the default PostgREST 1000-row cap.
-  const { data, error } = await sb
-    .from("daily_machine_summary")
-    .select(
-      "summary_date, shift_label, machine_id, " +
-      "swabs_produced, boxes_produced, " +
-      "reading_count, avg_efficiency, avg_scrap_rate"
-    )
-    .gte("summary_date", rangeStartStr)
-    .lt("summary_date", todayStr)
-    .order("summary_date")
-    .range(0, 49999);
+  // RPC aggregates server-side: one row per day, no PostgREST row-limit issues.
+  // Passing today as p_range_end excludes incomplete data (the function uses <).
+  const { data, error } = await sb.rpc("get_fleet_trend_daily", {
+    p_range_start: fmtDate(range.start),
+    p_range_end:   fmtDate(new Date()),
+  });
 
   if (error) throw new Error(error.message);
-  if (!data || data.length === 0) {
+  if (!data || (data as Record<string, unknown>[]).length === 0) {
     return { rows: [], granularity: "day", totalReadings: 0 };
   }
 
-  // Group per-machine rows into daily fleet-level buckets
-  type BucketAcc = {
-    totalSwabs:   number;
-    totalBoxes:   number;
-    machineIds:   Set<string>;
-    shiftLabels:  Set<string>;
-    readingCount: number;
-    effSum:       number;
-    scrapSum:     number;
-    weightTotal:  number;
-  };
-
-  const bucketMap = new Map<string, BucketAcc>();
-
-  for (const row of (data as unknown) as Record<string, unknown>[]) {
-    const bucketKey = String(row.summary_date);
-
-    if (!bucketMap.has(bucketKey)) {
-      bucketMap.set(bucketKey, {
-        totalSwabs: 0, totalBoxes: 0,
-        machineIds: new Set(), shiftLabels: new Set(),
-        readingCount: 0, effSum: 0, scrapSum: 0, weightTotal: 0,
-      });
-    }
-
-    const b = bucketMap.get(bucketKey)!;
-    b.totalSwabs   += Number(row.swabs_produced)  || 0;
-    b.totalBoxes   += Number(row.boxes_produced)  || 0;
-    b.readingCount += Number(row.reading_count)   || 0;
-    b.machineIds.add(String(row.machine_id));
-    b.shiftLabels.add(String(row.shift_label));
-
-    const w   = Number(row.reading_count) || 1;
-    const eff = Number(row.avg_efficiency) || 0;
-    const sc  = Number(row.avg_scrap_rate) || 0;
-    if (eff > 0) {
-      b.effSum      += eff * w;
-      b.weightTotal += w;
-    }
-    b.scrapSum += sc * w;
-  }
-
-  const rows: FleetTrendRow[] = Array.from(bucketMap.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([bucket, b]) => ({
-      date:         bucket,
-      avgUptime:    b.weightTotal > 0 ? Math.round((b.effSum   / b.weightTotal) * 10) / 10 : 0,
-      avgScrap:     b.weightTotal > 0 ? Math.round((b.scrapSum / b.weightTotal) * 10) / 10 : 0,
-      totalBoxes:   b.totalBoxes,
-      totalSwabs:   b.totalSwabs,
-      machineCount: b.machineIds.size,
-      readingCount: b.readingCount,
-      shiftCount:   b.shiftLabels.size,
-    }));
+  const rows: FleetTrendRow[] = (data as Record<string, unknown>[]).map(r => ({
+    date:         String(r.summary_date),
+    avgUptime:    Number(r.avg_uptime)    || 0,
+    avgScrap:     Number(r.avg_scrap)     || 0,
+    totalBoxes:   Number(r.total_boxes)   || 0,
+    totalSwabs:   Number(r.total_swabs)   || 0,
+    machineCount: Number(r.machine_count) || 0,
+    readingCount: Number(r.reading_count) || 0,
+    shiftCount:   Number(r.shift_count)   || 1,
+  }));
 
   const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
   return { rows, granularity: "day", totalReadings };

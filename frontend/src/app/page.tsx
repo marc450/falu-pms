@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import {
   fetchMachines,
   fetchRegisteredMachines,
+  fetchMachineLiveData,
   fetchProductionCells,
   fetchThresholds,
   fetchShiftConfig,
@@ -19,7 +20,7 @@ import {
   DEFAULT_THRESHOLDS,
   DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
-import type { MachineData, RegisteredMachine, ProductionCell, Thresholds, PackingFormat, ShiftConfig } from "@/lib/supabase";
+import type { MachineData, RegisteredMachine, MachineLiveData, ProductionCell, Thresholds, PackingFormat, ShiftConfig } from "@/lib/supabase";
 import { PACKING_FORMATS } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
@@ -888,47 +889,80 @@ export default function Dashboard() {
   const router = useRouter();
   const bridgeFailCount = useRef(0);
   const machinesRef = useRef<Record<string, DashboardMachine>>({});
+  // Caches config columns (rarely change) so the polling loop only fetches live columns.
+  type MachineConfig = Pick<DashboardMachine,
+    "cellId" | "cellPosition" | "packingFormat" |
+    "efficiencyGood" | "efficiencyMediocre" |
+    "scrapGood" | "scrapMediocre" |
+    "buTarget" | "buMediocre" | "speedTarget" | "displayName"
+  >;
+  const machineConfigRef  = useRef<Record<string, MachineConfig>>({});
+  const displayNameMapRef = useRef<Record<string, string>>({});
 
-  const loadData = useCallback(async () => {
-    let registered: RegisteredMachine[] = [];
-    let fetchedCells: ProductionCell[] = [];
-
+  // Fetches config columns (name, thresholds, cell assignment) — rarely change.
+  // Called once on mount, then refreshed every 5 minutes.
+  const loadConfig = useCallback(async () => {
     try {
-      [registered, fetchedCells] = await Promise.all([
+      const [registered, fetchedCells] = await Promise.all([
         fetchRegisteredMachines(),
         fetchProductionCells(),
       ]);
       setCells(fetchedCells);
       setDbError(null);
+
+      const newConfig: Record<string, MachineConfig> = {};
+      const newNames:  Record<string, string>         = {};
+      for (const row of registered) {
+        newConfig[row.machine_code] = {
+          cellId:             row.cell_id,
+          cellPosition:       row.cell_position ?? 0,
+          packingFormat:      row.packing_format ?? null,
+          efficiencyGood:     row.efficiency_good ?? null,
+          efficiencyMediocre: row.efficiency_mediocre ?? null,
+          scrapGood:          row.scrap_good ?? null,
+          scrapMediocre:      row.scrap_mediocre ?? null,
+          buTarget:           row.bu_target ?? null,
+          buMediocre:         row.bu_mediocre ?? null,
+          speedTarget:        row.speed_target ?? null,
+          displayName:        row.name || row.machine_code,
+        };
+        newNames[row.machine_code] = row.name || row.machine_code;
+      }
+      machineConfigRef.current  = newConfig;
+      displayNameMapRef.current = newNames;
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      console.error("Failed to fetch from Supabase:", msg);
+      console.error("Failed to fetch machine config:", msg);
+      setDbError(msg);
+    }
+  }, []);
+
+  // Fetches only the live columns that change every few seconds (12 cols vs 22).
+  // Merges with cached config so DashboardMachine objects stay complete.
+  const loadData = useCallback(async () => {
+    let liveRows: MachineLiveData[] = [];
+
+    try {
+      liveRows = await fetchMachineLiveData();
+      setDbError(null);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error("Failed to fetch live machine data:", msg);
       setDbError(msg);
     } finally {
       setInitialLoading(false);
     }
 
-    // Build code → display name map so the dashboard shows user-assigned names.
-    const displayNameMap: Record<string, string> = {};
-    for (const row of registered) {
-      displayNameMap[row.machine_code] = row.name || row.machine_code;
-    }
+    const config       = machineConfigRef.current;
+    const displayNames = displayNameMapRef.current;
 
     const merged: Record<string, DashboardMachine> = {};
-    for (const row of registered) {
+    for (const row of liveRows) {
+      const cfg = config[row.machine_code] ?? {};
       merged[row.machine_code] = {
-        ...offlinePlaceholder(row),
-        cellId:            row.cell_id,
-        cellPosition:      row.cell_position ?? 0,
-        packingFormat:     row.packing_format ?? null,
-        efficiencyGood:    row.efficiency_good ?? null,
-        efficiencyMediocre: row.efficiency_mediocre ?? null,
-        scrapGood:         row.scrap_good ?? null,
-        scrapMediocre:     row.scrap_mediocre ?? null,
-        buTarget:          row.bu_target ?? null,
-        buMediocre:        row.bu_mediocre ?? null,
-        speedTarget:       row.speed_target ?? null,
-        displayName:       row.name || row.machine_code,
+        ...offlinePlaceholder(row as unknown as RegisteredMachine),
+        ...cfg,
+        displayName: displayNames[row.machine_code] ?? row.machine_code,
       };
     }
 
@@ -959,7 +993,7 @@ export default function Dashboard() {
           buTarget:          merged[code]?.buTarget ?? null,
           buMediocre:        merged[code]?.buMediocre ?? null,
           speedTarget:       merged[code]?.speedTarget ?? null,
-          displayName:       displayNameMap[code] ?? code,
+          displayName:       displayNames[code] ?? code,
           statusSince,
           idleTimeCalc:  idleTimeCalc  ?? 0,
           errorTimeCalc: errorTimeCalc ?? 0,
@@ -982,17 +1016,25 @@ export default function Dashboard() {
   }, []);
 
   useEffect(() => {
-    loadData();
+    // Load config first, then start live polling once config is cached.
+    loadConfig().then(() => loadData());
     fetchThresholds().then(setThresholds).catch(() => {/* use defaults */});
     fetchShiftConfig().then(setShiftConfig).catch(() => {/* use defaults */});
     const today = new Date().toISOString().slice(0, 10);
     fetchShiftAssignments(today, today)
       .then(rows => { if (rows[0]) setTodayTeams(rows[0].slot_teams); })
       .catch(() => {/* no assignment for today */});
-    const dataInterval = setInterval(loadData, 2000);
-    const clockInterval = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => { clearInterval(dataInterval); clearInterval(clockInterval); };
-  }, [loadData]);
+    // Live data: poll every 5 s (bridge publishes every 5 s, so faster is wasteful).
+    const dataInterval   = setInterval(loadData,   5_000);
+    // Config: refresh every 5 minutes to pick up setting changes.
+    const configInterval = setInterval(loadConfig, 5 * 60_000);
+    const clockInterval  = setInterval(() => setCurrentTime(new Date()), 1000);
+    return () => {
+      clearInterval(dataInterval);
+      clearInterval(configInterval);
+      clearInterval(clockInterval);
+    };
+  }, [loadData, loadConfig]);
 
   const handleSort = (col: SortColumn) => {
     if (sortColumn === col) setSortAsc(!sortAsc);
