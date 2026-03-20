@@ -101,7 +101,7 @@ export default function ShiftAnalytics({
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchMachineShiftSummary(dateRange);
+      const data = await fetchMachineShiftSummary(dateRange, shiftSlots.length);
       setRows(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");

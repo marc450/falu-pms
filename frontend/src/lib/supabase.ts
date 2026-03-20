@@ -1017,7 +1017,7 @@ export interface MachineShiftRow {
   avg_scrap:      number | null;
 }
 
-export async function fetchMachineShiftSummary(range: DateRange): Promise<MachineShiftRow[]> {
+export async function fetchMachineShiftSummary(range: DateRange, slotCount: number = 2): Promise<MachineShiftRow[]> {
   const sb = getSupabase();
 
   // Helper: local YYYY-MM-DD string (no UTC offset shift)
@@ -1071,7 +1071,14 @@ export async function fetchMachineShiftSummary(range: DateRange): Promise<Machin
     // Use shift_number from the DB (1-based) to determine which configured slot
     // this log belongs to. Falls back to UTC-hour heuristic if absent.
     const shiftNum  = Number(row.shift_number);
-    const slotIndex = shiftNum > 0 ? shiftNum - 1 : (utcHour < 12 ? 1 : 0);
+    // Map PLC shift_number (1-based) to a 0-based slot index.
+    // If the PLC sends a number that exceeds the configured slot count
+    // (e.g. shift_number=3 on a 2-slot/12h config), fall back to the
+    // UTC-hour heuristic so it maps to an existing slot.
+    const rawSlot   = shiftNum > 0 ? shiftNum - 1 : -1;
+    const slotIndex = (rawSlot >= 0 && rawSlot < slotCount)
+      ? rawSlot
+      : (utcHour < 12 ? 1 : 0);
 
     // shift_date: calendar date when this slot STARTED.
     // A slot that saves in the early morning (UTC hour < 12) started the
