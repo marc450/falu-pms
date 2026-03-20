@@ -330,12 +330,29 @@ export default function LeaderboardPage() {
   const timeStr = clock.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit", second: "2-digit" });
   const dateStr = clock.toLocaleDateString("de-CH", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
 
+  // ── Compute true shift start from configured slot times (same as dashboard) ──
+  const shiftStartedAt = useMemo(() => {
+    if (!config || config.slots.length === 0) return 0;
+    const now = new Date();
+    const hour = now.getHours();
+    let activeSlotIdx = 0;
+    for (let i = config.slots.length - 1; i >= 0; i--) {
+      if (hour >= config.slots[i].startHour) { activeSlotIdx = i; break; }
+    }
+    const slot = config.slots[activeSlotIdx];
+    if (!slot) return 0;
+    const d = new Date();
+    d.setHours(slot.startHour, 0, 0, 0);
+    // Cross-midnight: if computed start is in the future the shift began yesterday
+    if (d.getTime() > now.getTime()) d.setDate(d.getDate() - 1);
+    return d.getTime();
+  }, [config, clock]);
+
   // ── Live shift race bars ──
   const shiftRace = useMemo(() => {
-    if (!bridge || !config) return null;
+    if (!bridge || !config || shiftStartedAt <= 0) return null;
     const shiftMins = config.shiftDurationHours * 60;
-    const plannedDown = config.plannedDowntimeMinutes ?? 0;
-    const elapsed = Math.max(0, (Date.now() - bridge.shiftStartedAt) / 60000);
+    const elapsed = Math.max(0, (Date.now() - shiftStartedAt) / 60000);
     const shiftPct = Math.min(100, (elapsed / shiftMins) * 100);
 
     // Sum BU across all machines
