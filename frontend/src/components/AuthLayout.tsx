@@ -23,7 +23,8 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
   const pathname = usePathname();
   const router = useRouter();
 
-  const isLoginPage = pathname === "/login";
+  const isLoginPage       = pathname === "/login";
+  const isLeaderboardPage = pathname === "/leaderboard";
 
   useEffect(() => {
     if (loading) return;
@@ -54,6 +55,11 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     return null;
   }
 
+  // Leaderboard — full-screen, no sidebar, no padding (designed for TV display)
+  if (isLeaderboardPage) {
+    return <>{children}</>;
+  }
+
   // Authenticated — full app shell with sidebar
   return (
     <div className="flex min-h-screen">
@@ -75,6 +81,9 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           <NavLink href="/" icon="speedometer2" label="Dashboard" current={pathname} />
           <NavLink href="/analytics" icon="bar-chart-line" label="Analytics" current={pathname} />
           <NavLink href="/settings" icon="gear" label="Settings" current={pathname} />
+          <div className="mt-3 pt-3 border-t border-gray-800">
+            <NavLink href="/leaderboard" icon="trophy-fill" label="Leaderboard" current={pathname} />
+          </div>
         </nav>
 
         {/* User + logout */}
