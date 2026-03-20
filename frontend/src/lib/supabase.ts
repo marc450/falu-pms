@@ -235,6 +235,7 @@ export async function fetchProductionCells(): Promise<ProductionCell[]> {
   const { data, error } = await sb
     .from("production_cells")
     .select("id, name, position")
+    .neq("id", "00000000-0000-0000-0000-000000000000")
     .order("position");
   if (error) throw new Error(error.message);
   return data ?? [];
