@@ -175,7 +175,7 @@ BEGIN
 
   -- 2. Loop over every (machine, shift_number) with readings in the window
   FOR v_machine_id, v_machine_code, v_shift IN
-    SELECT DISTINCT sr.machine_id, sr.machine_code, sr.shift_number
+    SELECT DISTINCT sr.machine_id, COALESCE(sr.machine_code, m.machine_code), sr.shift_number
     FROM   shift_readings sr
     JOIN   machines       m  ON m.id = sr.machine_id
     WHERE
