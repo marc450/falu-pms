@@ -130,8 +130,10 @@ function Gauge({
     const y1 = cy - r * Math.sin(a1);
     const x2 = cx + r * Math.cos(a2);
     const y2 = cy - r * Math.sin(a2);
-    const largeArc = (toFrac - fromFrac) > 0.5 ? 1 : 0;
-    return `M ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2}`;
+    // In a semicircle (180° total), no zone ever spans > 180° of the full
+    // circle, so large-arc-flag is always 0.  Sweep-flag 0 draws the short
+    // arc counter-clockwise (left → right along the top in screen coords).
+    return `M ${x1} ${y1} A ${r} ${r} 0 0 0 ${x2} ${y2}`;
   };
 
   // Needle endpoint
