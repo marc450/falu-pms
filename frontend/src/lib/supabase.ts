@@ -605,6 +605,10 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
 
   // Fill every hour in the requested range so the chart has no gaps.
   // Hours with no machine data get zeroed-out entries (machines offline/idle).
+  // Only include an hour if it has fully elapsed — the pg_cron aggregation job
+  // runs at :05 past each hour, so a slot whose end time is still in the future
+  // will have no DB row yet and must not appear as a false zero bar.
+  const now         = new Date();
   const filledRows: FleetTrendRow[] = [];
   const cursor = new Date(range.start);
   cursor.setUTCMinutes(0, 0, 0);
@@ -612,6 +616,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
     const key = cursor.toISOString().slice(0, 13); // "YYYY-MM-DDTHH"
     const b = bucketMap.get(key);
     if (b) {
+      // Real data from hourly_analytics — always include.
       filledRows.push({
         date:         key,
         avgUptime:    b.weightTotal > 0
@@ -627,18 +632,22 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
         shiftCount:   b.shiftNumbers.size,
       });
     } else {
-      // No machine data for this hour (factory idle / shift gap).
-      // Emit a zeroed row so every chart shows the same x-axis ticks.
-      filledRows.push({
-        date:         key,
-        avgUptime:    0,
-        avgScrap:     0,
-        totalBoxes:   0,
-        totalSwabs:   0,
-        machineCount: 0,
-        readingCount: 0,
-        shiftCount:   0,
-      });
+      // No DB row for this hour. Only emit a zero slot if the hour has fully
+      // elapsed (hourEnd <= now), so incomplete/future hours stay off the chart.
+      const hourEnd = new Date(cursor);
+      hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
+      if (hourEnd <= now) {
+        filledRows.push({
+          date:         key,
+          avgUptime:    0,
+          avgScrap:     0,
+          totalBoxes:   0,
+          totalSwabs:   0,
+          machineCount: 0,
+          readingCount: 0,
+          shiftCount:   0,
+        });
+      }
     }
     cursor.setUTCHours(cursor.getUTCHours() + 1);
   }
