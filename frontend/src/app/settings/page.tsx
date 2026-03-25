@@ -1419,7 +1419,7 @@ function ShiftsTab() {
     <div className="space-y-5">
 
       {/* ── Top row: left cards + Mechanics side by side ── */}
-      <div className="flex gap-5 items-start">
+      <div className="flex gap-5 items-stretch">
 
       {/* ── Left column: Teams + Structure ── */}
       <div className="space-y-5 shrink-0">
@@ -1791,21 +1791,22 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
     u.first_name && u.last_name ? `${u.first_name} ${u.last_name}` : u.email;
 
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden" ref={dropdownRef}>
-      <div className="bg-gray-700 px-5 py-3">
-        <h4 className="text-white font-semibold">
-          <i className="bi bi-wrench-adjustable mr-2"></i>Shift Mechanics
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg flex flex-col h-full" ref={dropdownRef}>
+      <div className="bg-gray-800 px-5 py-3 border-b border-gray-700 shrink-0">
+        <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+          <i className="bi bi-wrench-adjustable text-cyan-400"></i>Shift Mechanics
         </h4>
-        <p className="text-gray-300 text-xs">Assign a mechanic to each shift crew</p>
+        <p className="text-gray-500 text-xs mt-0.5">Assign a mechanic to each shift crew</p>
       </div>
 
       {error && (
-        <div className="mx-5 mt-4 px-4 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+        <div className="mx-5 mt-4 px-4 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400 shrink-0">
           {error}
         </div>
       )}
 
-      <div className="p-5">
+      <div className="flex flex-col flex-1 min-h-0">
+        <div className="overflow-y-auto flex-1 p-5">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-400 text-xs uppercase tracking-wider">
@@ -1902,7 +1903,9 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
           </tbody>
         </table>
 
-        <div className="flex items-center justify-end gap-3 mt-4">
+        </div>{/* end scrollable area */}
+
+        <div className="px-5 py-3 border-t border-gray-700/50 flex items-center justify-end gap-3 shrink-0">
           {saved && <span className="text-xs text-green-400">Saved</span>}
           <button
             onClick={handleSave}
