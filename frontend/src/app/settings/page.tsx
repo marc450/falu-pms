@@ -1912,8 +1912,8 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
         </div>
       )}
 
-      <div className="flex flex-col flex-1 min-h-0">
-        <div className="overflow-y-auto flex-1 p-5">
+      <div className="flex flex-col flex-1">
+        <div className="flex-1 p-5 overflow-visible">
         <table className="w-full text-sm">
           <thead>
             <tr className="text-left text-gray-400 text-xs uppercase tracking-wider">
