@@ -27,8 +27,13 @@ import {
   shiftLengthFromSlots,
   slotsFromDuration,
   DEFAULT_SHIFT_CONFIG,
+  fetchUserProfiles,
+  updateUserRole,
+  invokeCreateUser,
+  invokeDeleteUser,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile } from "@/lib/supabase";
+import { useAuth } from "@/hooks/useAuth";
 import { fmtH } from "@/lib/fmt";
 
 type DropTarget = {
@@ -1724,6 +1729,243 @@ function ShiftsTab() {
 }
 
 // ─────────────────────────────────────────────────────────────
+// Users tab — admin user management
+// ─────────────────────────────────────────────────────────────
+function UsersTab() {
+  const { user: currentUser } = useAuth();
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newEmail, setNewEmail] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [newRole, setNewRole] = useState<"admin" | "viewer">("viewer");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<UserProfile | null>(null);
+
+  const reload = async () => {
+    try {
+      const data = await fetchUserProfiles();
+      setUsers(data);
+    } catch {
+      setError("Failed to load users");
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => { reload(); }, []);
+
+  const handleCreate = async () => {
+    if (!newEmail || !newPassword) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await invokeCreateUser(newEmail, newPassword, newRole);
+      setNewEmail("");
+      setNewPassword("");
+      setNewRole("viewer");
+      setShowAddForm(false);
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setSaving(false);
+  };
+
+  const handleRoleChange = async (userId: string, role: "admin" | "viewer") => {
+    setError(null);
+    try {
+      await updateUserRole(userId, role);
+      setUsers((prev) =>
+        prev.map((u) => (u.id === userId ? { ...u, role } : u))
+      );
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleDelete = async (userId: string) => {
+    setError(null);
+    setConfirmDelete(null);
+    try {
+      await invokeDeleteUser(userId);
+      setUsers((prev) => prev.filter((u) => u.id !== userId));
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center py-20">
+        <span className="inline-block w-5 h-5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-700 px-5 py-3 flex items-center justify-between">
+          <div>
+            <h4 className="text-white font-semibold">
+              <i className="bi bi-people-fill mr-2"></i>Users
+            </h4>
+            <p className="text-gray-300 text-xs">Manage who has access to this dashboard</p>
+          </div>
+          {!showAddForm && (
+            <button
+              onClick={() => setShowAddForm(true)}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors"
+            >
+              <i className="bi bi-plus-lg"></i>
+              Add User
+            </button>
+          )}
+        </div>
+
+        {error && (
+          <div className="mx-5 mt-4 px-4 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+            {error}
+          </div>
+        )}
+
+        {/* Add user form */}
+        {showAddForm && (
+          <div className="mx-5 mt-4 p-4 bg-gray-700/50 border border-gray-600 rounded-lg">
+            <h5 className="text-white text-sm font-medium mb-3">New User</h5>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={newEmail}
+                  onChange={(e) => setNewEmail(e.target.value)}
+                  placeholder="user@example.com"
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Temporary Password</label>
+                <input
+                  type="text"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Min. 6 characters"
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Role</label>
+                <select
+                  value={newRole}
+                  onChange={(e) => setNewRole(e.target.value as "admin" | "viewer")}
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="admin">Admin</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 mt-4">
+              <button
+                onClick={() => { setShowAddForm(false); setError(null); }}
+                className="px-4 py-2 text-sm text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleCreate}
+                disabled={saving || !newEmail || !newPassword}
+                className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
+              >
+                {saving ? "Creating..." : "Create User"}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* User list */}
+        <div className="p-5">
+          {users.length === 0 ? (
+            <div className="py-10 flex flex-col items-center justify-center text-center text-gray-500">
+              <i className="bi bi-people text-5xl mb-3 opacity-30"></i>
+              <p className="text-sm">No users found. Add your first user above.</p>
+            </div>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="text-left text-gray-400 text-xs uppercase tracking-wider">
+                  <th className="pb-3 font-medium">Email</th>
+                  <th className="pb-3 font-medium">Role</th>
+                  <th className="pb-3 font-medium">Created</th>
+                  <th className="pb-3 font-medium text-right">Actions</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-gray-700/50">
+                {users.map((u) => {
+                  const isCurrentUser = u.id === currentUser?.id;
+                  return (
+                    <tr key={u.id} className="group">
+                      <td className="py-3 text-white">
+                        {u.email}
+                        {isCurrentUser && (
+                          <span className="ml-2 text-[10px] text-gray-500">(you)</span>
+                        )}
+                      </td>
+                      <td className="py-3">
+                        {isCurrentUser ? (
+                          <span className="inline-block px-2 py-0.5 text-xs font-medium bg-blue-600/20 text-blue-400 rounded">
+                            {u.role}
+                          </span>
+                        ) : (
+                          <select
+                            value={u.role}
+                            onChange={(e) => handleRoleChange(u.id, e.target.value as "admin" | "viewer")}
+                            className="px-2 py-0.5 text-xs bg-gray-800 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500"
+                          >
+                            <option value="viewer">viewer</option>
+                            <option value="admin">admin</option>
+                          </select>
+                        )}
+                      </td>
+                      <td className="py-3 text-gray-400">
+                        {new Date(u.created_at).toLocaleDateString()}
+                      </td>
+                      <td className="py-3 text-right">
+                        {!isCurrentUser && (
+                          <button
+                            onClick={() => setConfirmDelete(u)}
+                            className="text-gray-500 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
+                            title="Delete user"
+                          >
+                            <i className="bi bi-trash3"></i>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+
+      {/* Delete confirmation modal */}
+      {confirmDelete && (
+        <ConfirmModal
+          message={`Delete user "${confirmDelete.email}"? This will permanently remove their account and they will no longer be able to log in.`}
+          confirmLabel="Delete User"
+          onConfirm={() => handleDelete(confirmDelete.id)}
+          onCancel={() => setConfirmDelete(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main settings page
 // ─────────────────────────────────────────────────────────────
 export default function SettingsPage() {
@@ -1762,20 +2004,7 @@ export default function SettingsPage() {
       </div>
 
       {/* ── USERS ── */}
-      {activeTab === "users" && (
-        <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-          <div className="bg-gray-700 px-5 py-3">
-            <h4 className="text-white font-semibold">
-              <i className="bi bi-people-fill mr-2"></i>Users
-            </h4>
-            <p className="text-gray-300 text-xs">Manage who has access to this dashboard</p>
-          </div>
-          <div className="p-10 flex flex-col items-center justify-center text-center text-gray-500">
-            <i className="bi bi-people text-5xl mb-3 opacity-30"></i>
-            <p className="text-sm">User management coming soon.</p>
-          </div>
-        </div>
-      )}
+      {activeTab === "users" && <UsersTab />}
 
       {/* ── MACHINES ── */}
       {activeTab === "machines" && <MachinesTab />}

@@ -1140,3 +1140,67 @@ export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot
     || a.machine_code.localeCompare(b.machine_code)
   );
 }
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+export interface UserProfile {
+  id: string;
+  email: string;
+  role: "admin" | "viewer";
+  created_at: string;
+}
+
+export async function fetchUserProfiles(): Promise<UserProfile[]> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("user_profiles")
+    .select("*")
+    .order("created_at", { ascending: true });
+  if (error) throw new Error(error.message);
+  return (data ?? []) as UserProfile[];
+}
+
+export async function fetchCurrentUserRole(userId: string): Promise<"admin" | "viewer" | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("user_profiles")
+    .select("role")
+    .eq("id", userId)
+    .single();
+  if (error || !data) return null;
+  return data.role as "admin" | "viewer";
+}
+
+export async function updateUserRole(userId: string, role: "admin" | "viewer"): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("user_profiles")
+    .update({ role })
+    .eq("id", userId);
+  if (error) throw new Error(error.message);
+}
+
+export async function invokeCreateUser(
+  email: string,
+  password: string,
+  role: "admin" | "viewer"
+): Promise<{ id: string; email: string; role: string }> {
+  const sb = getSupabase();
+  const { data, error } = await sb.functions.invoke("create-user", {
+    body: { email, password, role },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
+
+export async function invokeDeleteUser(userId: string): Promise<void> {
+  const sb = getSupabase();
+  const { data, error } = await sb.functions.invoke("delete-user", {
+    body: { userId },
+  });
+  if (error) throw new Error(error.message);
+  if (data?.error) throw new Error(data.error);
+}

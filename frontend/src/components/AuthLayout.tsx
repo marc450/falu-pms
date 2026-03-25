@@ -19,12 +19,13 @@ function UscLogo({ className }: { className?: string }) {
 }
 
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  const { session, loading, signOut, user } = useAuth();
+  const { session, loading, signOut, user, isAdmin } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
 
   const isLoginPage       = pathname === "/login";
   const isLeaderboardPage = pathname === "/leaderboard";
+  const isSettingsPage    = pathname === "/settings";
 
   useEffect(() => {
     if (loading) return;
@@ -34,7 +35,11 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     if (session && isLoginPage) {
       router.replace("/");
     }
-  }, [loading, session, isLoginPage, router]);
+    // Viewers cannot access settings
+    if (session && isSettingsPage && !isAdmin) {
+      router.replace("/");
+    }
+  }, [loading, session, isLoginPage, isSettingsPage, isAdmin, router]);
 
   // While checking auth state, show a minimal spinner
   if (loading) {
@@ -80,7 +85,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <nav className="flex-1 p-3 space-y-1">
           <NavLink href="/" icon="speedometer2" label="Dashboard" current={pathname} />
           <NavLink href="/analytics" icon="bar-chart-line" label="Analytics" current={pathname} />
-          <NavLink href="/settings" icon="gear" label="Settings" current={pathname} />
+          {isAdmin && <NavLink href="/settings" icon="gear" label="Settings" current={pathname} />}
           <div className="mt-3 pt-3 border-t border-gray-800">
             <NavLink href="/leaderboard" icon="trophy-fill" label="Leaderboard" current={pathname} />
           </div>
@@ -90,6 +95,11 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         <div className="p-3 border-t border-gray-800">
           <div className="px-3 py-2 mb-1">
             <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+            {isAdmin && (
+              <span className="inline-block mt-1 px-1.5 py-0.5 text-[10px] font-medium bg-blue-600/20 text-blue-400 rounded">
+                Admin
+              </span>
+            )}
           </div>
           <button
             onClick={signOut}
