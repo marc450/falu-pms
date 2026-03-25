@@ -1613,9 +1613,11 @@ function ShiftsTab() {
       </div>{/* end left column */}
 
       {/* ── Right column: Shift Mechanics + Downtime Alerts ── */}
-      <div className="flex-1 min-w-0 flex flex-col gap-5">
+      <div className="flex-1 min-w-0 flex flex-col gap-5 self-stretch">
         <ShiftMechanicsCard teams={config.teams} />
-        <DowntimeAlertsCard />
+        <div className="flex-1">
+          <DowntimeAlertsCard />
+        </div>
       </div>
 
       </div>{/* end top row */}
@@ -1796,7 +1798,7 @@ function DowntimeAlertsCard() {
   if (!loaded) return null;
 
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden h-full">
       <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
         <h4 className="text-white font-semibold text-sm flex items-center gap-2">
           <i className="bi bi-bell text-cyan-400"></i>Downtime Alerts
