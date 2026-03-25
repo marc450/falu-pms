@@ -88,9 +88,10 @@ let shiftConfig = null;   // loaded from app_settings
 let shiftMechanics = {};  // crew name -> user UUID
 
 // Twilio credentials from environment
-const TWILIO_SID    = process.env.TWILIO_ACCOUNT_SID || "";
-const TWILIO_TOKEN  = process.env.TWILIO_AUTH_TOKEN || "";
-const TWILIO_FROM   = process.env.TWILIO_WHATSAPP_FROM || "";  // e.g. "whatsapp:+14155238886"
+const TWILIO_SID          = process.env.TWILIO_ACCOUNT_SID || "";
+const TWILIO_TOKEN        = process.env.TWILIO_AUTH_TOKEN || "";
+const TWILIO_FROM         = process.env.TWILIO_WHATSAPP_FROM || "";  // e.g. "whatsapp:+14405863762"
+const TWILIO_TEMPLATE_SID = process.env.TWILIO_TEMPLATE_SID || "";   // e.g. "HXe7a2d8e64c4305f014148976f37dc85c"
 
 // ============================================
 // BROKER SETTINGS (loaded from env or defaults)
@@ -535,10 +536,28 @@ async function sendDowntimeAlert(machine, errorMinutes) {
   const mechanic = await resolveCurrentMechanic();
   const machineId = machineIdCache[machine.machine] || null;
   const roundedMin = Math.round(errorMinutes);
-  const messageBody = `⚠️ Machine ${machine.machine} has been in error for ${roundedMin} minutes. Please check.`;
+
+  // Fetch machine name and cell name from DB
+  let machineName = machine.machine;
+  let cellName = "Unknown";
+  try {
+    const { data: machineRow } = await supabase
+      .from("machines")
+      .select("name, cell_id, production_cells(name)")
+      .eq("machine_code", machine.machine)
+      .single();
+    if (machineRow) {
+      machineName = machineRow.name || machine.machine;
+      cellName = machineRow.production_cells?.name || "Unassigned";
+    }
+  } catch (e) {
+    logger.warn(`Could not fetch machine details for ${machine.machine}: ${e.message}`);
+  }
+
+  // Human-readable fallback for logs
+  const messageBody = `⚠️ ${machineName} (${machine.machine}) in ${cellName} has been in error for ${roundedMin} minutes.`;
 
   if (!mechanic) {
-    // Log the failure (no mechanic resolved)
     await supabase.from("notification_log").insert({
       machine_id: machineId,
       machine_code: machine.machine,
@@ -556,18 +575,31 @@ async function sendDowntimeAlert(machine, errorMinutes) {
 
   try {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
-    const body = new URLSearchParams({
+
+    // Use approved WhatsApp template if SID is configured, otherwise fall back to free-form text
+    const params = {
       From: TWILIO_FROM,
       To: `whatsapp:${mechanic.phone}`,
-      Body: messageBody,
-    });
+    };
+    if (TWILIO_TEMPLATE_SID) {
+      params.ContentSid = TWILIO_TEMPLATE_SID;
+      params.ContentVariables = JSON.stringify({
+        "1": machineName,
+        "2": machine.machine,
+        "3": cellName,
+        "4": String(roundedMin),
+      });
+    } else {
+      params.Body = messageBody;
+    }
+
     const resp = await fetch(url, {
       method: "POST",
       headers: {
         Authorization: `Basic ${Buffer.from(TWILIO_SID + ":" + TWILIO_TOKEN).toString("base64")}`,
         "Content-Type": "application/x-www-form-urlencoded",
       },
-      body,
+      body: new URLSearchParams(params),
     });
 
     const result = await resp.json();
