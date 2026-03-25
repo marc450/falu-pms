@@ -1416,10 +1416,13 @@ function ShiftsTab() {
   );
 
   return (
-    <div className="flex gap-5 items-start">
+    <div className="space-y-5">
 
-      {/* ── Left column: Teams + Structure + Calendar ── */}
-      <div className="space-y-5 flex-1 min-w-0">
+      {/* ── Top row: left cards + Mechanics side by side ── */}
+      <div className="flex gap-5 items-start">
+
+      {/* ── Left column: Teams + Structure ── */}
+      <div className="space-y-5 shrink-0">
 
       {/* ── Shift teams ─────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-lg">
@@ -1605,7 +1608,16 @@ function ShiftsTab() {
         </div>
       </div>
 
-      {/* ── Monthly calendar ─────────────────────────────── */}
+      </div>{/* end left column */}
+
+      {/* ── Right column: Shift Mechanics fills remaining space ── */}
+      <div className="flex-1 min-w-0">
+        <ShiftMechanicsCard teams={config.teams} />
+      </div>
+
+      </div>{/* end top row */}
+
+      {/* ── Monthly calendar — full width ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700 flex items-center justify-between">
           <div>
@@ -1650,21 +1662,15 @@ function ShiftsTab() {
 
         {/* Calendar grid */}
         <div className="p-3">
-          {/* Day-of-week header */}
           <div className="grid grid-cols-7 mb-1">
             {WEEKDAYS.map(day => (
               <div key={day} className="text-center text-xs text-gray-500 font-medium py-1">{day}</div>
             ))}
           </div>
-
-          {/* Day cells */}
           <div className="grid grid-cols-7 gap-1">
-            {/* Leading blanks */}
             {Array.from({ length: leadingBlanks }).map((_, i) => (
               <div key={`lb-${i}`} className="min-h-[60px]" />
             ))}
-
-            {/* Actual days */}
             {monthDates.map(d => {
               const dateStr = toISODate(d);
               const today = isToday(d);
@@ -1708,8 +1714,6 @@ function ShiftsTab() {
                 </div>
               );
             })}
-
-            {/* Trailing blanks */}
             {Array.from({ length: trailingBlanks }).map((_, i) => (
               <div key={`tb-${i}`} className="min-h-[60px]" />
             ))}
@@ -1729,13 +1733,6 @@ function ShiftsTab() {
             Clear month
           </button>
         </div>
-      </div>
-
-      </div>{/* end left column */}
-
-      {/* ── Right column: Shift Mechanics ── */}
-      <div className="w-80 shrink-0">
-        <ShiftMechanicsCard teams={config.teams} />
       </div>
 
     </div>
@@ -1828,7 +1825,7 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
 
               return (
                 <tr key={team}>
-                  <td className="py-3 text-white font-medium">Crew {team}</td>
+                  <td className="py-3 text-white font-medium">{team}</td>
                   <td className="py-3">
                     <div className="relative w-64">
                       {/* Trigger */}
