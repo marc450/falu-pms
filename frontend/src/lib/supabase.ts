@@ -1149,6 +1149,9 @@ export interface UserProfile {
   id: string;
   email: string;
   role: "admin" | "viewer";
+  first_name: string;
+  last_name: string;
+  whatsapp_phone: string | null;
   created_at: string;
 }
 
@@ -1162,15 +1165,15 @@ export async function fetchUserProfiles(): Promise<UserProfile[]> {
   return (data ?? []) as UserProfile[];
 }
 
-export async function fetchCurrentUserRole(userId: string): Promise<"admin" | "viewer" | null> {
+export async function fetchCurrentUserProfile(userId: string): Promise<UserProfile | null> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("user_profiles")
-    .select("role")
+    .select("*")
     .eq("id", userId)
     .single();
   if (error || !data) return null;
-  return data.role as "admin" | "viewer";
+  return data as UserProfile;
 }
 
 export async function updateUserRole(userId: string, role: "admin" | "viewer"): Promise<void> {
@@ -1179,6 +1182,24 @@ export async function updateUserRole(userId: string, role: "admin" | "viewer"): 
     .from("user_profiles")
     .update({ role })
     .eq("id", userId);
+  if (error) throw new Error(error.message);
+}
+
+export async function updateUserProfile(
+  userId: string,
+  fields: { first_name?: string; last_name?: string; whatsapp_phone?: string | null }
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("user_profiles")
+    .update(fields)
+    .eq("id", userId);
+  if (error) throw new Error(error.message);
+}
+
+export async function changePassword(newPassword: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.auth.updateUser({ password: newPassword });
   if (error) throw new Error(error.message);
 }
 
@@ -1197,11 +1218,14 @@ async function extractEdgeFnError(error: { message: string; context?: unknown })
 export async function invokeCreateUser(
   email: string,
   password: string,
-  role: "admin" | "viewer"
+  role: "admin" | "viewer",
+  first_name: string,
+  last_name: string,
+  whatsapp_phone?: string
 ): Promise<{ id: string; email: string; role: string }> {
   const sb = getSupabase();
   const { data, error } = await sb.functions.invoke("create-user", {
-    body: { email, password, role },
+    body: { email, password, role, first_name, last_name, whatsapp_phone: whatsapp_phone || null },
   });
   if (error) throw new Error(await extractEdgeFnError(error));
   if (data?.error) throw new Error(data.error);

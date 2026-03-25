@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useAuth } from "@/hooks/useAuth";
+import { updateUserProfile, changePassword } from "@/lib/supabase";
 
 // Inline SVG so it works regardless of basePath / CDN configuration
 function UscLogo({ className }: { className?: string }) {
@@ -18,10 +19,196 @@ function UscLogo({ className }: { className?: string }) {
   );
 }
 
+// ─────────────────────────────────────────────────────────────
+// My Account modal
+// ─────────────────────────────────────────────────────────────
+function MyAccountModal({ onClose }: { onClose: () => void }) {
+  const { user, profile, refreshProfile } = useAuth();
+
+  const [firstName, setFirstName] = useState(profile?.first_name ?? "");
+  const [lastName, setLastName] = useState(profile?.last_name ?? "");
+  const [phone, setPhone] = useState(profile?.whatsapp_phone ?? "");
+  const [newPassword, setNewPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+
+  const handleSaveProfile = async () => {
+    if (!user || !firstName || !lastName) return;
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await updateUserProfile(user.id, {
+        first_name: firstName,
+        last_name: lastName,
+        whatsapp_phone: phone || null,
+      });
+      await refreshProfile();
+      setSuccess("Profile updated");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setSaving(false);
+  };
+
+  const handleChangePassword = async () => {
+    if (!newPassword) return;
+    if (newPassword !== confirmPassword) {
+      setError("Passwords do not match");
+      return;
+    }
+    if (newPassword.length < 6) {
+      setError("Password must be at least 6 characters");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    setSuccess(null);
+    try {
+      await changePassword(newPassword);
+      setNewPassword("");
+      setConfirmPassword("");
+      setSuccess("Password changed");
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setSaving(false);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+          <h3 className="text-white font-semibold">
+            <i className="bi bi-person-circle mr-2"></i>My Account
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <i className="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          {error && (
+            <div className="px-4 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+              {error}
+            </div>
+          )}
+          {success && (
+            <div className="px-4 py-2.5 bg-green-500/10 border border-green-500/30 rounded-lg text-sm text-green-400">
+              {success}
+            </div>
+          )}
+
+          {/* Profile section */}
+          <div>
+            <h4 className="text-sm font-medium text-gray-300 mb-3">Profile</h4>
+            <div className="space-y-3">
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">First Name</label>
+                  <input
+                    type="text"
+                    value={firstName}
+                    onChange={(e) => setFirstName(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs text-gray-400 mb-1">Last Name</label>
+                  <input
+                    type="text"
+                    value={lastName}
+                    onChange={(e) => setLastName(e.target.value)}
+                    className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">WhatsApp Phone</label>
+                <input
+                  type="tel"
+                  value={phone}
+                  onChange={(e) => setPhone(e.target.value)}
+                  placeholder="+1 234 567 8900"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Email</label>
+                <input
+                  type="email"
+                  value={user?.email ?? ""}
+                  disabled
+                  className="w-full px-3 py-2 bg-gray-900/50 border border-gray-700 rounded-lg text-sm text-gray-500 cursor-not-allowed"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={handleSaveProfile}
+                  disabled={saving || !firstName || !lastName}
+                  className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
+                >
+                  {saving ? "Saving..." : "Save Profile"}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Password section */}
+          <div className="border-t border-gray-700 pt-6">
+            <h4 className="text-sm font-medium text-gray-300 mb-3">Change Password</h4>
+            <div className="space-y-3">
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">New Password</label>
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(e) => setNewPassword(e.target.value)}
+                  placeholder="Min. 6 characters"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Confirm Password</label>
+                <input
+                  type="password"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  placeholder="Repeat password"
+                  className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={handleChangePassword}
+                  disabled={saving || !newPassword || !confirmPassword}
+                  className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
+                >
+                  {saving ? "Changing..." : "Change Password"}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Main layout
+// ─────────────────────────────────────────────────────────────
 export default function AuthLayout({ children }: { children: React.ReactNode }) {
-  const { session, loading, signOut, user, isAdmin } = useAuth();
+  const { session, loading, signOut, user, profile, isAdmin } = useAuth();
   const pathname = usePathname();
   const router = useRouter();
+  const [showAccount, setShowAccount] = useState(false);
 
   const isLoginPage       = pathname === "/login";
   const isLeaderboardPage = pathname === "/leaderboard";
@@ -65,6 +252,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     return <>{children}</>;
   }
 
+  const displayName = profile?.first_name && profile?.last_name
+    ? `${profile.first_name} ${profile.last_name}`
+    : user?.email;
+
   // Authenticated — full app shell with sidebar
   return (
     <div className="flex min-h-screen">
@@ -91,16 +282,24 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
           </div>
         </nav>
 
-        {/* User + logout */}
+        {/* User + account + logout */}
         <div className="p-3 border-t border-gray-800">
           <div className="px-3 py-2 mb-1">
-            <p className="text-xs text-gray-500 truncate">{user?.email}</p>
+            <p className="text-xs text-white truncate">{displayName}</p>
+            <p className="text-[10px] text-gray-500 truncate">{user?.email}</p>
             {isAdmin && (
               <span className="inline-block mt-1 px-1.5 py-0.5 text-[10px] font-medium bg-blue-600/20 text-blue-400 rounded">
                 Admin
               </span>
             )}
           </div>
+          <button
+            onClick={() => setShowAccount(true)}
+            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg transition-colors"
+          >
+            <i className="bi bi-person-circle"></i>
+            My Account
+          </button>
           <button
             onClick={signOut}
             className="w-full flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors"
@@ -115,6 +314,9 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       <main className="flex-1 overflow-auto">
         <div className="p-6">{children}</div>
       </main>
+
+      {/* My Account modal */}
+      {showAccount && <MyAccountModal onClose={() => setShowAccount(false)} />}
     </div>
   );
 }

@@ -2,13 +2,20 @@
 
 import { useEffect, useState } from "react";
 import type { Session, User } from "@supabase/supabase-js";
-import { getSupabase, fetchCurrentUserRole } from "@/lib/supabase";
+import { getSupabase, fetchCurrentUserProfile } from "@/lib/supabase";
+import type { UserProfile } from "@/lib/supabase";
 
 export function useAuth() {
   const [session, setSession] = useState<Session | null>(null);
   const [user, setUser] = useState<User | null>(null);
-  const [role, setRole] = useState<"admin" | "viewer" | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const loadProfile = async (userId: string) => {
+    const p = await fetchCurrentUserProfile(userId);
+    setProfile(p);
+    return p;
+  };
 
   useEffect(() => {
     const sb = getSupabase();
@@ -18,10 +25,7 @@ export function useAuth() {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchCurrentUserRole(session.user.id).then((r) => {
-          setRole(r);
-          setLoading(false);
-        });
+        loadProfile(session.user.id).then(() => setLoading(false));
       } else {
         setLoading(false);
       }
@@ -34,9 +38,9 @@ export function useAuth() {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        fetchCurrentUserRole(session.user.id).then((r) => setRole(r));
+        loadProfile(session.user.id);
       } else {
-        setRole(null);
+        setProfile(null);
       }
       setLoading(false);
     });
@@ -49,5 +53,18 @@ export function useAuth() {
     await sb.auth.signOut();
   };
 
-  return { session, user, role, isAdmin: role === "admin", loading, signOut };
+  const refreshProfile = async () => {
+    if (user) await loadProfile(user.id);
+  };
+
+  return {
+    session,
+    user,
+    profile,
+    role: profile?.role ?? null,
+    isAdmin: profile?.role === "admin",
+    loading,
+    signOut,
+    refreshProfile,
+  };
 }

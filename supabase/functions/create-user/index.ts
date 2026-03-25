@@ -54,11 +54,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { email, password, role } = await req.json();
+    const { email, password, role, first_name, last_name, whatsapp_phone } =
+      await req.json();
 
     if (!email || !password) {
       return new Response(
         JSON.stringify({ error: "Email and password are required" }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
+    }
+
+    if (!first_name || !last_name) {
+      return new Response(
+        JSON.stringify({ error: "First name and last name are required" }),
         {
           status: 400,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -114,12 +125,20 @@ Deno.serve(async (req) => {
     }
 
     // Insert profile row (upsert to handle re-adding)
+    const profileData: Record<string, unknown> = {
+      id: userId,
+      email,
+      role: role || "viewer",
+      first_name,
+      last_name,
+    };
+    if (whatsapp_phone) {
+      profileData.whatsapp_phone = whatsapp_phone;
+    }
+
     const { error: profileError } = await supabase
       .from("user_profiles")
-      .upsert(
-        { id: userId, email, role: role || "viewer" },
-        { onConflict: "id" }
-      );
+      .upsert(profileData, { onConflict: "id" });
 
     if (profileError) {
       // Only rollback auth user if we just created it
@@ -127,7 +146,9 @@ Deno.serve(async (req) => {
         await supabase.auth.admin.deleteUser(userId);
       }
       return new Response(
-        JSON.stringify({ error: "Failed to create profile: " + profileError.message }),
+        JSON.stringify({
+          error: "Failed to create profile: " + profileError.message,
+        }),
         {
           status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -140,6 +161,9 @@ Deno.serve(async (req) => {
         id: userId,
         email,
         role: role || "viewer",
+        first_name,
+        last_name,
+        whatsapp_phone: whatsapp_phone || null,
       }),
       {
         status: 201,

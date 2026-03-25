@@ -1736,8 +1736,11 @@ function UsersTab() {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [loading, setLoading] = useState(true);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [newFirstName, setNewFirstName] = useState("");
+  const [newLastName, setNewLastName] = useState("");
   const [newEmail, setNewEmail] = useState("");
   const [newPassword, setNewPassword] = useState("");
+  const [newPhone, setNewPhone] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "viewer">("viewer");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -1756,13 +1759,16 @@ function UsersTab() {
   useEffect(() => { reload(); }, []);
 
   const handleCreate = async () => {
-    if (!newEmail || !newPassword) return;
+    if (!newEmail || !newPassword || !newFirstName || !newLastName) return;
     setSaving(true);
     setError(null);
     try {
-      await invokeCreateUser(newEmail, newPassword, newRole);
+      await invokeCreateUser(newEmail, newPassword, newRole, newFirstName, newLastName, newPhone || undefined);
+      setNewFirstName("");
+      setNewLastName("");
       setNewEmail("");
       setNewPassword("");
+      setNewPhone("");
       setNewRole("viewer");
       setShowAddForm(false);
       await reload();
@@ -1834,9 +1840,29 @@ function UsersTab() {
         {showAddForm && (
           <div className="mx-5 mt-4 p-4 bg-gray-700/50 border border-gray-600 rounded-lg">
             <h5 className="text-white text-sm font-medium mb-3">New User</h5>
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Email</label>
+                <label className="block text-xs text-gray-400 mb-1">First Name *</label>
+                <input
+                  type="text"
+                  value={newFirstName}
+                  onChange={(e) => setNewFirstName(e.target.value)}
+                  placeholder="John"
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Last Name *</label>
+                <input
+                  type="text"
+                  value={newLastName}
+                  onChange={(e) => setNewLastName(e.target.value)}
+                  placeholder="Doe"
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Email *</label>
                 <input
                   type="email"
                   value={newEmail}
@@ -1846,7 +1872,7 @@ function UsersTab() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Temporary Password</label>
+                <label className="block text-xs text-gray-400 mb-1">Temporary Password *</label>
                 <input
                   type="text"
                   value={newPassword}
@@ -1856,7 +1882,17 @@ function UsersTab() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">Role</label>
+                <label className="block text-xs text-gray-400 mb-1">WhatsApp Phone</label>
+                <input
+                  type="tel"
+                  value={newPhone}
+                  onChange={(e) => setNewPhone(e.target.value)}
+                  placeholder="+1 234 567 8900"
+                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-xs text-gray-400 mb-1">Role *</label>
                 <select
                   value={newRole}
                   onChange={(e) => setNewRole(e.target.value as "admin" | "viewer")}
@@ -1876,7 +1912,7 @@ function UsersTab() {
               </button>
               <button
                 onClick={handleCreate}
-                disabled={saving || !newEmail || !newPassword}
+                disabled={saving || !newEmail || !newPassword || !newFirstName || !newLastName}
                 className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
               >
                 {saving ? "Creating..." : "Create User"}
@@ -1896,6 +1932,7 @@ function UsersTab() {
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-gray-400 text-xs uppercase tracking-wider">
+                  <th className="pb-3 font-medium">Name</th>
                   <th className="pb-3 font-medium">Email</th>
                   <th className="pb-3 font-medium">Role</th>
                   <th className="pb-3 font-medium">Created</th>
@@ -1905,14 +1942,18 @@ function UsersTab() {
               <tbody className="divide-y divide-gray-700/50">
                 {users.map((u) => {
                   const isCurrentUser = u.id === currentUser?.id;
+                  const displayName = u.first_name && u.last_name
+                    ? `${u.first_name} ${u.last_name}`
+                    : u.email;
                   return (
                     <tr key={u.id} className="group">
                       <td className="py-3 text-white">
-                        {u.email}
+                        {displayName}
                         {isCurrentUser && (
                           <span className="ml-2 text-[10px] text-gray-500">(you)</span>
                         )}
                       </td>
+                      <td className="py-3 text-gray-400">{u.email}</td>
                       <td className="py-3">
                         {isCurrentUser ? (
                           <span className="inline-block px-2 py-0.5 text-xs font-medium bg-blue-600/20 text-blue-400 rounded">
