@@ -29,6 +29,7 @@ import {
   DEFAULT_SHIFT_CONFIG,
   fetchUserProfiles,
   updateUserRole,
+  updateUserProfile,
   invokeCreateUser,
   invokeDeleteUser,
 } from "@/lib/supabase";
@@ -1745,6 +1746,7 @@ function UsersTab() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<UserProfile | null>(null);
+  const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
 
   const reload = async () => {
     try {
@@ -1974,15 +1976,24 @@ function UsersTab() {
                         {new Date(u.created_at).toLocaleDateString()}
                       </td>
                       <td className="py-3 text-right">
-                        {!isCurrentUser && (
+                        <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                           <button
-                            onClick={() => setConfirmDelete(u)}
-                            className="text-gray-500 hover:text-red-400 transition-colors opacity-0 group-hover:opacity-100"
-                            title="Delete user"
+                            onClick={() => setEditingUser(u)}
+                            className="text-gray-500 hover:text-blue-400 transition-colors"
+                            title="Edit user"
                           >
-                            <i className="bi bi-trash3"></i>
+                            <i className="bi bi-pencil"></i>
                           </button>
-                        )}
+                          {!isCurrentUser && (
+                            <button
+                              onClick={() => setConfirmDelete(u)}
+                              className="text-gray-500 hover:text-red-400 transition-colors"
+                              title="Delete user"
+                            >
+                              <i className="bi bi-trash3"></i>
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
@@ -2002,6 +2013,157 @@ function UsersTab() {
           onCancel={() => setConfirmDelete(null)}
         />
       )}
+
+      {/* Edit user modal */}
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          onClose={() => setEditingUser(null)}
+          onSaved={(updated) => {
+            setUsers((prev) => prev.map((u) => (u.id === updated.id ? updated : u)));
+            setEditingUser(null);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+function EditUserModal({
+  user,
+  onClose,
+  onSaved,
+}: {
+  user: UserProfile;
+  onClose: () => void;
+  onSaved: (updated: UserProfile) => void;
+}) {
+  const [firstName, setFirstName] = useState(user.first_name);
+  const [lastName, setLastName] = useState(user.last_name);
+  const [phone, setPhone] = useState(user.whatsapp_phone ?? "");
+  const [role, setRole] = useState(user.role);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const handleSave = async () => {
+    if (!firstName || !lastName) return;
+    setSaving(true);
+    setError(null);
+    try {
+      await updateUserProfile(user.id, {
+        first_name: firstName,
+        last_name: lastName,
+        whatsapp_phone: phone || null,
+      });
+      if (role !== user.role) {
+        await updateUserRole(user.id, role);
+      }
+      onSaved({
+        ...user,
+        first_name: firstName,
+        last_name: lastName,
+        whatsapp_phone: phone || null,
+        role,
+      });
+    } catch (e) {
+      setError((e as Error).message);
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={onClose}>
+      <div
+        className="bg-gray-800 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md mx-4"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+          <h3 className="text-white font-semibold">
+            <i className="bi bi-pencil-square mr-2"></i>Edit User
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white transition-colors">
+            <i className="bi bi-x-lg"></i>
+          </button>
+        </div>
+
+        <div className="p-6 space-y-4">
+          {error && (
+            <div className="px-4 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">First Name</label>
+              <input
+                type="text"
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">Last Name</label>
+              <input
+                type="text"
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Email</label>
+            <input
+              type="email"
+              value={user.email}
+              disabled
+              className="w-full px-3 py-2 bg-gray-900/50 border border-gray-700 rounded-lg text-sm text-gray-500 cursor-not-allowed"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">WhatsApp Phone</label>
+            <input
+              type="tel"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              placeholder="+1 234 567 8900"
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Role</label>
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value as "admin" | "viewer")}
+              className="w-full px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500"
+            >
+              <option value="viewer">Viewer</option>
+              <option value="admin">Admin</option>
+            </select>
+          </div>
+
+          <div className="flex justify-end gap-2 pt-2">
+            <button
+              onClick={onClose}
+              className="px-4 py-2 text-sm text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-lg transition-colors"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleSave}
+              disabled={saving || !firstName || !lastName}
+              className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
+            >
+              {saving ? "Saving..." : "Save Changes"}
+            </button>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
