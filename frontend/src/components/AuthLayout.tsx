@@ -25,14 +25,25 @@ function UscLogo({ className }: { className?: string }) {
 function MyAccountModal({ onClose }: { onClose: () => void }) {
   const { user, profile, refreshProfile } = useAuth();
 
-  const [firstName, setFirstName] = useState(profile?.first_name ?? "");
-  const [lastName, setLastName] = useState(profile?.last_name ?? "");
-  const [phone, setPhone] = useState(profile?.whatsapp_phone ?? "");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [phone, setPhone] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+
+  // Sync form fields when profile becomes available
+  useEffect(() => {
+    if (profile && !profileLoaded) {
+      setFirstName(profile.first_name ?? "");
+      setLastName(profile.last_name ?? "");
+      setPhone(profile.whatsapp_phone ?? "");
+      setProfileLoaded(true);
+    }
+  }, [profile, profileLoaded]);
 
   const handleSaveProfile = async () => {
     if (!user || !firstName || !lastName) return;
