@@ -1,3 +1,6 @@
+GitHub repository: https://github.com/marc450/falu-pms
+Push command: `git -c credential.helper="" push https://marc450:$(cat ~/.ghpat)@github.com/marc450/falu-pms.git main`
+
 Always push changes to github after making them.
 Deploy to Github using the token stored in the GITHUB_TOKEN environment variable or the project owner's credentials.
 
