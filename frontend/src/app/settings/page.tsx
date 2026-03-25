@@ -1612,9 +1612,10 @@ function ShiftsTab() {
 
       </div>{/* end left column */}
 
-      {/* ── Right column: Shift Mechanics fills remaining space ── */}
-      <div className="flex-1 min-w-0">
+      {/* ── Right column: Shift Mechanics + Downtime Alerts ── */}
+      <div className="flex-1 min-w-0 flex flex-col gap-5">
         <ShiftMechanicsCard teams={config.teams} />
+        <DowntimeAlertsCard />
       </div>
 
       </div>{/* end top row */}
@@ -1737,8 +1738,6 @@ function ShiftsTab() {
         </div>
       </div>
 
-      {/* ── Downtime Alerts config ── */}
-      <DowntimeAlertsCard />
 
     </div>
   );
