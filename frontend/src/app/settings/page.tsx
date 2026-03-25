@@ -34,8 +34,10 @@ import {
   invokeDeleteUser,
   fetchShiftMechanics,
   saveShiftMechanics,
+  fetchDowntimeAlertConfig,
+  saveDowntimeAlertConfig,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile, ShiftMechanics } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile, ShiftMechanics, DowntimeAlertConfig } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { fmtH } from "@/lib/fmt";
 
@@ -1735,6 +1737,109 @@ function ShiftsTab() {
         </div>
       </div>
 
+      {/* ── Downtime Alerts config ── */}
+      <DowntimeAlertsCard />
+
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Downtime Alerts card (used inside ShiftsTab)
+// ─────────────────────────────────────────────────────────────
+function DowntimeAlertsCard() {
+  const [config, setConfig] = useState<DowntimeAlertConfig>({ enabled: false, threshold_minutes: 10 });
+  const [thresholdDisplay, setThresholdDisplay] = useState("10");
+  const [loaded, setLoaded] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchDowntimeAlertConfig().then((c) => {
+      setConfig(c);
+      setThresholdDisplay(String(c.threshold_minutes));
+      setLoaded(true);
+    });
+  }, []);
+
+  const persist = async (updated: DowntimeAlertConfig) => {
+    setError(null);
+    setSaving(true);
+    try {
+      await saveDowntimeAlertConfig(updated);
+      setConfig(updated);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 1500);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const toggleEnabled = () => {
+    const updated = { ...config, enabled: !config.enabled };
+    persist(updated);
+  };
+
+  const commitThreshold = () => {
+    const n = parseInt(thresholdDisplay, 10);
+    if (isNaN(n) || n < 1) {
+      setThresholdDisplay(String(config.threshold_minutes));
+      return;
+    }
+    if (n !== config.threshold_minutes) {
+      persist({ ...config, threshold_minutes: n });
+    }
+  };
+
+  if (!loaded) return null;
+
+  return (
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+      <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+        <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+          <i className="bi bi-bell text-cyan-400"></i>Downtime Alerts
+        </h4>
+        <p className="text-gray-500 text-xs mt-0.5">Notify the shift mechanic when a machine stays in error</p>
+      </div>
+      <div className="p-5 space-y-4">
+        {/* Enable toggle */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-300">Enable alerts</span>
+          <button
+            onClick={toggleEnabled}
+            className={`relative w-11 h-6 rounded-full transition-colors ${config.enabled ? "bg-cyan-600" : "bg-gray-600"}`}
+          >
+            <span
+              className={`absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full transition-transform ${config.enabled ? "translate-x-5" : ""}`}
+            />
+          </button>
+        </div>
+
+        {/* Threshold input */}
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-gray-300">Threshold</span>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              value={thresholdDisplay}
+              onChange={(e) => setThresholdDisplay(e.target.value)}
+              onBlur={commitThreshold}
+              onKeyDown={(e) => e.key === "Enter" && commitThreshold()}
+              className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-white text-center focus:border-cyan-500 focus:outline-none"
+            />
+            <span className="text-xs text-gray-400">minutes</span>
+          </div>
+        </div>
+
+        {/* Status feedback */}
+        {saving && <p className="text-xs text-gray-400">Saving...</p>}
+        {saved && <p className="text-xs text-green-400">Saved</p>}
+        {error && <p className="text-xs text-red-400">{error}</p>}
+      </div>
     </div>
   );
 }

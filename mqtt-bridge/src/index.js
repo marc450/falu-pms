@@ -81,6 +81,18 @@ let shiftStartedAt = Date.now();
 const machineIdCache = {};
 
 // ============================================
+// DOWNTIME ALERT STATE
+// ============================================
+let alertConfig = { enabled: false, threshold_minutes: 10 };
+let shiftConfig = null;   // loaded from app_settings
+let shiftMechanics = {};  // crew name -> user UUID
+
+// Twilio credentials from environment
+const TWILIO_SID    = process.env.TWILIO_ACCOUNT_SID || "";
+const TWILIO_TOKEN  = process.env.TWILIO_AUTH_TOKEN || "";
+const TWILIO_FROM   = process.env.TWILIO_WHATSAPP_FROM || "";  // e.g. "whatsapp:+14155238886"
+
+// ============================================
 // BROKER SETTINGS (loaded from env or defaults)
 // ============================================
 const brokerSettings = {
@@ -137,6 +149,8 @@ async function loadRegisteredMachines() {
         errorTimeCalc: row.error_time_calc || 0,
         // Restore active error codes so the dashboard continues showing them after restart.
         activeErrors: Array.isArray(row.active_error_codes) ? row.active_error_codes : [],
+        // Downtime alert flag: assume not yet notified on restart (worst case: one duplicate)
+        notifiedForCurrentError: false,
       };
     }
   }
@@ -196,7 +210,7 @@ async function handleShiftMessage(payload) {
 
   // ── Update in-memory state ──
   if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode, activeErrors: [] };
+    allMachines[machineCode] = { machine: machineCode, activeErrors: [], notifiedForCurrentError: false };
   }
   const m = allMachines[machineCode];
 
@@ -368,6 +382,9 @@ async function handleShiftMessage(payload) {
   }
 
   logger.debug(`Shift updated: ${machineCode} - ${data.Status} | Shift ${data.Shift} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
+
+  // ── Check downtime alert ──
+  await checkDowntimeAlert(m);
 }
 
 // ============================================
@@ -408,6 +425,208 @@ async function handleErrorMessage(payload) {
       .update({ active_error_codes: m.activeErrors })
       .eq("id", machineId)
       .then(() => {});
+  }
+}
+
+// ============================================
+// DOWNTIME ALERT CONFIG + NOTIFICATION
+// ============================================
+
+async function loadAlertConfig() {
+  try {
+    const keys = ["downtime_alert_config", "shift_config", "shift_mechanics"];
+    const { data, error } = await supabase
+      .from("app_settings")
+      .select("key, value")
+      .in("key", keys);
+    if (error) {
+      logger.error(`Failed to load alert config: ${error.message}`);
+      return;
+    }
+    for (const row of data || []) {
+      if (row.key === "downtime_alert_config") alertConfig = row.value;
+      if (row.key === "shift_config") shiftConfig = row.value;
+      if (row.key === "shift_mechanics") shiftMechanics = row.value;
+    }
+    logger.debug(`Alert config loaded: enabled=${alertConfig.enabled}, threshold=${alertConfig.threshold_minutes}min`);
+  } catch (err) {
+    logger.error(`loadAlertConfig error: ${err.message}`);
+  }
+}
+
+/**
+ * Resolve which shift crew is currently active, then find the assigned mechanic.
+ * Returns { mechanicId, phone, crewName } or null.
+ */
+async function resolveCurrentMechanic() {
+  if (!shiftConfig || !shiftConfig.slots || shiftConfig.slots.length === 0) {
+    logger.warn("No shift config available, cannot resolve mechanic");
+    return null;
+  }
+
+  const now = new Date();
+  const currentHour = now.getHours() + now.getMinutes() / 60;
+  const firstStart = shiftConfig.firstShiftStartHour || 0;
+  const duration = shiftConfig.shiftDurationHours || 12;
+
+  // Determine slot index
+  const hoursSinceFirst = ((currentHour - firstStart) + 24) % 24;
+  const slotIndex = Math.floor(hoursSinceFirst / duration);
+
+  // Determine work date (if before first shift start, use yesterday)
+  const workDate = new Date(now);
+  if (currentHour < firstStart) {
+    workDate.setDate(workDate.getDate() - 1);
+  }
+  const dateStr = workDate.toISOString().slice(0, 10); // YYYY-MM-DD
+
+  // Look up shift_assignments for this date
+  const { data: assignment, error } = await supabase
+    .from("shift_assignments")
+    .select("slot_teams")
+    .eq("shift_date", dateStr)
+    .maybeSingle();
+
+  if (error) {
+    logger.error(`Failed to fetch shift assignment for ${dateStr}: ${error.message}`);
+    return null;
+  }
+  if (!assignment || !assignment.slot_teams || !assignment.slot_teams[slotIndex]) {
+    logger.warn(`No shift assignment for ${dateStr} slot ${slotIndex}`);
+    return null;
+  }
+
+  const crewName = assignment.slot_teams[slotIndex]; // e.g. "SHIFT A"
+  const mechanicId = shiftMechanics[crewName] || null;
+  if (!mechanicId) {
+    logger.warn(`No mechanic assigned to crew ${crewName}`);
+    return null;
+  }
+
+  // Look up mechanic's WhatsApp phone
+  const { data: profile, error: profErr } = await supabase
+    .from("user_profiles")
+    .select("first_name, last_name, whatsapp_phone")
+    .eq("id", mechanicId)
+    .single();
+
+  if (profErr || !profile || !profile.whatsapp_phone) {
+    logger.warn(`Mechanic ${mechanicId} has no WhatsApp phone`);
+    return null;
+  }
+
+  return {
+    mechanicId,
+    phone: profile.whatsapp_phone,
+    name: `${profile.first_name} ${profile.last_name}`.trim(),
+    crewName,
+  };
+}
+
+/**
+ * Send a WhatsApp downtime alert via Twilio and log to notification_log.
+ */
+async function sendDowntimeAlert(machine, errorMinutes) {
+  if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
+    logger.warn(`Twilio credentials not configured, skipping alert for ${machine.machine}`);
+    return;
+  }
+
+  const mechanic = await resolveCurrentMechanic();
+  const machineId = machineIdCache[machine.machine] || null;
+  const roundedMin = Math.round(errorMinutes);
+  const messageBody = `⚠️ Machine ${machine.machine} has been in error for ${roundedMin} minutes. Please check.`;
+
+  if (!mechanic) {
+    // Log the failure (no mechanic resolved)
+    await supabase.from("notification_log").insert({
+      machine_id: machineId,
+      machine_code: machine.machine,
+      mechanic_id: null,
+      phone: null,
+      message: messageBody,
+      status: "failed",
+      error_detail: "No mechanic resolved for current shift",
+    });
+    logger.warn(`Downtime alert for ${machine.machine}: no mechanic resolved`);
+    return;
+  }
+
+  logger.info(`Sending downtime alert to ${mechanic.name} (${mechanic.phone}) for ${machine.machine} (${roundedMin} min)`);
+
+  try {
+    const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
+    const body = new URLSearchParams({
+      From: TWILIO_FROM,
+      To: `whatsapp:${mechanic.phone}`,
+      Body: messageBody,
+    });
+    const resp = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${Buffer.from(TWILIO_SID + ":" + TWILIO_TOKEN).toString("base64")}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body,
+    });
+
+    const result = await resp.json();
+    const success = resp.ok;
+
+    await supabase.from("notification_log").insert({
+      machine_id: machineId,
+      machine_code: machine.machine,
+      mechanic_id: mechanic.mechanicId,
+      phone: mechanic.phone,
+      message: messageBody,
+      status: success ? "sent" : "failed",
+      error_detail: success ? null : (result.message || JSON.stringify(result)),
+    });
+
+    if (success) {
+      logger.info(`WhatsApp alert sent to ${mechanic.name} for ${machine.machine}`);
+    } else {
+      logger.error(`Twilio error for ${machine.machine}: ${result.message || resp.status}`);
+    }
+  } catch (err) {
+    logger.error(`Failed to send WhatsApp alert for ${machine.machine}: ${err.message}`);
+    await supabase.from("notification_log").insert({
+      machine_id: machineId,
+      machine_code: machine.machine,
+      mechanic_id: mechanic.mechanicId,
+      phone: mechanic.phone,
+      message: messageBody,
+      status: "failed",
+      error_detail: err.message,
+    });
+  }
+}
+
+/**
+ * Check if a machine in error state has exceeded the threshold and should trigger an alert.
+ * Called after every handleShiftMessage.
+ */
+async function checkDowntimeAlert(machine) {
+  if (!alertConfig.enabled) return;
+
+  const status = (machine.machineStatus?.Status || "").toLowerCase();
+
+  // Reset flag when machine leaves error state
+  if (status !== "error") {
+    machine.notifiedForCurrentError = false;
+    return;
+  }
+
+  // Already notified for this error episode
+  if (machine.notifiedForCurrentError) return;
+
+  // Calculate continuous error duration
+  if (!machine.statusSince) return;
+  const errorMinutes = (Date.now() - new Date(machine.statusSince).getTime()) / 60000;
+
+  if (errorMinutes >= alertConfig.threshold_minutes) {
+    machine.notifiedForCurrentError = true;
+    await sendDowntimeAlert(machine, errorMinutes);
   }
 }
 
@@ -573,8 +792,12 @@ app.listen(PORT, () => {
   logger.info(`Topic: ${getSubscribeTopic()}`);
 
   loadRegisteredMachines()
+    .then(() => loadAlertConfig())
     .then(() => connectMqtt())
     .catch((err) => logger.error(`Startup error: ${err.message}`));
+
+  // Reload alert config every 60 seconds so admin changes take effect without restart
+  setInterval(() => loadAlertConfig(), 60000);
 });
 
 // Graceful shutdown

@@ -1171,6 +1171,42 @@ export async function saveShiftMechanics(mechanics: ShiftMechanics): Promise<voi
 }
 
 // ============================================
+// DOWNTIME ALERT CONFIG
+// ============================================
+
+export interface DowntimeAlertConfig {
+  enabled: boolean;
+  threshold_minutes: number;
+}
+
+const DEFAULT_DOWNTIME_ALERT_CONFIG: DowntimeAlertConfig = {
+  enabled: false,
+  threshold_minutes: 10,
+};
+
+export async function fetchDowntimeAlertConfig(): Promise<DowntimeAlertConfig> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("app_settings")
+    .select("value")
+    .eq("key", "downtime_alert_config")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return { ...DEFAULT_DOWNTIME_ALERT_CONFIG, ...(data?.value as Partial<DowntimeAlertConfig> | null) };
+}
+
+export async function saveDowntimeAlertConfig(config: DowntimeAlertConfig): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("app_settings")
+    .upsert(
+      { key: "downtime_alert_config", value: config as unknown as Record<string, unknown>, updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    );
+  if (error) throw new Error(error.message);
+}
+
+// ============================================
 // USER MANAGEMENT
 // ============================================
 
