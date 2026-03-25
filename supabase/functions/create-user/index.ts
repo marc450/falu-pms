@@ -1,4 +1,3 @@
-import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.39.0";
 
 const corsHeaders = {
@@ -6,7 +5,7 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
   }
@@ -74,7 +73,9 @@ serve(async (req) => {
       });
     }
 
-    // Create the auth user
+    let userId: string;
+
+    // Try to create the auth user
     const { data: newUser, error: createError } =
       await supabase.auth.admin.createUser({
         email,
@@ -83,22 +84,50 @@ serve(async (req) => {
       });
 
     if (createError) {
-      return new Response(JSON.stringify({ error: createError.message }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      // If user already exists in auth.users, look them up and add a profile
+      if (createError.message.includes("already been registered")) {
+        const { data: listData } = await supabase.auth.admin.listUsers();
+        const existing = listData?.users?.find(
+          (u: { email?: string }) => u.email === email
+        );
+        if (!existing) {
+          return new Response(
+            JSON.stringify({ error: "User exists but could not be found" }),
+            {
+              status: 400,
+              headers: { ...corsHeaders, "Content-Type": "application/json" },
+            }
+          );
+        }
+        userId = existing.id;
+      } else {
+        return new Response(
+          JSON.stringify({ error: createError.message }),
+          {
+            status: 400,
+            headers: { ...corsHeaders, "Content-Type": "application/json" },
+          }
+        );
+      }
+    } else {
+      userId = newUser.user.id;
     }
 
-    // Insert profile row
+    // Insert profile row (upsert to handle re-adding)
     const { error: profileError } = await supabase
       .from("user_profiles")
-      .insert({ id: newUser.user.id, email, role: role || "viewer" });
+      .upsert(
+        { id: userId, email, role: role || "viewer" },
+        { onConflict: "id" }
+      );
 
     if (profileError) {
-      // Rollback: delete the auth user if profile insert fails
-      await supabase.auth.admin.deleteUser(newUser.user.id);
+      // Only rollback auth user if we just created it
+      if (!createError) {
+        await supabase.auth.admin.deleteUser(userId);
+      }
       return new Response(
-        JSON.stringify({ error: "Failed to create profile" }),
+        JSON.stringify({ error: "Failed to create profile: " + profileError.message }),
         {
           status: 500,
           headers: { ...corsHeaders, "Content-Type": "application/json" },
@@ -108,7 +137,7 @@ serve(async (req) => {
 
     return new Response(
       JSON.stringify({
-        id: newUser.user.id,
+        id: userId,
         email,
         role: role || "viewer",
       }),

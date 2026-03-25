@@ -1182,6 +1182,18 @@ export async function updateUserRole(userId: string, role: "admin" | "viewer"): 
   if (error) throw new Error(error.message);
 }
 
+async function extractEdgeFnError(error: { message: string; context?: unknown }): Promise<string> {
+  // Supabase client puts the Response object in error.context for non-2xx
+  const ctx = error.context;
+  if (ctx && typeof ctx === "object" && "json" in ctx && typeof (ctx as Response).json === "function") {
+    try {
+      const body = await (ctx as Response).json();
+      if (body?.error) return body.error;
+    } catch { /* fall through */ }
+  }
+  return error.message;
+}
+
 export async function invokeCreateUser(
   email: string,
   password: string,
@@ -1191,7 +1203,7 @@ export async function invokeCreateUser(
   const { data, error } = await sb.functions.invoke("create-user", {
     body: { email, password, role },
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(await extractEdgeFnError(error));
   if (data?.error) throw new Error(data.error);
   return data;
 }
@@ -1201,6 +1213,6 @@ export async function invokeDeleteUser(userId: string): Promise<void> {
   const { data, error } = await sb.functions.invoke("delete-user", {
     body: { userId },
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(await extractEdgeFnError(error));
   if (data?.error) throw new Error(data.error);
 }
