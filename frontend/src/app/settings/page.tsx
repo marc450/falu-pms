@@ -1416,7 +1416,10 @@ function ShiftsTab() {
   );
 
   return (
-    <div className="space-y-5">
+    <div className="flex gap-5 items-start">
+
+      {/* ── Left column: Teams + Structure + Calendar ── */}
+      <div className="space-y-5 flex-1 min-w-0">
 
       {/* ── Shift teams ─────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-lg">
@@ -1728,8 +1731,13 @@ function ShiftsTab() {
         </div>
       </div>
 
-      {/* Shift Mechanics card */}
-      <ShiftMechanicsCard teams={config.teams} />
+      </div>{/* end left column */}
+
+      {/* ── Right column: Shift Mechanics ── */}
+      <div className="w-80 shrink-0">
+        <ShiftMechanicsCard teams={config.teams} />
+      </div>
+
     </div>
   );
 }
