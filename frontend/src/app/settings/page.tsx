@@ -1747,7 +1747,6 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
   const [users, setUsers] = useState<UserProfile[]>([]);
   const [search, setSearch] = useState<Record<string, string>>({});
   const [open, setOpen] = useState<Record<string, boolean>>({});
-  const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -1770,18 +1769,20 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
     return () => document.removeEventListener("mousedown", handler);
   }, []);
 
-  const handleSave = async () => {
-    setSaving(true);
+  const handleSelect = async (team: string, userId: string | null) => {
+    const updated = { ...mechanics, [team]: userId };
+    setMechanics(updated);
+    setOpen((prev) => ({ ...prev, [team]: false }));
+    setSearch((prev) => ({ ...prev, [team]: "" }));
     setError(null);
     setSaved(false);
     try {
-      await saveShiftMechanics(mechanics);
+      await saveShiftMechanics(updated);
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (e) {
       setError((e as Error).message);
     }
-    setSaving(false);
   };
 
   const getUser = (id: string | null | undefined) =>
@@ -1863,11 +1864,7 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
                           <div className="max-h-48 overflow-y-auto">
                             <button
                               type="button"
-                              onClick={() => {
-                                setMechanics((prev) => ({ ...prev, [team]: null }));
-                                setOpen((prev) => ({ ...prev, [team]: false }));
-                                setSearch((prev) => ({ ...prev, [team]: "" }));
-                              }}
+                              onClick={() => handleSelect(team, null)}
                               className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 transition-colors"
                             >
                               — unassigned —
@@ -1876,11 +1873,7 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
                               <button
                                 key={u.id}
                                 type="button"
-                                onClick={() => {
-                                  setMechanics((prev) => ({ ...prev, [team]: u.id }));
-                                  setOpen((prev) => ({ ...prev, [team]: false }));
-                                  setSearch((prev) => ({ ...prev, [team]: "" }));
-                                }}
+                                onClick={() => handleSelect(team, u.id)}
                                 className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-800 transition-colors ${
                                   mechanics[team] === u.id ? "text-blue-400" : "text-white"
                                 }`}
@@ -1905,16 +1898,12 @@ function ShiftMechanicsCard({ teams }: { teams: string[] }) {
 
         </div>{/* end scrollable area */}
 
-        <div className="px-5 py-3 border-t border-gray-700/50 flex items-center justify-end gap-3 shrink-0">
-          {saved && <span className="text-xs text-green-400">Saved</span>}
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
-          >
-            {saving ? "Saving..." : "Save"}
-          </button>
-        </div>
+        {(saved || error) && (
+          <div className="px-5 py-2 border-t border-gray-700/50 shrink-0">
+            {saved && <span className="text-xs text-green-400">Saved</span>}
+            {error && <span className="text-xs text-red-400">{error}</span>}
+          </div>
+        )}
       </div>
     </div>
   );
