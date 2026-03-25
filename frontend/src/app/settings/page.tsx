@@ -1957,20 +1957,13 @@ function UsersTab() {
                       </td>
                       <td className="py-3 text-gray-400">{u.email}</td>
                       <td className="py-3">
-                        {isCurrentUser ? (
-                          <span className="inline-block px-2 py-0.5 text-xs font-medium bg-blue-600/20 text-blue-400 rounded">
-                            {u.role}
-                          </span>
-                        ) : (
-                          <select
-                            value={u.role}
-                            onChange={(e) => handleRoleChange(u.id, e.target.value as "admin" | "viewer")}
-                            className="px-2 py-0.5 text-xs bg-gray-800 border border-gray-600 rounded text-white focus:outline-none focus:border-blue-500"
-                          >
-                            <option value="viewer">viewer</option>
-                            <option value="admin">admin</option>
-                          </select>
-                        )}
+                        <span className={`inline-block px-2 py-0.5 text-xs font-medium rounded ${
+                          u.role === "admin"
+                            ? "bg-blue-600/20 text-blue-400"
+                            : "bg-gray-700 text-gray-400"
+                        }`}>
+                          {u.role}
+                        </span>
                       </td>
                       <td className="py-3 text-gray-400">
                         {new Date(u.created_at).toLocaleDateString()}
