@@ -32,8 +32,10 @@ import {
   updateUserProfile,
   invokeCreateUser,
   invokeDeleteUser,
+  fetchShiftMechanics,
+  saveShiftMechanics,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile, ShiftMechanics } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { fmtH } from "@/lib/fmt";
 
@@ -1722,6 +1724,187 @@ function ShiftsTab() {
           </div>
           <button onClick={clearMonth} className="px-2.5 py-1 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 rounded transition-colors">
             Clear month
+          </button>
+        </div>
+      </div>
+
+      {/* Shift Mechanics card */}
+      <ShiftMechanicsCard teams={config.teams} />
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Shift Mechanics card (used inside ShiftsTab)
+// ─────────────────────────────────────────────────────────────
+function ShiftMechanicsCard({ teams }: { teams: string[] }) {
+  const [mechanics, setMechanics] = useState<ShiftMechanics>({});
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [search, setSearch] = useState<Record<string, string>>({});
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    Promise.all([fetchShiftMechanics(), fetchUserProfiles()]).then(([m, u]) => {
+      setMechanics(m);
+      setUsers(u);
+    });
+  }, []);
+
+  // Close dropdowns on outside click
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setOpen({});
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setError(null);
+    setSaved(false);
+    try {
+      await saveShiftMechanics(mechanics);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setSaving(false);
+  };
+
+  const getUser = (id: string | null | undefined) =>
+    users.find((u) => u.id === id) ?? null;
+
+  const userLabel = (u: UserProfile) =>
+    u.first_name && u.last_name ? `${u.first_name} ${u.last_name}` : u.email;
+
+  return (
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden" ref={dropdownRef}>
+      <div className="bg-gray-700 px-5 py-3">
+        <h4 className="text-white font-semibold">
+          <i className="bi bi-wrench-adjustable mr-2"></i>Shift Mechanics
+        </h4>
+        <p className="text-gray-300 text-xs">Assign a mechanic to each shift crew</p>
+      </div>
+
+      {error && (
+        <div className="mx-5 mt-4 px-4 py-2.5 bg-red-500/10 border border-red-500/30 rounded-lg text-sm text-red-400">
+          {error}
+        </div>
+      )}
+
+      <div className="p-5">
+        <table className="w-full text-sm">
+          <thead>
+            <tr className="text-left text-gray-400 text-xs uppercase tracking-wider">
+              <th className="pb-3 font-medium w-24">Crew</th>
+              <th className="pb-3 font-medium">Mechanic</th>
+            </tr>
+          </thead>
+          <tbody className="divide-y divide-gray-700/50">
+            {teams.map((team) => {
+              const selected = getUser(mechanics[team]);
+              const q = search[team] ?? "";
+              const filtered = users.filter((u) =>
+                userLabel(u).toLowerCase().includes(q.toLowerCase()) ||
+                u.email.toLowerCase().includes(q.toLowerCase())
+              );
+              const isOpen = open[team] ?? false;
+
+              return (
+                <tr key={team}>
+                  <td className="py-3 text-white font-medium">Crew {team}</td>
+                  <td className="py-3">
+                    <div className="relative w-64">
+                      {/* Trigger */}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setOpen((prev) => ({ ...prev, [team]: !isOpen }))
+                        }
+                        className="w-full flex items-center justify-between px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white hover:border-blue-500 focus:outline-none focus:border-blue-500 transition-colors"
+                      >
+                        <span className={selected ? "text-white" : "text-gray-500"}>
+                          {selected ? userLabel(selected) : "— unassigned —"}
+                        </span>
+                        <i className={`bi bi-chevron-${isOpen ? "up" : "down"} text-gray-400 text-xs`}></i>
+                      </button>
+
+                      {/* Dropdown */}
+                      {isOpen && (
+                        <div className="absolute z-20 mt-1 w-full bg-gray-900 border border-gray-600 rounded-lg shadow-xl overflow-hidden">
+                          {/* Search */}
+                          <div className="p-2 border-b border-gray-700">
+                            <input
+                              type="text"
+                              value={q}
+                              onChange={(e) =>
+                                setSearch((prev) => ({ ...prev, [team]: e.target.value }))
+                              }
+                              placeholder="Search..."
+                              autoFocus
+                              className="w-full px-2 py-1.5 bg-gray-800 border border-gray-700 rounded text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
+                            />
+                          </div>
+                          {/* Options */}
+                          <div className="max-h-48 overflow-y-auto">
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setMechanics((prev) => ({ ...prev, [team]: null }));
+                                setOpen((prev) => ({ ...prev, [team]: false }));
+                                setSearch((prev) => ({ ...prev, [team]: "" }));
+                              }}
+                              className="w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 transition-colors"
+                            >
+                              — unassigned —
+                            </button>
+                            {filtered.map((u) => (
+                              <button
+                                key={u.id}
+                                type="button"
+                                onClick={() => {
+                                  setMechanics((prev) => ({ ...prev, [team]: u.id }));
+                                  setOpen((prev) => ({ ...prev, [team]: false }));
+                                  setSearch((prev) => ({ ...prev, [team]: "" }));
+                                }}
+                                className={`w-full text-left px-3 py-2 text-sm hover:bg-gray-800 transition-colors ${
+                                  mechanics[team] === u.id ? "text-blue-400" : "text-white"
+                                }`}
+                              >
+                                <span className="block">{userLabel(u)}</span>
+                                <span className="block text-[11px] text-gray-500">{u.email}</span>
+                              </button>
+                            ))}
+                            {filtered.length === 0 && (
+                              <p className="px-3 py-2 text-sm text-gray-500">No users found</p>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <div className="flex items-center justify-end gap-3 mt-4">
+          {saved && <span className="text-xs text-green-400">Saved</span>}
+          <button
+            onClick={handleSave}
+            disabled={saving}
+            className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
+          >
+            {saving ? "Saving..." : "Save"}
           </button>
         </div>
       </div>

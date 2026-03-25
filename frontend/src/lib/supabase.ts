@@ -1142,6 +1142,35 @@ export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot
 }
 
 // ============================================
+// SHIFT MECHANICS
+// ============================================
+
+// Maps crew name (e.g. "A") → user id
+export type ShiftMechanics = Record<string, string | null>;
+
+export async function fetchShiftMechanics(): Promise<ShiftMechanics> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("app_settings")
+    .select("value")
+    .eq("key", "shift_mechanics")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.value ?? {}) as ShiftMechanics;
+}
+
+export async function saveShiftMechanics(mechanics: ShiftMechanics): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("app_settings")
+    .upsert(
+      { key: "shift_mechanics", value: mechanics as unknown as Record<string, unknown>, updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    );
+  if (error) throw new Error(error.message);
+}
+
+// ============================================
 // USER MANAGEMENT
 // ============================================
 
