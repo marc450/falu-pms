@@ -1,16 +1,13 @@
--- Current version: migration 053
--- get_machine_shift_summary
--- Returns one row per (work_day, shift_label, machine) with:
---   run_hours      = actual hours the machine was running during that shift
---   swabs_produced = total swabs produced
---   boxes_produced = total boxes produced
---   bu_normalized  = (swabs_produced/7200) / run_hours * 12  (NULL if run_hours=0)
---   avg_efficiency = average efficiency % while running
---   avg_scrap      = average reject rate %
+-- Migration 053: Drop analytics_readings and update get_machine_shift_summary
 --
--- Reads from shift_readings (last 48h, cumulative) UNION saved_shift_logs (historical).
--- Work-day boundary: 07:00 (USC shift start).
--- Shift A = 07:00-18:59, Shift B = 19:00-06:59.
+-- 1. Update get_machine_shift_summary to use saved_shift_logs (same approach as
+--    get_fleet_trend migration 039). The KPI formulas are unchanged.
+-- 2. Unschedule the downsample-analytics-hourly pg_cron job
+-- 3. Drop the downsample_to_analytics() function
+-- 4. Drop the analytics_readings table
+-- ============================================================================
+
+-- ── 1. Replace get_machine_shift_summary ────────────────────────────────────
 
 CREATE OR REPLACE FUNCTION get_machine_shift_summary(
   p_range_start timestamptz,
@@ -34,8 +31,6 @@ AS $$
 WITH
 
 -- ── PATH A: shift_readings (last 48h, cumulative counters) ───────────────────
--- Group by PLC shift_number first so MAX(produced_swabs) is per-session,
--- then SUM in case multiple PLC sessions fall in the same calendar shift slot.
 sr_sessions AS (
   SELECT
     TO_CHAR(DATE_TRUNC('day', sr.recorded_at - INTERVAL '7 hours'), 'YYYY-MM-DD') AS work_day,
@@ -124,3 +119,12 @@ $$;
 
 GRANT EXECUTE ON FUNCTION get_machine_shift_summary(timestamptz, timestamptz)
   TO anon, authenticated;
+
+-- ── 2. Unschedule the downsample pg_cron job ────────────────────────────────
+SELECT cron.unschedule('downsample-analytics-hourly');
+
+-- ── 3. Drop the downsample function ─────────────────────────────────────────
+DROP FUNCTION IF EXISTS downsample_to_analytics();
+
+-- ── 4. Drop the analytics_readings table ────────────────────────────────────
+DROP TABLE IF EXISTS analytics_readings;
