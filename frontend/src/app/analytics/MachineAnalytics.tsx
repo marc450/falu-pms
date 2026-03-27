@@ -323,7 +323,7 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
   const metricButtons: { id: Metric; label: string }[] = [
     { id: "bu",         label: "BU"         },
     { id: "hours",      label: "Run Hours"  },
-    { id: "efficiency", label: "Efficiency" },
+    { id: "efficiency", label: "Uptime" },
     { id: "scrap",      label: "Scrap"      },
   ];
 
