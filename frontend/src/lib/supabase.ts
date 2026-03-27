@@ -1177,11 +1177,13 @@ export async function saveShiftMechanics(mechanics: ShiftMechanics): Promise<voi
 export interface DowntimeAlertConfig {
   enabled: boolean;
   threshold_minutes: number;
+  cooldown_minutes: number;
 }
 
 const DEFAULT_DOWNTIME_ALERT_CONFIG: DowntimeAlertConfig = {
   enabled: false,
   threshold_minutes: 10,
+  cooldown_minutes: 30,
 };
 
 export async function fetchDowntimeAlertConfig(): Promise<DowntimeAlertConfig> {

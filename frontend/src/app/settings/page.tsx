@@ -1749,8 +1749,9 @@ function ShiftsTab() {
 // Downtime Alerts card (used inside ShiftsTab)
 // ─────────────────────────────────────────────────────────────
 function DowntimeAlertsCard() {
-  const [config, setConfig] = useState<DowntimeAlertConfig>({ enabled: false, threshold_minutes: 10 });
+  const [config, setConfig] = useState<DowntimeAlertConfig>({ enabled: false, threshold_minutes: 10, cooldown_minutes: 30 });
   const [thresholdDisplay, setThresholdDisplay] = useState("10");
+  const [cooldownDisplay, setCooldownDisplay] = useState("30");
   const [loaded, setLoaded] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -1760,6 +1761,7 @@ function DowntimeAlertsCard() {
     fetchDowntimeAlertConfig().then((c) => {
       setConfig(c);
       setThresholdDisplay(String(c.threshold_minutes));
+      setCooldownDisplay(String(c.cooldown_minutes ?? 30));
       setLoaded(true);
     });
   }, []);
@@ -1792,6 +1794,17 @@ function DowntimeAlertsCard() {
     }
     if (n !== config.threshold_minutes) {
       persist({ ...config, threshold_minutes: n });
+    }
+  };
+
+  const commitCooldown = () => {
+    const n = parseInt(cooldownDisplay, 10);
+    if (isNaN(n) || n < 1) {
+      setCooldownDisplay(String(config.cooldown_minutes ?? 30));
+      return;
+    }
+    if (n !== (config.cooldown_minutes ?? 30)) {
+      persist({ ...config, cooldown_minutes: n });
     }
   };
 
@@ -1830,6 +1843,26 @@ function DowntimeAlertsCard() {
               onChange={(e) => setThresholdDisplay(e.target.value)}
               onBlur={commitThreshold}
               onKeyDown={(e) => e.key === "Enter" && commitThreshold()}
+              className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-white text-center focus:border-cyan-500 focus:outline-none"
+            />
+            <span className="text-xs text-gray-400">minutes</span>
+          </div>
+        </div>
+
+        {/* Cooldown input */}
+        <div className="flex items-center justify-between">
+          <div>
+            <span className="text-sm text-gray-300">Cooldown</span>
+            <p className="text-xs text-gray-500 mt-0.5">Min. time between repeat alerts for the same machine</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <input
+              type="number"
+              min={1}
+              value={cooldownDisplay}
+              onChange={(e) => setCooldownDisplay(e.target.value)}
+              onBlur={commitCooldown}
+              onKeyDown={(e) => e.key === "Enter" && commitCooldown()}
               className="w-16 bg-gray-700 border border-gray-600 rounded px-2 py-1 text-sm text-white text-center focus:border-cyan-500 focus:outline-none"
             />
             <span className="text-xs text-gray-400">minutes</span>

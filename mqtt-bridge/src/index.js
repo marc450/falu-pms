@@ -150,8 +150,8 @@ async function loadRegisteredMachines() {
         errorTimeCalc: row.error_time_calc || 0,
         // Restore active error codes so the dashboard continues showing them after restart.
         activeErrors: Array.isArray(row.active_error_codes) ? row.active_error_codes : [],
-        // Downtime alert flag: assume not yet notified on restart (worst case: one duplicate)
-        notifiedForCurrentError: false,
+        // Timestamp of last downtime alert sent for this machine (null = never)
+        lastNotifiedAt: null,
       };
     }
   }
@@ -211,7 +211,7 @@ async function handleShiftMessage(payload) {
 
   // ── Update in-memory state ──
   if (!allMachines[machineCode]) {
-    allMachines[machineCode] = { machine: machineCode, activeErrors: [], notifiedForCurrentError: false };
+    allMachines[machineCode] = { machine: machineCode, activeErrors: [], lastNotifiedAt: null };
   }
   const m = allMachines[machineCode];
 
@@ -642,24 +642,23 @@ async function checkDowntimeAlert(machine) {
   if (!alertConfig.enabled) return;
 
   const status = (machine.machineStatus?.Status || "").toLowerCase();
-
-  // Reset flag when machine leaves error state
-  if (status !== "error") {
-    machine.notifiedForCurrentError = false;
-    return;
-  }
-
-  // Already notified for this error episode
-  if (machine.notifiedForCurrentError) return;
+  if (status !== "error") return;
 
   // Calculate continuous error duration
   if (!machine.statusSince) return;
   const errorMinutes = (Date.now() - new Date(machine.statusSince).getTime()) / 60000;
+  if (errorMinutes < alertConfig.threshold_minutes) return;
 
-  if (errorMinutes >= alertConfig.threshold_minutes) {
-    machine.notifiedForCurrentError = true;
-    await sendDowntimeAlert(machine, errorMinutes);
+  // Cooldown check: don't re-notify within cooldown_minutes of the last alert,
+  // regardless of whether the machine briefly recovered and errored again.
+  const cooldownMinutes = alertConfig.cooldown_minutes ?? 30;
+  if (machine.lastNotifiedAt) {
+    const minutesSinceLast = (Date.now() - new Date(machine.lastNotifiedAt).getTime()) / 60000;
+    if (minutesSinceLast < cooldownMinutes) return;
   }
+
+  machine.lastNotifiedAt = new Date().toISOString();
+  await sendDowntimeAlert(machine, errorMinutes);
 }
 
 // ============================================
