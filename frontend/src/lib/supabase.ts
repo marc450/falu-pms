@@ -1209,6 +1209,32 @@ export async function saveDowntimeAlertConfig(config: DowntimeAlertConfig): Prom
 }
 
 // ============================================
+// FACTORY TIMEZONE
+// ============================================
+
+export async function fetchFactoryTimezone(): Promise<string> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("app_settings")
+    .select("value")
+    .eq("key", "factory_timezone")
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  return (data?.value as string) ?? "Europe/Zurich";
+}
+
+export async function saveFactoryTimezone(tz: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("app_settings")
+    .upsert(
+      { key: "factory_timezone", value: tz, updated_at: new Date().toISOString() },
+      { onConflict: "key" }
+    );
+  if (error) throw new Error(error.message);
+}
+
+// ============================================
 // USER MANAGEMENT
 // ============================================
 

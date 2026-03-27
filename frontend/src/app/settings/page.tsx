@@ -36,6 +36,8 @@ import {
   saveShiftMechanics,
   fetchDowntimeAlertConfig,
   saveDowntimeAlertConfig,
+  fetchFactoryTimezone,
+  saveFactoryTimezone,
 } from "@/lib/supabase";
 import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile, ShiftMechanics, DowntimeAlertConfig } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
@@ -1612,12 +1614,11 @@ function ShiftsTab() {
 
       </div>{/* end left column */}
 
-      {/* ── Right column: Shift Mechanics + Downtime Alerts ── */}
+      {/* ── Right column: Shift Mechanics + Downtime Alerts + Factory Location ── */}
       <div className="flex-1 min-w-0 flex flex-col gap-5 self-stretch">
         <ShiftMechanicsCard teams={config.teams} />
-        <div className="flex-1">
-          <DowntimeAlertsCard />
-        </div>
+        <DowntimeAlertsCard />
+        <FactoryTimezoneCard />
       </div>
 
       </div>{/* end top row */}
@@ -1873,6 +1874,77 @@ function DowntimeAlertsCard() {
         {saving && <p className="text-xs text-gray-400">Saving...</p>}
         {saved && <p className="text-xs text-green-400">Saved</p>}
         {error && <p className="text-xs text-red-400">{error}</p>}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+// Factory Timezone card (used inside ShiftsTab)
+// ─────────────────────────────────────────────────────────────
+
+const COMMON_TIMEZONES = [
+  { value: "Europe/Zurich", label: "Switzerland (CET/CEST)" },
+  { value: "Europe/Berlin", label: "Germany (CET/CEST)" },
+  { value: "Europe/London", label: "United Kingdom (GMT/BST)" },
+  { value: "Europe/Istanbul", label: "Turkey (TRT)" },
+  { value: "America/New_York", label: "US Eastern (EST/EDT)" },
+  { value: "America/Chicago", label: "US Central (CST/CDT)" },
+  { value: "America/Denver", label: "US Mountain (MST/MDT)" },
+  { value: "America/Los_Angeles", label: "US Pacific (PST/PDT)" },
+  { value: "Asia/Shanghai", label: "China (CST)" },
+  { value: "Asia/Tokyo", label: "Japan (JST)" },
+  { value: "Asia/Dubai", label: "UAE (GST)" },
+  { value: "Asia/Kolkata", label: "India (IST)" },
+  { value: "Australia/Sydney", label: "Australia Eastern (AEST/AEDT)" },
+];
+
+function FactoryTimezoneCard() {
+  const [tz, setTz] = useState("Europe/Zurich");
+  const [loading, setLoading] = useState(true);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    fetchFactoryTimezone().then((v) => { setTz(v); setLoading(false); });
+  }, []);
+
+  const handleChange = async (newTz: string) => {
+    setTz(newTz);
+    try {
+      await saveFactoryTimezone(newTz);
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg">
+      <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+        <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+          <i className="bi bi-globe2 text-cyan-400"></i>Factory Location
+        </h4>
+        <p className="text-gray-500 text-xs mt-0.5">Timezone used for shift boundaries and analytics</p>
+      </div>
+      <div className="p-5">
+        {loading ? (
+          <div className="text-gray-500 text-sm">Loading...</div>
+        ) : (
+          <div className="flex items-center gap-3">
+            <select
+              value={tz}
+              onChange={(e) => handleChange(e.target.value)}
+              className="flex-1 px-3 py-2 bg-gray-900 border border-gray-600 rounded-lg text-sm text-white focus:outline-none focus:border-blue-500 transition-colors"
+            >
+              {COMMON_TIMEZONES.map((t) => (
+                <option key={t.value} value={t.value}>{t.label}</option>
+              ))}
+              {!COMMON_TIMEZONES.find((t) => t.value === tz) && (
+                <option value={tz}>{tz}</option>
+              )}
+            </select>
+            {saved && <span className="text-green-400 text-xs">Saved</span>}
+          </div>
+        )}
       </div>
     </div>
   );
