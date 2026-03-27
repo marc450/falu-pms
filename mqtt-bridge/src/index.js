@@ -164,6 +164,41 @@ async function loadRegisteredMachines() {
 }
 
 // ============================================
+// RESTORE NOTIFICATION TIMESTAMPS
+// Reads notification_log on startup so lastNotifiedAt survives bridge restarts.
+// Without this, every restart would trigger a flood for machines already in error.
+// ============================================
+async function restoreNotificationTimestamps() {
+  const { data, error } = await supabase
+    .from("notification_log")
+    .select("machine_code, created_at")
+    .eq("status", "sent")
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    logger.warn(`Could not restore notification timestamps: ${error.message}`);
+    return;
+  }
+
+  // Keep only the most recent entry per machine_code
+  const latest = {};
+  for (const row of data) {
+    if (!latest[row.machine_code]) {
+      latest[row.machine_code] = row.created_at;
+    }
+  }
+
+  let restored = 0;
+  for (const [code, ts] of Object.entries(latest)) {
+    if (allMachines[code]) {
+      allMachines[code].lastNotifiedAt = ts;
+      restored++;
+    }
+  }
+  logger.info(`Restored lastNotifiedAt for ${restored} machine(s) from notification_log`);
+}
+
+// ============================================
 // MACHINE ID RESOLUTION
 // ============================================
 async function getMachineId(machineCode) {
@@ -823,6 +858,7 @@ app.listen(PORT, () => {
   logger.info(`Topic: ${getSubscribeTopic()}`);
 
   loadRegisteredMachines()
+    .then(() => restoreNotificationTimestamps())
     .then(() => loadAlertConfig())
     .then(() => connectMqtt())
     .catch((err) => logger.error(`Startup error: ${err.message}`));
