@@ -611,22 +611,13 @@ async function sendDowntimeAlert(machine, errorMinutes) {
   try {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
 
-    // Use approved WhatsApp template if SID is configured, otherwise fall back to free-form text
+    // Send free-form WhatsApp message (requires 24h session window or approved template).
+    // TODO: switch back to ContentSid template once Meta Business verification is complete.
     const params = {
       From: TWILIO_FROM,
       To: `whatsapp:${mechanic.phone}`,
+      Body: messageBody,
     };
-    if (TWILIO_TEMPLATE_SID) {
-      params.ContentSid = TWILIO_TEMPLATE_SID;
-      params.ContentVariables = JSON.stringify({
-        "1": machineName,
-        "2": machine.machine,
-        "3": cellName,
-        "4": String(roundedMin),
-      });
-    } else {
-      params.Body = messageBody;
-    }
 
     const resp = await fetch(url, {
       method: "POST",
