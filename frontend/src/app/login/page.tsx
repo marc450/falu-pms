@@ -4,14 +4,13 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
 
-function UscLogo({ className }: { className?: string }) {
+function FaluLogo({ className }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <circle cx="50" cy="28" r="18" fill="#1a3a8f"/>
-      <circle cx="32" cy="56" r="18" fill="#1a3a8f"/>
-      <circle cx="68" cy="56" r="18" fill="#1a3a8f"/>
-      <rect x="43" y="64" width="14" height="22" rx="3" fill="#1a3a8f"/>
-      <rect x="36" y="82" width="28" height="8" rx="4" fill="#1a3a8f"/>
+    <svg className={className} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="100" height="100" fill="#FF0000"/>
+      <text x="5" y="88" fontFamily="Arial, Helvetica, sans-serif" fontWeight="900" fontSize="42" fill="#FFFFFF" letterSpacing="-1">FALU</text>
+      <circle cx="88" cy="12" r="7" fill="none" stroke="#FFFFFF" strokeWidth="1.5"/>
+      <text x="85" y="15.5" fontFamily="Arial, Helvetica, sans-serif" fontWeight="700" fontSize="10" fill="#FFFFFF">R</text>
     </svg>
   );
 }
@@ -49,9 +48,9 @@ export default function LoginPage() {
 
         {/* Brand */}
         <div className="text-center mb-8">
-          <UscLogo className="w-16 h-16 mx-auto mb-4" />
-          <h1 className="text-white text-2xl font-bold tracking-tight">U.S. COTTON</h1>
-          <p className="text-gray-500 text-sm mt-1">Production Monitoring System</p>
+          <FaluLogo className="w-16 h-16 mx-auto mb-4 rounded-lg" />
+          <h1 className="text-white text-2xl font-bold tracking-tight">FALU</h1>
+          <p className="text-gray-500 text-sm mt-1">Production Monitoring</p>
         </div>
 
         {/* Card */}

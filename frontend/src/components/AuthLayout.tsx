@@ -7,14 +7,13 @@ import { useAuth } from "@/hooks/useAuth";
 import { updateUserProfile, changePassword } from "@/lib/supabase";
 
 // Inline SVG so it works regardless of basePath / CDN configuration
-function UscLogo({ className }: { className?: string }) {
+function FaluLogo({ className }: { className?: string }) {
   return (
-    <svg className={className} viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <circle cx="50" cy="28" r="18" fill="#1a3a8f"/>
-      <circle cx="32" cy="56" r="18" fill="#1a3a8f"/>
-      <circle cx="68" cy="56" r="18" fill="#1a3a8f"/>
-      <rect x="43" y="64" width="14" height="22" rx="3" fill="#1a3a8f"/>
-      <rect x="36" y="82" width="28" height="8" rx="4" fill="#1a3a8f"/>
+    <svg className={className} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <rect width="100" height="100" fill="#FF0000"/>
+      <text x="5" y="88" fontFamily="Arial, Helvetica, sans-serif" fontWeight="900" fontSize="42" fill="#FFFFFF" letterSpacing="-1">FALU</text>
+      <circle cx="88" cy="12" r="7" fill="none" stroke="#FFFFFF" strokeWidth="1.5"/>
+      <text x="85" y="15.5" fontFamily="Arial, Helvetica, sans-serif" fontWeight="700" fontSize="10" fill="#FFFFFF">R</text>
     </svg>
   );
 }
@@ -275,10 +274,10 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         {/* Brand */}
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center gap-2.5">
-            <UscLogo className="w-9 h-9 shrink-0" />
+            <FaluLogo className="w-9 h-9 shrink-0 rounded" />
             <div>
-              <h1 className="text-sm font-bold text-white leading-tight">U.S. COTTON</h1>
-              <p className="text-xs text-gray-500 mt-1.5">Production Monitoring</p>
+              <h1 className="text-sm font-bold text-white leading-tight">FALU</h1>
+              <p className="text-xs text-gray-500 mt-0.5">Production Monitoring</p>
             </div>
           </div>
         </div>
