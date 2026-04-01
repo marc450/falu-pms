@@ -83,14 +83,15 @@ function ProductionContent() {
   const shiftCellClass = (shiftNum: number) =>
     activeShift === shiftNum ? "font-bold bg-cyan-900/20" : "";
 
-  // Derive shift column label: team name > slot name > "Shift N"
+  // Derive shift column label: team name > slot name > "Shift A/B/C/D"
   const shiftLabel = (shiftNum: number): string => {
     const idx = shiftNum - 1; // PLC shift is 1-based, arrays are 0-based
     const team = todayTeams[idx] ?? null;
     if (team) return team;
     const slotName = shiftConfig?.slots?.[idx]?.name ?? null;
     if (slotName) return slotName;
-    return `Shift ${shiftNum}`;
+    const letters = ["A", "B", "C", "D"];
+    return `Shift ${letters[idx] ?? shiftNum}`;
   };
 
   // Map saved logs by shift number for O(1) lookup
