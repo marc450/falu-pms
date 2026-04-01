@@ -80,21 +80,39 @@ function ProductionContent() {
   const status = getStatusColor(machine?.machineStatus?.Status);
   const activeShift = machine?.machineStatus?.ActShift || 0;
 
-  const slotCount = shiftConfig?.slots?.length ?? 3;
-  const shiftNums = Array.from({ length: slotCount }, (_, i) => i + 1);
+  const slots = shiftConfig?.slots ?? [];
+  const slotCount = slots.length || 3;
+  const slotIndices = Array.from({ length: slotCount }, (_, i) => i);
 
-  const shiftCellClass = (shiftNum: number) =>
-    activeShift === shiftNum ? "font-bold bg-cyan-900/20" : "";
+  // Map each PLC shift (1-3, always 8h) to the user slot it falls into.
+  // The PLC always reports 3 shifts starting at firstShiftStartHour.
+  const plcShiftToSlot = (plcShift: number): number => {
+    if (slotCount === 3) return plcShift - 1; // 8h config: 1:1 mapping
+    const firstStart = shiftConfig?.firstShiftStartHour ?? 6;
+    const plcStartHour = (firstStart + (plcShift - 1) * 8) % 24;
+    // Find the user slot whose start hour is <= plcStartHour (descending search)
+    const sorted = slots.map((s, i) => ({ startHour: s.startHour, idx: i }))
+      .sort((a, b) => b.startHour - a.startHour);
+    for (const s of sorted) {
+      if (plcStartHour >= s.startHour) return s.idx;
+    }
+    return sorted[0]?.idx ?? 0; // wrap-around: before all starts = last slot (overnight)
+  };
 
-  // Derive shift column label: team name > slot name > "Shift A/B/C/D"
-  const shiftLabel = (shiftNum: number): string => {
-    const idx = shiftNum - 1; // PLC shift is 1-based, arrays are 0-based
-    const team = todayTeams[idx] ?? null;
+  // Which user slot is currently active?
+  const activeSlot = activeShift > 0 ? plcShiftToSlot(activeShift) : -1;
+
+  const shiftCellClass = (slotIdx: number) =>
+    activeSlot === slotIdx ? "font-bold bg-cyan-900/20" : "";
+
+  // Derive column label for a user slot: team name > slot name > "Shift A/B/C/D"
+  const shiftLabel = (slotIdx: number): string => {
+    const team = todayTeams[slotIdx] ?? null;
     if (team) return team;
-    const slotName = shiftConfig?.slots?.[idx]?.name ?? null;
+    const slotName = slots[slotIdx]?.name ?? null;
     if (slotName) return slotName;
     const letters = ["A", "B", "C", "D"];
-    return `Shift ${letters[idx] ?? shiftNum}`;
+    return `Shift ${letters[slotIdx] ?? slotIdx + 1}`;
   };
 
   // Map saved logs by shift number for O(1) lookup
@@ -167,11 +185,41 @@ function ProductionContent() {
     };
   };
 
-  // Total across all shifts that have data
+  // Aggregate PLC shift data for a user slot (may combine multiple PLC shifts)
+  const slotData = (slotIdx: number): ShiftDataMessage | undefined => {
+    const plcShifts = [1, 2, 3].filter(n => plcShiftToSlot(n) === slotIdx);
+    const datas = plcShifts.map(shiftData).filter((s): s is ShiftDataMessage => !!s);
+    if (datas.length === 0) return undefined;
+    if (datas.length === 1) return datas[0];
+    // Aggregate multiple PLC shifts into one user slot
+    const sum = datas.reduce((acc, s) => ({
+      Shift:                  0,
+      ProductionTime:         acc.ProductionTime         + s.ProductionTime,
+      IdleTime:               acc.IdleTime               + s.IdleTime,
+      ProducedSwabs:          acc.ProducedSwabs          + s.ProducedSwabs,
+      PackagedSwabs:          acc.PackagedSwabs          + s.PackagedSwabs,
+      DiscardedSwabs:         acc.DiscardedSwabs         + s.DiscardedSwabs,
+      ProducedBoxes:          acc.ProducedBoxes          + s.ProducedBoxes,
+      ProducedBoxesLayerPlus: acc.ProducedBoxesLayerPlus + s.ProducedBoxesLayerPlus,
+      CottonTears:            acc.CottonTears            + s.CottonTears,
+      MissingSticks:          acc.MissingSticks          + s.MissingSticks,
+      FoultyPickups:          acc.FoultyPickups          + s.FoultyPickups,
+      OtherErrors:            acc.OtherErrors            + s.OtherErrors,
+      Efficiency:             0,
+      Reject:                 0,
+    }));
+    const totalUnplannedIdle = datas.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
+    const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle;
+    sum.Efficiency = effectiveTotalTime > 0 ? (sum.ProductionTime / effectiveTotalTime) * 100 : 0;
+    sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
+    return sum;
+  };
+
+  // Total across all 3 PLC shifts
   const totalData = (): ShiftDataMessage | undefined => {
-    const slots = shiftNums.map(shiftData).filter((s): s is ShiftDataMessage => !!s);
-    if (slots.length === 0) return undefined;
-    const sum = slots.reduce((acc, s) => ({
+    const allShifts = [1, 2, 3].map(shiftData).filter((s): s is ShiftDataMessage => !!s);
+    if (allShifts.length === 0) return undefined;
+    const sum = allShifts.reduce((acc, s) => ({
       Shift:                  0,
       ProductionTime:         acc.ProductionTime         + s.ProductionTime,
       IdleTime:               acc.IdleTime               + s.IdleTime,
@@ -188,7 +236,7 @@ function ProductionContent() {
       Reject:                 0,
     }));
     // Apply per-slot downtime budget: each slot's planned idle does not penalise uptime.
-    const totalUnplannedIdle = slots.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
+    const totalUnplannedIdle = allShifts.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
     const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle;
     sum.Efficiency = effectiveTotalTime > 0 ? (sum.ProductionTime / effectiveTotalTime) * 100 : 0;
     sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
@@ -339,9 +387,9 @@ function ProductionContent() {
               <thead>
                 <tr className="text-center text-gray-400 border-b border-gray-700">
                   <th className="px-4 py-3 text-left w-1/5 font-medium">Metric</th>
-                  {shiftNums.map(n => (
-                    <th key={n} className={`px-4 py-3 font-medium ${activeShift === n ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                      {shiftLabel(n)}
+                  {slotIndices.map(i => (
+                    <th key={i} className={`px-4 py-3 font-medium ${activeSlot === i ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
+                      {shiftLabel(i)}
                     </th>
                   ))}
                   <th className="px-4 py-3 font-medium text-cyan-400">Total</th>
@@ -351,9 +399,9 @@ function ProductionContent() {
                 {metrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5">
                     <td className="px-4 py-2.5 font-medium text-gray-200">{metric.label}</td>
-                    {shiftNums.map(n => (
-                      <td key={n} className={`px-4 py-2.5 text-center ${shiftCellClass(n)} ${cellColor(metric, shiftData(n))}`}>
-                        {renderShiftValue(shiftData(n), metric.key, metric.format)}
+                    {slotIndices.map(i => (
+                      <td key={i} className={`px-4 py-2.5 text-center ${shiftCellClass(i)} ${cellColor(metric, slotData(i))}`}>
+                        {renderShiftValue(slotData(i), metric.key, metric.format)}
                       </td>
                     ))}
                     <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
@@ -370,9 +418,9 @@ function ProductionContent() {
                 {errorMetrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5 bg-gray-900/20">
                     <td className="px-4 py-2.5 font-medium text-gray-300">{metric.label}</td>
-                    {shiftNums.map(n => (
-                      <td key={n} className={`px-4 py-2.5 text-center ${shiftCellClass(n)} ${cellColor(metric, shiftData(n))}`}>
-                        {renderShiftValue(shiftData(n), metric.key, metric.format)}
+                    {slotIndices.map(i => (
+                      <td key={i} className={`px-4 py-2.5 text-center ${shiftCellClass(i)} ${cellColor(metric, slotData(i))}`}>
+                        {renderShiftValue(slotData(i), metric.key, metric.format)}
                       </td>
                     ))}
                     <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
