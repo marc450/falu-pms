@@ -80,6 +80,9 @@ function ProductionContent() {
   const status = getStatusColor(machine?.machineStatus?.Status);
   const activeShift = machine?.machineStatus?.ActShift || 0;
 
+  const slotCount = shiftConfig?.slots?.length ?? 3;
+  const shiftNums = Array.from({ length: slotCount }, (_, i) => i + 1);
+
   const shiftCellClass = (shiftNum: number) =>
     activeShift === shiftNum ? "font-bold bg-cyan-900/20" : "";
 
@@ -166,7 +169,7 @@ function ProductionContent() {
 
   // Total across all shifts that have data
   const totalData = (): ShiftDataMessage | undefined => {
-    const slots = [1, 2, 3].map(shiftData).filter((s): s is ShiftDataMessage => !!s);
+    const slots = shiftNums.map(shiftData).filter((s): s is ShiftDataMessage => !!s);
     if (slots.length === 0) return undefined;
     const sum = slots.reduce((acc, s) => ({
       Shift:                  0,
@@ -336,15 +339,11 @@ function ProductionContent() {
               <thead>
                 <tr className="text-center text-gray-400 border-b border-gray-700">
                   <th className="px-4 py-3 text-left w-1/5 font-medium">Metric</th>
-                  <th className={`px-4 py-3 font-medium ${activeShift === 1 ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                    {shiftLabel(1)}
-                  </th>
-                  <th className={`px-4 py-3 font-medium ${activeShift === 2 ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                    {shiftLabel(2)}
-                  </th>
-                  <th className={`px-4 py-3 font-medium ${activeShift === 3 ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                    {shiftLabel(3)}
-                  </th>
+                  {shiftNums.map(n => (
+                    <th key={n} className={`px-4 py-3 font-medium ${activeShift === n ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
+                      {shiftLabel(n)}
+                    </th>
+                  ))}
                   <th className="px-4 py-3 font-medium text-cyan-400">Total</th>
                 </tr>
               </thead>
@@ -352,15 +351,11 @@ function ProductionContent() {
                 {metrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5">
                     <td className="px-4 py-2.5 font-medium text-gray-200">{metric.label}</td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, shiftData(1))}`}>
-                      {renderShiftValue(shiftData(1), metric.key, metric.format)}
-                    </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, shiftData(2))}`}>
-                      {renderShiftValue(shiftData(2), metric.key, metric.format)}
-                    </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, shiftData(3))}`}>
-                      {renderShiftValue(shiftData(3), metric.key, metric.format)}
-                    </td>
+                    {shiftNums.map(n => (
+                      <td key={n} className={`px-4 py-2.5 text-center ${shiftCellClass(n)} ${cellColor(metric, shiftData(n))}`}>
+                        {renderShiftValue(shiftData(n), metric.key, metric.format)}
+                      </td>
+                    ))}
                     <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
                       {renderShiftValue(totalData(), metric.key, metric.format)}
                     </td>
@@ -368,22 +363,18 @@ function ProductionContent() {
                 ))}
                 {/* Errors section separator */}
                 <tr className="bg-gray-900/40">
-                  <td colSpan={5} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-600">
+                  <td colSpan={slotCount + 2} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-600">
                     <i className="bi bi-exclamation-triangle mr-1.5"></i>Errors
                   </td>
                 </tr>
                 {errorMetrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5 bg-gray-900/20">
                     <td className="px-4 py-2.5 font-medium text-gray-300">{metric.label}</td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(1)} ${cellColor(metric, shiftData(1))}`}>
-                      {renderShiftValue(shiftData(1), metric.key, metric.format)}
-                    </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(2)} ${cellColor(metric, shiftData(2))}`}>
-                      {renderShiftValue(shiftData(2), metric.key, metric.format)}
-                    </td>
-                    <td className={`px-4 py-2.5 text-center ${shiftCellClass(3)} ${cellColor(metric, shiftData(3))}`}>
-                      {renderShiftValue(shiftData(3), metric.key, metric.format)}
-                    </td>
+                    {shiftNums.map(n => (
+                      <td key={n} className={`px-4 py-2.5 text-center ${shiftCellClass(n)} ${cellColor(metric, shiftData(n))}`}>
+                        {renderShiftValue(shiftData(n), metric.key, metric.format)}
+                      </td>
+                    ))}
                     <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
                       {renderShiftValue(totalData(), metric.key, metric.format)}
                     </td>
