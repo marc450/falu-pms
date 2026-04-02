@@ -1361,3 +1361,30 @@ export async function fetchErrorCodeLookup(): Promise<Record<string, PlcErrorCod
   }
   return _errorCodeCache;
 }
+
+// ============================================
+// DOWNTIME ANALYTICS
+// ============================================
+export interface ErrorShiftSummaryRow {
+  machine_id: string;
+  machine_code: string;
+  shift_date: string;
+  plc_shift: number;
+  error_code: string;
+  occurrence_count: number;
+  total_duration_secs: number;
+}
+
+export async function fetchErrorShiftSummary(range: DateRange): Promise<ErrorShiftSummaryRow[]> {
+  const sb = getSupabase();
+  const startStr = range.start.toISOString().slice(0, 10);
+  const endStr   = range.end.toISOString().slice(0, 10);
+  const { data, error } = await sb
+    .from("error_shift_summary")
+    .select("machine_id, machine_code, shift_date, plc_shift, error_code, occurrence_count, total_duration_secs")
+    .gte("shift_date", startStr)
+    .lte("shift_date", endStr)
+    .order("shift_date", { ascending: true });
+  if (error || !data) return [];
+  return data as ErrorShiftSummaryRow[];
+}
