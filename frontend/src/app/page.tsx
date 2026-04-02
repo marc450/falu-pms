@@ -269,7 +269,6 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
           </span>
           {m.machineStatus?.Status?.toLowerCase() === "error" && m.activeErrors && m.activeErrors.length > 0 && (
             <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl min-w-[280px] max-w-[400px]">
-              <div className="text-xs font-semibold text-red-400 mb-2">Active errors:</div>
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-gray-500 border-b border-gray-700">
