@@ -268,18 +268,28 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
             )}
           </span>
           {m.machineStatus?.Status?.toLowerCase() === "error" && m.activeErrors && m.activeErrors.length > 0 && (
-            <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl min-w-[260px] max-w-[360px]">
-              <div className="text-xs font-semibold text-red-400 mb-1.5">Active Error Codes</div>
-              {m.activeErrors.map((code: string | number) => {
-                const codeStr = String(code);
-                const info = errorLookup[codeStr];
-                return (
-                  <div key={codeStr} className="text-xs text-gray-300 py-0.5">
-                    <span className="font-mono text-red-300">{codeStr}</span>
-                    {info && <span className="ml-1.5 text-gray-400">{info.description}</span>}
-                  </div>
-                );
-              })}
+            <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl min-w-[280px] max-w-[400px]">
+              <div className="text-xs font-semibold text-red-400 mb-2">Active errors:</div>
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-gray-500 border-b border-gray-700">
+                    <th className="text-left pb-1 pr-3 font-medium">Code</th>
+                    <th className="text-left pb-1 font-medium">Description</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {m.activeErrors.map((code: string | number) => {
+                    const codeStr = String(code);
+                    const info = errorLookup[codeStr];
+                    return (
+                      <tr key={codeStr} className="border-b border-gray-700/50 last:border-0">
+                        <td className="py-1 pr-3 font-mono text-red-300 whitespace-nowrap">{codeStr}</td>
+                        <td className="py-1 text-gray-300">{info?.description ?? "Unknown"}</td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
             </div>
           )}
         </div>
