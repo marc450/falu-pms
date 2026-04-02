@@ -186,14 +186,27 @@ const TIER_LOCK_MIN   = 45;   // minutes a machine stays in the same speed tier
 // ============================================
 // Error codes by machine type — sent as individual cloud/Error messages when
 // a machine enters the error state (2-3 codes per error event).
-const ERROR_CODES = {
-  CB: [211, 215, 312, 401, 522],
-  CT: [101, 104, 203, 305, 410],
-};
+// Real PLC error codes loaded from plc_error_codes table at startup.
+// Falls back to a hardcoded subset if DB is unavailable.
+let ALARM_CODES = ["A010", "A035", "A073", "A074", "A113", "A172", "A173", "A190", "A244", "A274", "A275"];
 
-function pickErrorCodes(type) {
-  const pool = [...(ERROR_CODES[type] || ERROR_CODES.CB)];
-  const count = 2 + Math.floor(Math.random() * 2);  // 2 or 3 codes
+async function loadErrorCodesFromDB() {
+  if (!supabase) return;
+  const { data, error } = await supabase
+    .from("plc_error_codes")
+    .select("code")
+    .eq("severity", "alarm");
+  if (!error && data && data.length > 0) {
+    ALARM_CODES = data.map(r => r.code);
+    console.log(`Loaded ${ALARM_CODES.length} alarm codes from plc_error_codes table`);
+  } else {
+    console.warn("Could not load alarm codes from DB, using hardcoded fallback");
+  }
+}
+
+function pickErrorCodes() {
+  const pool = [...ALARM_CODES];
+  const count = 1 + Math.floor(Math.random() * 3);  // 1 to 3 codes
   pool.sort(() => Math.random() - 0.5);
   return pool.slice(0, count);
 }
@@ -465,6 +478,9 @@ let simulationStarted = false;
 client.on("connect", async () => {
   console.log("Connected to MQTT broker");
 
+  // Load real error codes from DB before starting simulation
+  await loadErrorCodesFromDB();
+
   MACHINE_NAMES.forEach(name => { if (!machines[name]) machines[name] = initMachine(name); });
 
   // Guard: only start the tick loop once — reconnects must not spawn a second interval
@@ -524,7 +540,7 @@ client.on("connect", async () => {
       }
       if (prevStatus !== "error" && newStatus === "error") {
         // Assign error codes for this error event
-        machine.activeErrorCodes = pickErrorCodes(machine.type);
+        machine.activeErrorCodes = pickErrorCodes();
         codesToActivate = machine.activeErrorCodes;
       } else if (prevStatus === "error" && newStatus !== "error") {
         // Error resolved — record codes to clear, then reset

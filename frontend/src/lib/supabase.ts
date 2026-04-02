@@ -1333,3 +1333,31 @@ export async function invokeDeleteUser(userId: string): Promise<void> {
   if (error) throw new Error(await extractEdgeFnError(error));
   if (data?.error) throw new Error(data.error);
 }
+
+// ============================================
+// PLC ERROR CODE LOOKUP
+// ============================================
+export interface PlcErrorCode {
+  code: string;
+  severity: string;
+  description: string;
+  cause: string | null;
+  solution: string | null;
+  info: string | null;
+}
+
+let _errorCodeCache: Record<string, PlcErrorCode> | null = null;
+
+export async function fetchErrorCodeLookup(): Promise<Record<string, PlcErrorCode>> {
+  if (_errorCodeCache) return _errorCodeCache;
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("plc_error_codes")
+    .select("code, severity, description, cause, solution, info");
+  if (error || !data) return {};
+  _errorCodeCache = {};
+  for (const row of data) {
+    _errorCodeCache[row.code] = row as PlcErrorCode;
+  }
+  return _errorCodeCache;
+}

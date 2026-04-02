@@ -71,6 +71,8 @@ const allMachines = {};
 //                    ProducedSwabs, PackagedSwabs, DiscardedSwabs, ProducedBoxes,
 //                    ProductionTime, IdleTime },
 //   lastSync: Date,
+//   openErrorEvents: { "A172": eventId, ... },  // error_events.id for currently open events
+//   shiftErrorCounts: { "1": { "A172": { count: 3, totalSecs: 120 }, ... }, ... },  // in-memory aggregation
 // }
 
 let mqttConnected = false;
@@ -298,6 +300,27 @@ async function handleShiftMessage(payload) {
   // When the machine recovers, it sends cloud/Shift Status:"Running" — at that
   // point all error codes are resolved.
   if (nextStatus === "running" || nextStatus === "run") {
+    // Close all open error_event rows for this machine
+    if (m.openErrorEvents && Object.keys(m.openErrorEvents).length > 0) {
+      const now = new Date();
+      const mId = machineIdCache[machineCode];
+      const currentShift = String(data.Shift || currentShiftNumber);
+      for (const [errCode, eventId] of Object.entries(m.openErrorEvents)) {
+        const { data: ev } = await supabase.from("error_events").select("started_at").eq("id", eventId).single();
+        const durationSecs = ev ? Math.round((now.getTime() - new Date(ev.started_at).getTime()) / 1000) : 0;
+        await supabase.from("error_events").update({
+          ended_at: now.toISOString(),
+          duration_secs: durationSecs,
+        }).eq("id", eventId);
+        // Add to shift aggregation
+        if (!m.shiftErrorCounts) m.shiftErrorCounts = {};
+        if (!m.shiftErrorCounts[currentShift]) m.shiftErrorCounts[currentShift] = {};
+        if (!m.shiftErrorCounts[currentShift][errCode]) m.shiftErrorCounts[currentShift][errCode] = { count: 0, totalSecs: 0 };
+        m.shiftErrorCounts[currentShift][errCode].totalSecs += durationSecs;
+      }
+      m.openErrorEvents = {};
+      logger.info(`Closed all open error events for ${machineCode} on transition to running`);
+    }
     m.activeErrors = [];
   }
 
@@ -396,6 +419,28 @@ async function handleShiftMessage(payload) {
 
   if (data.Save) {
     logger.info(`Save flag (end of shift) received for ${machineCode}, Shift ${data.Shift}`);
+
+    // ── Flush in-memory error counts to error_shift_summary ──
+    const shiftKey = String(data.Shift || currentShiftNumber);
+    const shiftCounts = m.shiftErrorCounts?.[shiftKey];
+    if (shiftCounts && Object.keys(shiftCounts).length > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      for (const [errCode, agg] of Object.entries(shiftCounts)) {
+        if (agg.count === 0 && agg.totalSecs === 0) continue;
+        await supabase.from("error_shift_summary").upsert({
+          machine_id: machineId,
+          machine_code: machineCode,
+          shift_date: today,
+          plc_shift: parseInt(shiftKey),
+          error_code: errCode,
+          occurrence_count: agg.count,
+          total_duration_secs: agg.totalSecs,
+        }, { onConflict: "machine_id,shift_date,plc_shift,error_code" });
+      }
+      logger.info(`Flushed error_shift_summary for ${machineCode} shift ${shiftKey}: ${Object.keys(shiftCounts).length} codes`);
+      delete m.shiftErrorCounts[shiftKey];
+    }
+
     await supabase.from("saved_shift_logs").insert({
       machine_id:               machineId,
       machine_code:             machineCode,
@@ -443,19 +488,64 @@ async function handleErrorMessage(payload) {
     return;
   }
 
-  const code = data.ErrorCode;
+  const code = String(data.ErrorCode);
   if (!code) return;
 
   if (!m.activeErrors) m.activeErrors = [];
+  if (!m.openErrorEvents) m.openErrorEvents = {};
+  if (!m.shiftErrorCounts) m.shiftErrorCounts = {};
+
+  const machineId = machineIdCache[machineCode];
+  const currentShift = String(m.machineStatus?.Shift || currentShiftNumber);
+
   if (data.ErrorStatus) {
+    // Error activated
     if (!m.activeErrors.includes(code)) m.activeErrors.push(code);
+
+    // Log to error_events (detailed, 48h retention)
+    if (machineId && !m.openErrorEvents[code]) {
+      const { data: row } = await supabase.from("error_events").insert({
+        machine_id: machineId,
+        machine_code: machineCode,
+        error_code: code,
+        started_at: data.Timestamp ? new Date(data.Timestamp).toISOString() : new Date().toISOString(),
+      }).select("id").single();
+      if (row) m.openErrorEvents[code] = row.id;
+    }
+
+    // Increment in-memory shift aggregation count
+    if (!m.shiftErrorCounts[currentShift]) m.shiftErrorCounts[currentShift] = {};
+    if (!m.shiftErrorCounts[currentShift][code]) m.shiftErrorCounts[currentShift][code] = { count: 0, totalSecs: 0 };
+    m.shiftErrorCounts[currentShift][code].count++;
+
   } else {
+    // Error cleared
     m.activeErrors = m.activeErrors.filter(c => c !== code);
+
+    // Close the error_event row
+    if (machineId && m.openErrorEvents[code]) {
+      const eventId = m.openErrorEvents[code];
+      const now = data.Timestamp ? new Date(data.Timestamp) : new Date();
+      // Fetch started_at to compute duration
+      const { data: ev } = await supabase.from("error_events").select("started_at").eq("id", eventId).single();
+      const durationSecs = ev ? Math.round((now.getTime() - new Date(ev.started_at).getTime()) / 1000) : 0;
+
+      await supabase.from("error_events").update({
+        ended_at: now.toISOString(),
+        duration_secs: durationSecs,
+      }).eq("id", eventId);
+
+      // Add duration to in-memory shift aggregation
+      if (m.shiftErrorCounts[currentShift]?.[code]) {
+        m.shiftErrorCounts[currentShift][code].totalSecs += durationSecs;
+      }
+      delete m.openErrorEvents[code];
+    }
   }
+
   logger.info(`Active error codes for ${machineCode}: [${m.activeErrors.join(", ")}]`);
 
   // Persist to DB so error codes survive a bridge restart
-  const machineId = machineIdCache[machineCode];
   if (machineId) {
     supabase.from("machines")
       .update({ active_error_codes: m.activeErrors })
@@ -769,6 +859,36 @@ function connectMqtt() {
 }
 
 // ============================================
+// PERIODIC CLEANUP (replaces pg_cron dependency)
+// ============================================
+// Runs every hour. Deletes rows older than 48h from shift_readings
+// and error_events. Self-correcting: if it misses a run, the next
+// one catches up automatically.
+async function periodicCleanup() {
+  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
+
+  const { count: srCount, error: srErr } = await supabase
+    .from("shift_readings")
+    .delete({ count: "exact" })
+    .lt("recorded_at", cutoff);
+  if (srErr) {
+    logger.error(`shift_readings cleanup failed: ${srErr.message}`);
+  } else if (srCount > 0) {
+    logger.info(`Cleaned up ${srCount} shift_readings rows older than 48h`);
+  }
+
+  const { count: eeCount, error: eeErr } = await supabase
+    .from("error_events")
+    .delete({ count: "exact" })
+    .lt("started_at", cutoff);
+  if (eeErr) {
+    logger.error(`error_events cleanup failed: ${eeErr.message}`);
+  } else if (eeCount > 0) {
+    logger.info(`Cleaned up ${eeCount} error_events rows older than 48h`);
+  }
+}
+
+// ============================================
 // REST API (for frontend)
 // ============================================
 const app = express();
@@ -856,6 +976,10 @@ app.listen(PORT, () => {
 
   // Reload alert config every 60 seconds so admin changes take effect without restart
   setInterval(() => loadAlertConfig(), 60000);
+
+  // Periodic cleanup: delete shift_readings and error_events older than 48h (every hour)
+  periodicCleanup(); // run once on startup
+  setInterval(() => periodicCleanup(), 60 * 60 * 1000);
 });
 
 // Graceful shutdown

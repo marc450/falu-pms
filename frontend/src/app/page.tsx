@@ -10,6 +10,7 @@ import {
   fetchThresholds,
   fetchShiftConfig,
   fetchShiftAssignments,
+  fetchErrorCodeLookup,
   applyEfficiencyColor,
   applyScrapColor,
   applyMachineEfficiencyColor,
@@ -20,7 +21,7 @@ import {
   DEFAULT_THRESHOLDS,
   DEFAULT_SHIFT_CONFIG,
 } from "@/lib/supabase";
-import type { MachineData, RegisteredMachine, MachineLiveData, ProductionCell, Thresholds, PackingFormat, ShiftConfig } from "@/lib/supabase";
+import type { MachineData, RegisteredMachine, MachineLiveData, ProductionCell, Thresholds, PackingFormat, ShiftConfig, PlcErrorCode } from "@/lib/supabase";
 import { PACKING_FORMATS } from "@/lib/supabase";
 import { getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
@@ -231,7 +232,7 @@ function sortMachineList(
 // ─────────────────────────────────────────────────────────────
 // Machine row
 // ─────────────────────────────────────────────────────────────
-function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStartedAt, onClick, now }: { m: DashboardMachine; shiftLengthMinutes: number; plannedDowntimeMinutes: number; shiftStartedAt: number; onClick: () => void; now: number }) {
+function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStartedAt, onClick, now, errorLookup }: { m: DashboardMachine; shiftLengthMinutes: number; plannedDowntimeMinutes: number; shiftStartedAt: number; onClick: () => void; now: number; errorLookup: Record<string, PlcErrorCode> }) {
   const status     = getStatusColor(m.machineStatus?.Status);
   const corrEff    = calcCorrectedEfficiency(m, plannedDowntimeMinutes);
   const effColor   = applyMachineEfficiencyColor(corrEff, m.efficiencyGood ?? null, m.efficiencyMediocre ?? null);
@@ -258,21 +259,30 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
         )}
       </td>
       <td className="px-4 py-3">
-        <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}>
-          <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
-          {formatStatus(m.machineStatus?.Status)}
-          {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run") && (
-            <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince, now)}</span>
+        <div className="relative group">
+          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}>
+            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
+            {formatStatus(m.machineStatus?.Status)}
+            {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run") && (
+              <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince, now)}</span>
+            )}
+          </span>
+          {m.machineStatus?.Status?.toLowerCase() === "error" && m.activeErrors && m.activeErrors.length > 0 && (
+            <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl min-w-[260px] max-w-[360px]">
+              <div className="text-xs font-semibold text-red-400 mb-1.5">Active Error Codes</div>
+              {m.activeErrors.map((code: string | number) => {
+                const codeStr = String(code);
+                const info = errorLookup[codeStr];
+                return (
+                  <div key={codeStr} className="text-xs text-gray-300 py-0.5">
+                    <span className="font-mono text-red-300">{codeStr}</span>
+                    {info && <span className="ml-1.5 text-gray-400">{info.description}</span>}
+                  </div>
+                );
+              })}
+            </div>
           )}
-        </span>
-        {m.machineStatus?.Error && (
-          <div
-            className="text-xs text-gray-400 mt-0.5 max-w-[140px] truncate"
-            title={m.machineStatus.Error}
-          >
-            {m.machineStatus.Error}
-          </div>
-        )}
+        </div>
       </td>
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
         {!isOffline && hasProduction && corrEff !== null ? fmtPct(corrEff, 1) : ""}
@@ -378,6 +388,7 @@ function CellSection({
   shiftStartedAt,
   now,
   defaultOpen = false,
+  errorLookup,
 }: {
   title: string;
   icon: string;
@@ -389,6 +400,7 @@ function CellSection({
   shiftStartedAt: number;
   now: number;
   defaultOpen?: boolean;
+  errorLookup: Record<string, PlcErrorCode>;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   const [sortCol, setSortCol]   = useState<CellSortCol>("Machine");
@@ -624,7 +636,7 @@ function CellSection({
           {open && (
             <tbody className="divide-y divide-gray-700/50">
               {sortedMachines.map((m) => (
-                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} plannedDowntimeMinutes={plannedDowntimeMins} shiftStartedAt={shiftStartedAt} now={now} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
+                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} plannedDowntimeMinutes={plannedDowntimeMins} shiftStartedAt={shiftStartedAt} now={now} errorLookup={errorLookup} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
               ))}
               {machines.length === 0 && (
                 <tr>
@@ -899,6 +911,7 @@ export default function Dashboard() {
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [shiftConfig, setShiftConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
   const [todayTeams, setTodayTeams] = useState<(string | null)[]>([]);
+  const [errorLookup, setErrorLookup] = useState<Record<string, PlcErrorCode>>({});
   const router = useRouter();
   const bridgeFailCount = useRef(0);
   const machinesRef = useRef<Record<string, DashboardMachine>>({});
@@ -1033,6 +1046,7 @@ export default function Dashboard() {
     loadConfig().then(() => loadData());
     fetchThresholds().then(setThresholds).catch(() => {/* use defaults */});
     fetchShiftConfig().then(setShiftConfig).catch(() => {/* use defaults */});
+    fetchErrorCodeLookup().then(setErrorLookup).catch(() => {/* empty lookup */});
     const today = new Date().toISOString().slice(0, 10);
     fetchShiftAssignments(today, today)
       .then(rows => { if (rows[0]) setTodayTeams(rows[0].slot_teams); })
@@ -1173,6 +1187,7 @@ export default function Dashboard() {
               shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
               shiftStartedAt={shiftStartedAt}
               now={currentTime.getTime()}
+              errorLookup={errorLookup}
             />
           ))}
           {unassigned.length > 0 && (
@@ -1186,6 +1201,7 @@ export default function Dashboard() {
               shiftLengthMinutes={thresholds.bu.shiftLengthMinutes}
               shiftStartedAt={shiftStartedAt}
               now={currentTime.getTime()}
+              errorLookup={errorLookup}
             />
           )}
         </>
@@ -1217,6 +1233,7 @@ export default function Dashboard() {
                     plannedDowntimeMinutes={thresholds.bu.plannedDowntimeMinutes ?? 0}
                     shiftStartedAt={shiftStartedAt}
                     now={currentTime.getTime()}
+                    errorLookup={errorLookup}
                     onClick={() => router.push(`/production?machine=${m.machine}${(m as DashboardMachine).packingFormat ? `&packing=${(m as DashboardMachine).packingFormat}` : ""}`)}
                   />
                 ))}
