@@ -230,6 +230,62 @@ function sortMachineList(
 }
 
 // ─────────────────────────────────────────────────────────────
+// Error badge with fixed-position tooltip (escapes overflow-hidden containers)
+// ─────────────────────────────────────────────────────────────
+function ErrorBadgeCell({ status, m, now, errorLookup }: { status: ReturnType<typeof getStatusColor>; m: DashboardMachine; now: number; errorLookup: Record<string, PlcErrorCode> }) {
+  const [tooltipPos, setTooltipPos] = useState<{ x: number; y: number } | null>(null);
+  const hasErrors = m.machineStatus?.Status?.toLowerCase() === "error" && m.activeErrors && m.activeErrors.length > 0;
+
+  return (
+    <td className="px-4 py-3">
+      <span
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text} ${hasErrors ? "cursor-default" : ""}`}
+        onMouseEnter={hasErrors ? (e) => {
+          const rect = e.currentTarget.getBoundingClientRect();
+          setTooltipPos({ x: rect.left, y: rect.bottom + 4 });
+        } : undefined}
+        onMouseLeave={hasErrors ? () => setTooltipPos(null) : undefined}
+      >
+        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
+        {formatStatus(m.machineStatus?.Status)}
+        {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run") && (
+          <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince, now)}</span>
+        )}
+      </span>
+      {tooltipPos && hasErrors && (
+        <div
+          className="fixed z-[9999] bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl min-w-[280px] max-w-[400px]"
+          style={{ left: tooltipPos.x, top: tooltipPos.y }}
+          onMouseEnter={() => {}}
+          onMouseLeave={() => setTooltipPos(null)}
+        >
+          <table className="w-full text-xs">
+            <thead>
+              <tr className="text-gray-500 border-b border-gray-700">
+                <th className="text-left pb-1 pr-3 font-medium">Code</th>
+                <th className="text-left pb-1 font-medium">Description</th>
+              </tr>
+            </thead>
+            <tbody>
+              {m.activeErrors!.map((code: string | number) => {
+                const codeStr = String(code);
+                const info = errorLookup[codeStr];
+                return (
+                  <tr key={codeStr} className="border-b border-gray-700/50 last:border-0">
+                    <td className="py-1 pr-3 font-mono text-red-300 whitespace-nowrap">{codeStr}</td>
+                    <td className="py-1 text-gray-300">{info?.description ?? "Unknown"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </td>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Machine row
 // ─────────────────────────────────────────────────────────────
 function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStartedAt, onClick, now, errorLookup }: { m: DashboardMachine; shiftLengthMinutes: number; plannedDowntimeMinutes: number; shiftStartedAt: number; onClick: () => void; now: number; errorLookup: Record<string, PlcErrorCode> }) {
@@ -258,41 +314,7 @@ function MachineRow({ m, shiftLengthMinutes, plannedDowntimeMinutes, shiftStarte
           <div className="text-xs text-gray-500 leading-tight">{m.machine}</div>
         )}
       </td>
-      <td className="px-4 py-3">
-        <div className="relative group">
-          <span className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}>
-            <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
-            {formatStatus(m.machineStatus?.Status)}
-            {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run") && (
-              <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince, now)}</span>
-            )}
-          </span>
-          {m.machineStatus?.Status?.toLowerCase() === "error" && m.activeErrors && m.activeErrors.length > 0 && (
-            <div className="absolute left-0 top-full mt-1 z-50 hidden group-hover:block bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl min-w-[280px] max-w-[400px]">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-gray-500 border-b border-gray-700">
-                    <th className="text-left pb-1 pr-3 font-medium">Code</th>
-                    <th className="text-left pb-1 font-medium">Description</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {m.activeErrors.map((code: string | number) => {
-                    const codeStr = String(code);
-                    const info = errorLookup[codeStr];
-                    return (
-                      <tr key={codeStr} className="border-b border-gray-700/50 last:border-0">
-                        <td className="py-1 pr-3 font-mono text-red-300 whitespace-nowrap">{codeStr}</td>
-                        <td className="py-1 text-gray-300">{info?.description ?? "Unknown"}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      </td>
+      <ErrorBadgeCell status={status} m={m} now={now} errorLookup={errorLookup} />
       <td className={`px-4 py-3 font-medium ${toRowColor(effColor.text)}`}>
         {!isOffline && hasProduction && corrEff !== null ? fmtPct(corrEff, 1) : ""}
       </td>
