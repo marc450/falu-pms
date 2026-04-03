@@ -91,7 +91,7 @@ function MachineFilterDropdown({ value, onChange, machinesWithErrors, machines }
     : machines.find(m => m.machine_code === value)?.name ?? value;
 
   return (
-    <div className="relative" ref={ref}>
+    <div className="relative w-fit" ref={ref}>
       <button
         onClick={() => setOpen(o => !o)}
         className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
