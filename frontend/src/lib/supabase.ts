@@ -1380,66 +1380,17 @@ export async function fetchErrorShiftSummary(range: DateRange): Promise<ErrorShi
   const startStr = range.start.toISOString().slice(0, 10);
   const endStr   = range.end.toISOString().slice(0, 10);
 
-  // Fetch from both tables in parallel:
-  // 1. error_shift_summary (permanent, aggregated per shift, written at shift end)
-  // 2. error_events (detailed, last 48h, written in real time)
-  // This ensures the Downtime tab shows data immediately without waiting for a shift to end.
-  // Paginate error_shift_summary (Supabase caps at 1000 rows per request)
-  const PAGE_SIZE = 1000;
-  const allSummaryRows: ErrorShiftSummaryRow[] = [];
-  let from = 0;
-  let hasMore = true;
-  while (hasMore) {
-    const { data } = await sb.from("error_shift_summary")
-      .select("machine_id, machine_code, shift_date, plc_shift, error_code, occurrence_count, total_duration_secs")
-      .gte("shift_date", startStr)
-      .lte("shift_date", endStr)
-      .order("shift_date", { ascending: true })
-      .range(from, from + PAGE_SIZE - 1);
-    const page = (data ?? []) as ErrorShiftSummaryRow[];
-    allSummaryRows.push(...page);
-    hasMore = page.length === PAGE_SIZE;
-    from += PAGE_SIZE;
+  // Single RPC call: aggregates error_shift_summary + recent error_events server-side
+  // Bypasses PostgREST 1000-row limit and avoids multiple round trips
+  const { data, error } = await sb.rpc("get_error_shift_summary", {
+    start_date: startStr,
+    end_date: endStr,
+  });
+
+  if (error) {
+    console.error("fetchErrorShiftSummary RPC error:", error);
+    return [];
   }
 
-  // Fetch recent error_events (for real-time data not yet aggregated)
-  const eventsRes = await sb.from("error_events")
-    .select("machine_id, machine_code, error_code, started_at, duration_secs")
-    .gte("started_at", range.start.toISOString())
-    .lte("started_at", range.end.toISOString());
-
-  const rows: ErrorShiftSummaryRow[] = allSummaryRows;
-
-  // Build a set of dates already covered by error_shift_summary to avoid double counting
-  const coveredKeys = new Set(rows.map(r => `${r.machine_code}|${r.shift_date}|${r.plc_shift}|${r.error_code}`));
-
-  // Aggregate error_events into the same shape, but only for entries not already in the summary
-  if (eventsRes.data && eventsRes.data.length > 0) {
-    const eventAgg: Record<string, ErrorShiftSummaryRow> = {};
-    for (const ev of eventsRes.data) {
-      const date = (ev.started_at as string).slice(0, 10);
-      // Use plc_shift=0 as a marker for "from live events" (not yet assigned to a shift)
-      const key = `${ev.machine_code}|${date}|0|${ev.error_code}`;
-      // Skip if this code+date is already covered by the aggregated summary (any shift)
-      const alreadyCovered = [1, 2, 3].some(s => coveredKeys.has(`${ev.machine_code}|${date}|${s}|${ev.error_code}`));
-      if (alreadyCovered) continue;
-
-      if (!eventAgg[key]) {
-        eventAgg[key] = {
-          machine_id: ev.machine_id,
-          machine_code: ev.machine_code,
-          shift_date: date,
-          plc_shift: 0,
-          error_code: ev.error_code,
-          occurrence_count: 0,
-          total_duration_secs: 0,
-        };
-      }
-      eventAgg[key].occurrence_count++;
-      eventAgg[key].total_duration_secs += ev.duration_secs ?? 0;
-    }
-    rows.push(...Object.values(eventAgg));
-  }
-
-  return rows;
+  return (data ?? []) as ErrorShiftSummaryRow[];
 }
