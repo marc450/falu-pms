@@ -267,7 +267,9 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
         out[c] = trendHiddenCodes.has(c) ? 0 : Number(row[c] || 0);
       }
       if (trendRelative) {
-        const total = trendVisibleCodes.reduce((s, c) => s + Number(row[c] || 0), 0);
+        // Denominator is ALL codes (including hidden), so relative values
+        // show each code's share of total downtime, not just visible codes
+        const total = trendCodes.reduce((s, c) => s + Number(row[c] || 0), 0);
         for (const c of trendVisibleCodes) {
           out[c] = total > 0 ? (Number(row[c] || 0) / total) * 100 : 0;
         }
@@ -504,6 +506,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
               <YAxis
                 tick={TICK_STYLE}
                 stroke={AXIS_COLOR}
+                domain={trendRelative ? [0, 100] : ["auto", "auto"]}
                 tickFormatter={trendRelative ? (v: number) => `${fmtN(v, 0)}%` : (v: number) => `${fmtN(v, 1)}h`}
                 label={trendRelative ? undefined : { value: "hours", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }}
               />
