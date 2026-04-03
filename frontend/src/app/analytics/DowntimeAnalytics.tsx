@@ -509,15 +509,15 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
               />
               <Tooltip content={() => null} cursor={{ stroke: "#9ca3af", strokeWidth: 1 }} />
               {trendCodes.map((code, i) => {
-                if (trendHiddenCodes.has(code)) return null;
+                const hidden = trendHiddenCodes.has(code);
                 return (
                   <Area
                     key={code}
                     type="monotone"
                     dataKey={code}
                     stackId="1"
-                    fill={AREA_COLORS[i % AREA_COLORS.length]}
-                    stroke={AREA_COLORS[i % AREA_COLORS.length]}
+                    fill={hidden ? "transparent" : AREA_COLORS[i % AREA_COLORS.length]}
+                    stroke={hidden ? "transparent" : AREA_COLORS[i % AREA_COLORS.length]}
                     fillOpacity={0.6}
                   />
                 );
