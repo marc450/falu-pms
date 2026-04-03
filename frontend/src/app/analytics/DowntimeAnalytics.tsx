@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, Fragment } from "react";
+import { useEffect, useState, useCallback, useMemo, Fragment, useRef } from "react";
 import { parseISO } from "date-fns";
 import { fmtN } from "@/lib/fmt";
 import {
@@ -65,6 +65,74 @@ function fmtDuration(secs: number): string {
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function fmtDateShort(d: Date): string {
   return `${String(d.getDate()).padStart(2, "0")}. ${MONTH_ABBR[d.getMonth()]}`;
+}
+
+// ─── Machine filter dropdown (styled like date picker) ────────────────────────
+
+function MachineFilterDropdown({ value, onChange, machinesWithErrors, machines }: {
+  value: string;
+  onChange: (v: string) => void;
+  machinesWithErrors: string[];
+  machines: RegisteredMachine[];
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  const label = value === "all"
+    ? "All machines"
+    : machines.find(m => m.machine_code === value)?.name ?? value;
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+      >
+        <i className="bi bi-pc-display text-xs text-gray-500"></i>
+        {label}
+        <i className={`bi bi-chevron-${open ? "up" : "down"} text-xs text-gray-500`}></i>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden py-2 min-w-[180px]">
+          <button
+            onClick={() => { onChange("all"); setOpen(false); }}
+            className={`w-full text-left px-4 py-1.5 text-sm transition-colors ${
+              value === "all"
+                ? "text-cyan-400 bg-cyan-950/50"
+                : "text-gray-400 hover:text-white hover:bg-gray-800"
+            }`}
+          >
+            All machines
+          </button>
+          {machinesWithErrors.map(mc => {
+            const reg = machines.find(m => m.machine_code === mc);
+            return (
+              <button
+                key={mc}
+                onClick={() => { onChange(mc); setOpen(false); }}
+                className={`w-full text-left px-4 py-1.5 text-sm transition-colors ${
+                  value === mc
+                    ? "text-cyan-400 bg-cyan-950/50"
+                    : "text-gray-400 hover:text-white hover:bg-gray-800"
+                }`}
+              >
+                {reg?.name ?? mc}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -265,20 +333,12 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
   return (
     <div className="space-y-6">
       {/* ── Machine filter ── */}
-      <div className="flex items-center gap-4">
-        <label className="text-sm text-gray-400">Machine:</label>
-        <select
-          value={machineFilter}
-          onChange={e => setMachineFilter(e.target.value)}
-          className="bg-gray-800 border border-gray-700 text-white text-sm rounded-lg px-3 py-1.5 focus:outline-none focus:border-blue-500"
-        >
-          <option value="all">All machines</option>
-          {machinesWithErrors.map(mc => {
-            const reg = machines.find(m => m.machine_code === mc);
-            return <option key={mc} value={mc}>{reg?.name ?? mc}</option>;
-          })}
-        </select>
-      </div>
+      <MachineFilterDropdown
+        value={machineFilter}
+        onChange={setMachineFilter}
+        machinesWithErrors={machinesWithErrors}
+        machines={machines}
+      />
 
       {/* ── Summary KPIs ── */}
       <div className="grid grid-cols-3 gap-4">
