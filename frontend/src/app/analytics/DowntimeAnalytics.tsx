@@ -55,6 +55,25 @@ interface DowntimeAnalyticsProps {
 function secsToHours(s: number): number { return s / 3600; }
 function secsToMin(s: number): number { return s / 60; }
 
+/** Map a PLC shift number (1/2/3, always 8h) to the user-defined slot label (A/B/C/D). */
+function plcShiftToSlotLabel(plcShift: number, slots: TimeSlot[]): string {
+  if (!slots.length) return String(plcShift);
+  // PLC shifts are 8h blocks: shift 1 = 00:00-08:00, shift 2 = 08:00-16:00, shift 3 = 16:00-24:00
+  const midpointHour = (plcShift - 1) * 8 + 4; // 4, 12, 20
+  const firstStart = slots[0].startHour;
+  const dur = slots.length <= 2 ? 12 : slots.length <= 3 ? 8 : 6;
+  const slotIdx = Math.floor(((midpointHour - firstStart + 24) % 24) / dur);
+  const labels = ["A", "B", "C", "D"];
+  return labels[Math.min(slotIdx, labels.length - 1)] ?? "A";
+}
+
+/** Get display name for a slot label, using slot names from config. */
+function slotDisplayName(label: string, slots: TimeSlot[]): string {
+  const idx = label.charCodeAt(0) - 65; // A=0, B=1, etc.
+  if (idx >= 0 && idx < slots.length && slots[idx].name) return `${slots[idx].name} (${label})`;
+  return `Shift ${label}`;
+}
+
 function fmtDuration(secs: number): string {
   const h = Math.floor(secs / 3600);
   const m = Math.floor((secs % 3600) / 60);
@@ -251,7 +270,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
       occurrences: number;
       machines: Set<string>;
       byMachine: Record<string, { secs: number; count: number }>;
-      byShift: Record<number, { secs: number; count: number }>;
+      byShift: Record<string, { secs: number; count: number }>;
     }> = {};
 
     for (const r of filtered) {
@@ -276,9 +295,10 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
       if (!entry.byMachine[r.machine_code]) entry.byMachine[r.machine_code] = { secs: 0, count: 0 };
       entry.byMachine[r.machine_code].secs += r.total_duration_secs;
       entry.byMachine[r.machine_code].count += r.occurrence_count;
-      if (!entry.byShift[r.plc_shift]) entry.byShift[r.plc_shift] = { secs: 0, count: 0 };
-      entry.byShift[r.plc_shift].secs += r.total_duration_secs;
-      entry.byShift[r.plc_shift].count += r.occurrence_count;
+      const slotLabel = plcShiftToSlotLabel(r.plc_shift, shiftSlots);
+      if (!entry.byShift[slotLabel]) entry.byShift[slotLabel] = { secs: 0, count: 0 };
+      entry.byShift[slotLabel].secs += r.total_duration_secs;
+      entry.byShift[slotLabel].count += r.occurrence_count;
     }
 
     const arr = Object.values(byCode);
@@ -297,7 +317,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
     });
 
     return arr;
-  }, [filtered, lookup, sortCol, sortAsc]);
+  }, [filtered, lookup, sortCol, sortAsc, shiftSlots]);
 
   // Expandable rows
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
@@ -579,17 +599,17 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                               <div className="bg-gray-800/50 rounded-lg p-3">
                                 <div className="flex items-center gap-1.5 mb-2.5">
                                   <i className="bi bi-clock text-gray-400 text-[11px]"></i>
-                                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">By PLC Shift</span>
+                                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">By Shift</span>
                                 </div>
                                 <div className="space-y-1">
                                   {Object.entries(row.byShift)
-                                    .sort(([a], [b]) => Number(a) - Number(b))
+                                    .sort(([a], [b]) => a.localeCompare(b))
                                     .map(([shift, v]) => {
                                       const pct = row.totalSecs > 0 ? (v.secs / row.totalSecs) * 100 : 0;
                                       return (
                                         <div key={shift}>
                                           <div className="flex items-center justify-between text-xs mb-0.5">
-                                            <span className="text-gray-300 font-medium">Shift {shift}</span>
+                                            <span className="text-gray-300 font-medium">{slotDisplayName(shift, shiftSlots)}</span>
                                             <div className="flex items-center gap-3">
                                               <span className="text-gray-400">{fmtDuration(v.secs)}</span>
                                               <span className="text-gray-500 w-12 text-right">{v.count} ev.</span>
