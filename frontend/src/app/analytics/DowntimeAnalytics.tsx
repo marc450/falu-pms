@@ -161,6 +161,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
   const [lookup, setLookup]       = useState<Record<string, PlcErrorCode>>({});
   const [loading, setLoading]     = useState(true);
   const [machineFilter, setMachineFilter] = useState<string>("all");
+  const [trendHover, setTrendHover] = useState<Record<string, string | number> | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -436,56 +437,79 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5">
           <h3 className="text-sm font-semibold text-gray-300 mb-1">Downtime Trend</h3>
           <p className="text-xs text-gray-500 mb-4">Daily error minutes stacked by top error codes. Shows whether downtime is improving or getting worse.</p>
-          <ResponsiveContainer width="100%" height={320}>
-            <AreaChart data={trendData} margin={{ left: 10, right: 10, top: 5, bottom: 30 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-              <XAxis
-                dataKey="date"
-                tick={{ fill: "#9ca3af", fontSize: 10 }}
-                stroke={AXIS_COLOR}
-                angle={-40}
-                textAnchor="end"
-                tickFormatter={(d: string) => {
-                  try { return fmtDateShort(parseISO(d)); } catch { return d; }
-                }}
-              />
-              <YAxis tick={TICK_STYLE} stroke={AXIS_COLOR} label={{ value: "minutes", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }} />
-              <Tooltip
-                contentStyle={TOOLTIP_CONTENT_STYLE}
-                labelStyle={TOOLTIP_LABEL_STYLE}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                labelFormatter={(d: any) => {
-                  try { return fmtDateShort(parseISO(String(d))); } catch { return String(d); }
-                }}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                formatter={(value: any, name: any) => {
-                  const v = Number(value);
-                  const n = String(name);
-                  const info = lookup[n];
-                  const label = info ? `${n} ${info.description}` : n;
-                  return [`${fmtN(v, 0)} min`, label];
-                }}
-              />
-              {trendCodes.map((code, i) => (
-                <Area
-                  key={code}
-                  type="monotone"
-                  dataKey={code}
-                  stackId="1"
-                  fill={AREA_COLORS[i % AREA_COLORS.length]}
-                  stroke={AREA_COLORS[i % AREA_COLORS.length]}
-                  fillOpacity={0.6}
-                />
-              ))}
-            </AreaChart>
-          </ResponsiveContainer>
-          <div className="flex flex-wrap gap-3 mt-3 justify-center">
-            {trendCodes.map((code, i) => (
-              <div key={code} className="flex items-center gap-1.5 text-xs text-gray-400">
-                <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: AREA_COLORS[i % AREA_COLORS.length] }}></span>
-                {code}{lookup[code] ? ` ${lookup[code].description}` : ""}
+          <div className="flex gap-4">
+            {/* Left panel: adaptive legend that updates on hover */}
+            <div className="w-[240px] flex-shrink-0 space-y-1.5 text-xs">
+              <div className="text-gray-400 font-medium mb-2">
+                {trendHover
+                  ? (() => { try { return fmtDateShort(parseISO(String(trendHover.date))); } catch { return String(trendHover.date); } })()
+                  : "Hover chart for details"}
               </div>
-            ))}
+              {trendCodes.map((code, i) => {
+                const mins = trendHover ? Number(trendHover[code] || 0) : 0;
+                return (
+                  <div key={code} className="flex items-center gap-2">
+                    <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: AREA_COLORS[i % AREA_COLORS.length] }}></span>
+                    <span className="text-gray-400 truncate flex-1" title={lookup[code]?.description ?? code}>
+                      {code} {lookup[code]?.description ?? ""}
+                    </span>
+                    <span className={`font-mono flex-shrink-0 ${trendHover ? "text-gray-200" : "text-gray-600"}`}>
+                      {trendHover ? `${fmtN(mins, 0)}m` : ""}
+                    </span>
+                  </div>
+                );
+              })}
+              {trendHover && (
+                <div className="flex items-center gap-2 pt-1.5 border-t border-gray-700/50">
+                  <span className="w-2 h-2 flex-shrink-0"></span>
+                  <span className="text-gray-300 font-medium flex-1">Total</span>
+                  <span className="font-mono text-white font-medium flex-shrink-0">
+                    {fmtN(trendCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0), 0)}m
+                  </span>
+                </div>
+              )}
+            </div>
+            {/* Chart */}
+            <div className="flex-1 min-w-0">
+              <ResponsiveContainer width="100%" height={320}>
+                <AreaChart
+                  data={trendData}
+                  margin={{ left: 10, right: 10, top: 5, bottom: 30 }}
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  onMouseMove={(state: any) => {
+                    if (state?.activePayload?.length) {
+                      setTrendHover(state.activePayload[0].payload);
+                    }
+                  }}
+                  onMouseLeave={() => setTrendHover(null)}
+                >
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fill: "#9ca3af", fontSize: 10 }}
+                    stroke={AXIS_COLOR}
+                    angle={-40}
+                    textAnchor="end"
+                    tickFormatter={(d: string) => {
+                      try { return fmtDateShort(parseISO(d)); } catch { return d; }
+                    }}
+                  />
+                  <YAxis tick={TICK_STYLE} stroke={AXIS_COLOR} label={{ value: "minutes", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }} />
+                  <Tooltip content={() => null} cursor={{ stroke: "#9ca3af", strokeWidth: 1 }} />
+                  {trendCodes.map((code, i) => (
+                    <Area
+                      key={code}
+                      type="monotone"
+                      dataKey={code}
+                      stackId="1"
+                      fill={AREA_COLORS[i % AREA_COLORS.length]}
+                      stroke={AREA_COLORS[i % AREA_COLORS.length]}
+                      fillOpacity={0.6}
+                    />
+                  ))}
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
           </div>
         </div>
       )}
