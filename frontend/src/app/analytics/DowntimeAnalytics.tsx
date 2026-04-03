@@ -391,22 +391,6 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
         machines={machines}
       />
 
-      {/* ── Summary KPIs ── */}
-      <div className="grid grid-cols-3 gap-4">
-        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-          <div className="text-xs text-gray-500 mb-1">Total Downtime</div>
-          <div className="text-2xl font-bold text-red-400">{fmtN(totalDowntimeHours, 1)}h</div>
-        </div>
-        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-          <div className="text-xs text-gray-500 mb-1">Total Error Events</div>
-          <div className="text-2xl font-bold text-white">{fmtN(totalOccurrences, 0)}</div>
-        </div>
-        <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-          <div className="text-xs text-gray-500 mb-1">Unique Error Codes</div>
-          <div className="text-2xl font-bold text-white">{uniqueCodes}</div>
-        </div>
-      </div>
-
       {/* ── 1. Pareto chart ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5">
         <h3 className="text-sm font-semibold text-gray-300 mb-1">Downtime by Error Code</h3>
