@@ -186,9 +186,49 @@ const TIER_LOCK_MIN   = 45;   // minutes a machine stays in the same speed tier
 // ============================================
 // Error codes by machine type — sent as individual cloud/Error messages when
 // a machine enters the error state (2-3 codes per error event).
-// Real PLC error codes loaded from plc_error_codes table at startup.
-// Falls back to a hardcoded subset if DB is unavailable.
-let ALARM_CODES = ["A010", "A035", "A073", "A074", "A113", "A172", "A173", "A190", "A244", "A274", "A275"];
+// Weighted error code distribution for realistic simulation.
+// Weight tiers: very_common (40), common (15), moderate (5), rare (1).
+// Codes not listed here default to weight 1 (rare).
+const ERROR_WEIGHTS = {
+  // Very common: production/material issues that happen frequently
+  A172: 40,  // Internal wadding tear
+  A173: 40,  // Cotton tear outside
+  A073: 35,  // No rods on chain
+  A074: 30,  // Rod magazine empty
+  A190: 25,  // Too many sticks ejected
+  A274: 25,  // Too many missing sticks on comb
+  A275: 20,  // Too many missing rods in box 1
+  A276: 15,  // Too many missing rods in box 2
+  A176: 20,  // Cotton wool finished (track 1)
+  A177: 15,  // Cotton wool finished (track 2)
+
+  // Common: operational stops, doors, routine issues
+  A010: 15,  // Emergency stop
+  A011: 12,  // Safety door monitoring
+  A012: 10,  // Magazine door open
+  A040: 10,  // No compressed air
+  A124: 10,  // Hot melt low temperature
+  A113: 8,   // Heating does not close
+  A180: 8,   // End position of dosing device
+  A075: 8,   // Slider rod magazine not inserted
+  A278: 7,   // Scraper end position error
+
+  // Moderate: mechanical wear, adjustments needed
+  A035: 5,   // Chain tension max
+  A041: 5,   // Belt max tension
+  A244: 5,   // Spring tension too low
+  A245: 5,   // Spring tension too high
+  A246: 4,   // Dryer outlet temperature outside range
+  A236: 4,   // Max temperature drying system
+  A109: 3,   // Max temperature rod heater
+  A127: 3,   // No connection to hot melt device
+  A171: 3,   // Thermo suction dosing device
+
+  // Rare: electrical faults, encoder errors, system issues (weight 1 = default)
+};
+
+// Weighted pool built at startup from DB codes + weight table
+let WEIGHTED_POOL = [];
 
 async function loadErrorCodesFromDB() {
   if (!supabase) return;
@@ -196,19 +236,33 @@ async function loadErrorCodesFromDB() {
     .from("plc_error_codes")
     .select("code")
     .eq("severity", "alarm");
+
+  let codes;
   if (!error && data && data.length > 0) {
-    ALARM_CODES = data.map(r => r.code);
-    console.log(`Loaded ${ALARM_CODES.length} alarm codes from plc_error_codes table`);
+    codes = data.map(r => r.code);
+    console.log(`Loaded ${codes.length} alarm codes from plc_error_codes table`);
   } else {
-    console.warn("Could not load alarm codes from DB, using hardcoded fallback");
+    codes = Object.keys(ERROR_WEIGHTS);
+    console.warn("Could not load alarm codes from DB, using weighted fallback");
   }
+
+  // Build weighted pool: each code appears N times based on its weight
+  WEIGHTED_POOL = [];
+  for (const code of codes) {
+    const w = ERROR_WEIGHTS[code] || 1;
+    for (let i = 0; i < w; i++) WEIGHTED_POOL.push(code);
+  }
+  console.log(`Built weighted error pool: ${WEIGHTED_POOL.length} entries from ${codes.length} unique codes`);
 }
 
 function pickErrorCodes() {
-  const pool = [...ALARM_CODES];
-  const count = 1 + Math.floor(Math.random() * 3);  // 1 to 3 codes
-  pool.sort(() => Math.random() - 0.5);
-  return pool.slice(0, count);
+  const pool = WEIGHTED_POOL.length > 0 ? WEIGHTED_POOL : ["A172", "A073", "A010"];
+  const count = 1 + Math.floor(Math.random() * 2);  // 1 or 2 codes (3 simultaneous is rare)
+  const picked = new Set();
+  while (picked.size < count) {
+    picked.add(pool[Math.floor(Math.random() * pool.length)]);
+  }
+  return Array.from(picked);
 }
 
 // ============================================
