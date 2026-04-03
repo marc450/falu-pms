@@ -162,6 +162,8 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
   const [loading, setLoading]     = useState(true);
   const [machineFilter, setMachineFilter] = useState<string>("all");
   const [trendHover, setTrendHover] = useState<Record<string, string | number> | null>(null);
+  const [trendRelative, setTrendRelative] = useState(false);
+  const [trendHiddenCodes, setTrendHiddenCodes] = useState<Set<string>>(new Set());
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -254,6 +256,20 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
 
     return { trendData: data, trendCodes: codes };
   }, [filtered, paretoData]);
+
+  const trendVisibleCodes = useMemo(() => trendCodes.filter(c => !trendHiddenCodes.has(c)), [trendCodes, trendHiddenCodes]);
+
+  const trendDisplayData = useMemo(() => {
+    if (!trendRelative) return trendData;
+    return trendData.map(row => {
+      const total = trendVisibleCodes.reduce((s, c) => s + Number(row[c] || 0), 0);
+      const out: Record<string, string | number> = { date: row.date };
+      for (const c of trendCodes) {
+        out[c] = total > 0 ? (Number(row[c] || 0) / total) * 100 : 0;
+      }
+      return out;
+    });
+  }, [trendData, trendRelative, trendCodes, trendVisibleCodes]);
 
   // ─── 3. Breakdown table: sortable detail ─────────────────────────────────
 
@@ -435,81 +451,120 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
       {/* ── 2. Trend over time ── */}
       {trendData.length > 1 && (
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5">
-          <h3 className="text-sm font-semibold text-gray-300 mb-1">Downtime Trend</h3>
-          <p className="text-xs text-gray-500 mb-4">Daily error minutes stacked by top error codes. Shows whether downtime is improving or getting worse.</p>
-          <div className="flex gap-4">
-            {/* Left panel: adaptive legend that updates on hover */}
-            <div className="w-[240px] flex-shrink-0 space-y-1.5 text-xs">
-              <div className="text-gray-400 font-medium mb-2">
+          {/* Header with title + toggle */}
+          <div className="flex items-start justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-gray-300 mb-1">Downtime Trend</h3>
+              <p className="text-xs text-gray-500">Daily error {trendRelative ? "share" : "minutes"} stacked by top error codes.</p>
+            </div>
+            <div className="flex items-center bg-gray-900/60 rounded-lg overflow-hidden text-xs">
+              <button
+                className={`px-3 py-1.5 transition-colors ${!trendRelative ? "bg-gray-700 text-white" : "text-gray-400 hover:text-gray-300"}`}
+                onClick={() => setTrendRelative(false)}
+              >min</button>
+              <button
+                className={`px-3 py-1.5 transition-colors ${trendRelative ? "bg-gray-700 text-white" : "text-gray-400 hover:text-gray-300"}`}
+                onClick={() => setTrendRelative(true)}
+              >%</button>
+            </div>
+          </div>
+          {/* Chart */}
+          <ResponsiveContainer width="100%" height={320}>
+            <AreaChart
+              data={trendDisplayData}
+              stackOffset={trendRelative ? "expand" : "none"}
+              margin={{ left: 10, right: 10, top: 5, bottom: 30 }}
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              onMouseMove={(state: any) => {
+                if (state?.activePayload?.length) {
+                  // Store the original (absolute) data for the legend, not the % data
+                  const date = state.activePayload[0].payload?.date;
+                  const orig = trendData.find(r => r.date === date);
+                  if (orig) setTrendHover(orig);
+                }
+              }}
+              onMouseLeave={() => setTrendHover(null)}
+            >
+              <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
+              <XAxis
+                dataKey="date"
+                tick={{ fill: "#9ca3af", fontSize: 10 }}
+                stroke={AXIS_COLOR}
+                angle={-40}
+                textAnchor="end"
+                tickFormatter={(d: string) => {
+                  try { return fmtDateShort(parseISO(d)); } catch { return d; }
+                }}
+              />
+              <YAxis
+                tick={TICK_STYLE}
+                stroke={AXIS_COLOR}
+                tickFormatter={trendRelative ? (v: number) => `${fmtN(v, 0)}%` : undefined}
+                label={trendRelative ? undefined : { value: "minutes", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }}
+              />
+              <Tooltip content={() => null} cursor={{ stroke: "#9ca3af", strokeWidth: 1 }} />
+              {trendCodes.map((code, i) => (
+                <Area
+                  key={code}
+                  type="monotone"
+                  dataKey={code}
+                  stackId="1"
+                  fill={trendHiddenCodes.has(code) ? "transparent" : AREA_COLORS[i % AREA_COLORS.length]}
+                  stroke={trendHiddenCodes.has(code) ? "transparent" : AREA_COLORS[i % AREA_COLORS.length]}
+                  fillOpacity={0.6}
+                />
+              ))}
+            </AreaChart>
+          </ResponsiveContainer>
+          {/* Interactive legend below chart */}
+          <div className="mt-3 pt-3 border-t border-gray-700/30">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs text-gray-500 font-medium">
                 {trendHover
                   ? (() => { try { return fmtDateShort(parseISO(String(trendHover.date))); } catch { return String(trendHover.date); } })()
                   : "Hover chart for details"}
+              </span>
+              <div className="flex gap-2 text-[10px]">
+                <button className="text-gray-500 hover:text-gray-300 transition-colors" onClick={() => setTrendHiddenCodes(new Set())}>All</button>
+                <button className="text-gray-500 hover:text-gray-300 transition-colors" onClick={() => setTrendHiddenCodes(new Set(trendCodes))}>None</button>
               </div>
+            </div>
+            <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-xs">
               {trendCodes.map((code, i) => {
+                const hidden = trendHiddenCodes.has(code);
                 const mins = trendHover ? Number(trendHover[code] || 0) : 0;
                 return (
-                  <div key={code} className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-sm flex-shrink-0" style={{ backgroundColor: AREA_COLORS[i % AREA_COLORS.length] }}></span>
-                    <span className="text-gray-400 truncate flex-1" title={lookup[code]?.description ?? code}>
+                  <div
+                    key={code}
+                    className={`flex items-center gap-2 cursor-pointer transition-opacity ${hidden ? "opacity-30" : "opacity-100"}`}
+                    onClick={() => {
+                      setTrendHiddenCodes(prev => {
+                        const next = new Set(prev);
+                        if (next.has(code)) next.delete(code); else next.add(code);
+                        return next;
+                      });
+                    }}
+                  >
+                    <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: AREA_COLORS[i % AREA_COLORS.length] }}></span>
+                    <span className={`truncate flex-1 ${hidden ? "text-gray-600 line-through" : "text-gray-400"}`} title={lookup[code]?.description ?? code}>
                       {code} {lookup[code]?.description ?? ""}
                     </span>
-                    <span className={`font-mono flex-shrink-0 ${trendHover ? "text-gray-200" : "text-gray-600"}`}>
+                    <span className={`font-mono flex-shrink-0 ${trendHover ? (hidden ? "text-gray-600" : "text-gray-200") : "text-gray-700"}`}>
                       {trendHover ? `${fmtN(mins, 0)}m` : ""}
                     </span>
                   </div>
                 );
               })}
-              {trendHover && (
-                <div className="flex items-center gap-2 pt-1.5 border-t border-gray-700/50">
-                  <span className="w-2 h-2 flex-shrink-0"></span>
-                  <span className="text-gray-300 font-medium flex-1">Total</span>
-                  <span className="font-mono text-white font-medium flex-shrink-0">
-                    {fmtN(trendCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0), 0)}m
-                  </span>
-                </div>
-              )}
             </div>
-            {/* Chart */}
-            <div className="flex-1 min-w-0">
-              <ResponsiveContainer width="100%" height={320}>
-                <AreaChart
-                  data={trendData}
-                  margin={{ left: 10, right: 10, top: 5, bottom: 30 }}
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  onMouseMove={(state: any) => {
-                    if (state?.activePayload?.length) {
-                      setTrendHover(state.activePayload[0].payload);
-                    }
-                  }}
-                  onMouseLeave={() => setTrendHover(null)}
-                >
-                  <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} />
-                  <XAxis
-                    dataKey="date"
-                    tick={{ fill: "#9ca3af", fontSize: 10 }}
-                    stroke={AXIS_COLOR}
-                    angle={-40}
-                    textAnchor="end"
-                    tickFormatter={(d: string) => {
-                      try { return fmtDateShort(parseISO(d)); } catch { return d; }
-                    }}
-                  />
-                  <YAxis tick={TICK_STYLE} stroke={AXIS_COLOR} label={{ value: "minutes", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }} />
-                  <Tooltip content={() => null} cursor={{ stroke: "#9ca3af", strokeWidth: 1 }} />
-                  {trendCodes.map((code, i) => (
-                    <Area
-                      key={code}
-                      type="monotone"
-                      dataKey={code}
-                      stackId="1"
-                      fill={AREA_COLORS[i % AREA_COLORS.length]}
-                      stroke={AREA_COLORS[i % AREA_COLORS.length]}
-                      fillOpacity={0.6}
-                    />
-                  ))}
-                </AreaChart>
-              </ResponsiveContainer>
-            </div>
+            {trendHover && (
+              <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-gray-700/50 text-xs">
+                <span className="w-2.5 h-2.5 flex-shrink-0"></span>
+                <span className="text-gray-300 font-medium flex-1">Total (visible)</span>
+                <span className="font-mono text-white font-medium flex-shrink-0">
+                  {fmtN(trendVisibleCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0), 0)}m
+                </span>
+              </div>
+            )}
           </div>
         </div>
       )}
