@@ -385,9 +385,9 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                     contentStyle={TOOLTIP_CONTENT_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    formatter={(value: any, name: any) => {
+                    formatter={(value: any, name: any, props: any) => {
                       const v = Number(value);
-                      if (name === "pct") return [`${fmtN(v, 1)}%`, "Share of Downtime"];
+                      if (name === "pct") return [`${fmtN(v, 1)}% (${fmtN(props?.payload?.totalHours ?? 0, 1)}h)`, "Share of Downtime"];
                       if (name === "cumulativePct") return [`${fmtN(v, 1)}%`, "Cumulative"];
                       return [v, name];
                     }}
