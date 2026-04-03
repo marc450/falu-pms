@@ -1384,20 +1384,31 @@ export async function fetchErrorShiftSummary(range: DateRange): Promise<ErrorShi
   // 1. error_shift_summary (permanent, aggregated per shift, written at shift end)
   // 2. error_events (detailed, last 48h, written in real time)
   // This ensures the Downtime tab shows data immediately without waiting for a shift to end.
-  const [summaryRes, eventsRes] = await Promise.all([
-    sb.from("error_shift_summary")
+  // Paginate error_shift_summary (Supabase caps at 1000 rows per request)
+  const PAGE_SIZE = 1000;
+  const allSummaryRows: ErrorShiftSummaryRow[] = [];
+  let from = 0;
+  let hasMore = true;
+  while (hasMore) {
+    const { data } = await sb.from("error_shift_summary")
       .select("machine_id, machine_code, shift_date, plc_shift, error_code, occurrence_count, total_duration_secs")
       .gte("shift_date", startStr)
       .lte("shift_date", endStr)
       .order("shift_date", { ascending: true })
-      .limit(50000),
-    sb.from("error_events")
-      .select("machine_id, machine_code, error_code, started_at, duration_secs")
-      .gte("started_at", range.start.toISOString())
-      .lte("started_at", range.end.toISOString()),
-  ]);
+      .range(from, from + PAGE_SIZE - 1);
+    const page = (data ?? []) as ErrorShiftSummaryRow[];
+    allSummaryRows.push(...page);
+    hasMore = page.length === PAGE_SIZE;
+    from += PAGE_SIZE;
+  }
 
-  const rows: ErrorShiftSummaryRow[] = (summaryRes.data ?? []) as ErrorShiftSummaryRow[];
+  // Fetch recent error_events (for real-time data not yet aggregated)
+  const eventsRes = await sb.from("error_events")
+    .select("machine_id, machine_code, error_code, started_at, duration_secs")
+    .gte("started_at", range.start.toISOString())
+    .lte("started_at", range.end.toISOString());
+
+  const rows: ErrorShiftSummaryRow[] = allSummaryRows;
 
   // Build a set of dates already covered by error_shift_summary to avoid double counting
   const coveredKeys = new Set(rows.map(r => `${r.machine_code}|${r.shift_date}|${r.plc_shift}|${r.error_code}`));
