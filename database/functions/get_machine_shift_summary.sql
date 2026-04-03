@@ -49,7 +49,7 @@ BEGIN
            THEN 'A' ELSE 'B' END AS shift_label,
       sr.machine_id,
       m.machine_code,
-      sr.shift_number,
+      sr.shift_crew,
       ROUND(MAX(sr.production_time)::numeric / 60.0, 3) AS run_hours,
       MAX(sr.produced_swabs) AS swabs_produced,
       MAX(sr.produced_boxes) AS boxes_produced,
@@ -59,7 +59,7 @@ BEGIN
     JOIN machines m ON m.id = sr.machine_id
     WHERE sr.recorded_at >= (p_range_start - INTERVAL '7 hours')
       AND sr.recorded_at <= p_range_end
-    GROUP BY 1, 2, sr.machine_id, m.machine_code, sr.shift_number
+    GROUP BY 1, 2, sr.machine_id, m.machine_code, sr.shift_crew
   ),
 
   sr_combined AS (

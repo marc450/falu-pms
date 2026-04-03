@@ -390,7 +390,6 @@ async function handleShiftMessage(payload) {
     const { error: insertError } = await supabase.from("shift_readings").insert({
       machine_id: machineId,
       machine_code: machineCode,
-      shift_number: data.Shift,
       shift_crew: crew,
       status: (data.Status || "run").toLowerCase(),
       speed: data.Speed || 0,
@@ -450,7 +449,6 @@ async function handleShiftMessage(payload) {
     await supabase.from("saved_shift_logs").insert({
       machine_id:               machineId,
       machine_code:             machineCode,
-      shift_number:             data.Shift,
       shift_crew:               saveCrew,
       production_time:          Math.round(data.ProductionTime  || 0),
       idle_time:                Math.round(data.IdleTime        || 0),

@@ -102,7 +102,7 @@ function ProductionContent() {
   // Map saved logs by shift_crew for O(1) lookup
   const savedByCrew: Record<string, SavedShiftLog> = {};
   for (const l of savedLogs) {
-    const key = l.shift_crew ?? `plc-${l.shift_number}`;
+    const key = l.shift_crew ?? 'Unassigned';
     if (!savedByCrew[key]) savedByCrew[key] = l;
   }
 

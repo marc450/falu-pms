@@ -75,7 +75,7 @@ BEGIN
     SELECT
       recorded_at,
       machine_id,
-      shift_number,
+      shift_crew,
       efficiency::double precision  AS efficiency,
       reject_rate::double precision AS reject_rate,
       produced_boxes,
@@ -87,15 +87,15 @@ BEGIN
   ),
 
   anchors AS (
-    SELECT DISTINCT ON (machine_id, shift_number)
-      recorded_at, machine_id, shift_number,
+    SELECT DISTINCT ON (machine_id, shift_crew)
+      recorded_at, machine_id, shift_crew,
       0::double precision AS efficiency,
       0::double precision AS reject_rate,
       produced_boxes, produced_swabs,
       FALSE AS in_range
     FROM shift_readings
     WHERE recorded_at < (range_start - interval '7 hours')
-    ORDER BY machine_id, shift_number, recorded_at DESC
+    ORDER BY machine_id, shift_crew, recorded_at DESC
   ),
 
   combined AS (
@@ -106,7 +106,7 @@ BEGIN
 
   deltas AS (
     SELECT
-      recorded_at, machine_id, shift_number, efficiency, reject_rate, in_range,
+      recorded_at, machine_id, shift_crew, efficiency, reject_rate, in_range,
       GREATEST(0,
         CASE
           WHEN produced_swabs >= LAG(produced_swabs, 1, 0::bigint) OVER w
@@ -123,7 +123,7 @@ BEGIN
       ) AS delta_boxes
     FROM combined
     WINDOW w AS (
-      PARTITION BY machine_id, shift_number
+      PARTITION BY machine_id, shift_crew
       ORDER BY recorded_at
       ROWS BETWEEN 1 PRECEDING AND CURRENT ROW
     )
@@ -132,12 +132,12 @@ BEGIN
   sr_daily_max AS (
     SELECT
       TO_CHAR(DATE_TRUNC('day', (recorded_at AT TIME ZONE tz) - interval '7 hours'), 'YYYY-MM-DD') AS bucket,
-      machine_id, shift_number,
+      machine_id, shift_crew,
       MAX(produced_boxes)::bigint AS tot_boxes,
       MAX(produced_swabs)::bigint AS tot_swabs
     FROM raw
     WHERE bucket_granularity = 'day'
-    GROUP BY 1, machine_id, shift_number
+    GROUP BY 1, machine_id, shift_crew
   ),
   sr_daily AS (
     SELECT bucket, SUM(tot_boxes) AS total_boxes, SUM(tot_swabs) AS total_swabs
@@ -198,7 +198,7 @@ BEGIN
       ROUND(AVG(reject_rate)::numeric,           1)      AS avg_scrap,
       COUNT(*)                                           AS reading_count,
       COUNT(DISTINCT machine_id)                         AS machine_count,
-      COUNT(DISTINCT shift_number)                       AS shift_count
+      COUNT(DISTINCT shift_crew)                       AS shift_count
     FROM raw
     WHERE bucket_granularity = 'hour' AND in_range = TRUE
        OR bucket_granularity = 'day'
@@ -215,17 +215,7 @@ BEGIN
       ROUND(AVG(sl.reject_rate)::numeric, 1)             AS avg_scrap,
       COUNT(*)::bigint                                   AS reading_count,
       COUNT(DISTINCT sl.machine_id)::bigint              AS machine_count,
-      COUNT(DISTINCT
-        SUBSTR('ABCD',
-          1 + LEAST(3, GREATEST(0,
-            FLOOR(
-              (((EXTRACT(HOUR FROM sl.saved_at AT TIME ZONE tz)::int - c.first_hour + 24) % 24))::double precision
-              / c.dur_hours::double precision
-            )::int
-          )),
-          1
-        )
-      )::bigint AS shift_count
+      COUNT(DISTINCT sl.shift_crew)::bigint AS shift_count
     FROM saved_shift_logs sl
     CROSS JOIN config c
     WHERE bucket_granularity = 'day'

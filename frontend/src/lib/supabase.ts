@@ -461,11 +461,11 @@ export interface FleetTrendRow {
   date: string;        // "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH" (hourly)
   avgUptime: number;   // avg efficiency % across all machines in bucket (0 for idle hours)
   avgScrap: number;    // avg reject_rate % across all machines in bucket (0 for idle hours)
-  totalBoxes: number;  // sum of per-(machine_id, shift_number) MAX produced_boxes
-  totalSwabs: number;  // sum of per-(machine_id, shift_number) MAX produced_swabs
+  totalBoxes: number;  // sum of per-(machine_id, shift_crew) MAX produced_boxes
+  totalSwabs: number;  // sum of per-(machine_id, shift_crew) MAX produced_swabs
   machineCount: number;// unique machines with readings in bucket
   readingCount: number;// total readings in bucket
-  shiftCount: number;  // distinct shift_numbers with data in this bucket
+  shiftCount: number;  // distinct shift_crews with data in this bucket
 }
 
 export interface FleetTrendResult {
@@ -525,7 +525,7 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
 interface HourlyAnalyticsRow {
   plc_hour:                string;
   machine_id:              string;
-  shift_number:            number;
+  shift_crew:              string;
   swabs_produced:          number;
   boxes_produced:          number;
   production_time_seconds: number;
@@ -543,7 +543,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
   const { data, error } = await sb
     .from("hourly_analytics")
     .select(
-      "plc_hour, machine_id, shift_number, swabs_produced, boxes_produced, " +
+      "plc_hour, machine_id, shift_crew, swabs_produced, boxes_produced, " +
       "production_time_seconds, idle_time_seconds, error_time_seconds, " +
       "discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate"
     )
@@ -563,7 +563,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
     totalBoxes:     number;
     totalDiscarded: number;  // for volume-weighted scrap: discarded / produced
     machineIds:     Set<string>;
-    shiftNumbers:   Set<number>;
+    shiftCrews:     Set<string>;
     readingCount:   number;
     effSum:         number;  // weighted sum of avg_efficiency by reading_count
     weightTotal:    number;  // total reading_count weight (all machines, incl. idle)
@@ -581,7 +581,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
         totalBoxes:     0,
         totalDiscarded: 0,
         machineIds:     new Set(),
-        shiftNumbers:   new Set(),
+        shiftCrews:     new Set(),
         readingCount:   0,
         effSum:         0,
         weightTotal:    0,
@@ -594,7 +594,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
     b.totalDiscarded += Number(row.discarded_swabs) || 0;
     b.readingCount   += Number(row.reading_count)   || 0;
     b.machineIds.add(row.machine_id);
-    b.shiftNumbers.add(row.shift_number);
+    b.shiftCrews.add(row.shift_crew);
 
     // Uptime: include ALL machines weighted by reading_count.
     // Idle machines report efficiency = 0 and must count toward the average.
@@ -638,7 +638,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
         totalSwabs:   b.totalSwabs,
         machineCount: b.machineIds.size,
         readingCount: b.readingCount,
-        shiftCount:   b.shiftNumbers.size,
+        shiftCount:   b.shiftCrews.size,
       });
     } else {
       // No DB row — emit a zero slot (hour is idle/offline).
@@ -878,7 +878,6 @@ export async function saveShiftConfig(config: ShiftConfig): Promise<void> {
 }
 
 export interface SavedShiftLog {
-  shift_number:             number;
   shift_crew:               string | null;
   production_time:          number;
   idle_time:                number;
@@ -904,7 +903,7 @@ export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShi
   const sb = getSupabase();
   const { data, error } = await sb
     .from("saved_shift_logs")
-    .select("shift_number, shift_crew, production_time, idle_time, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, reject_rate, saved_at")
+    .select("shift_crew, production_time, idle_time, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, reject_rate, saved_at")
     .eq("machine_code", machineCode)
     .order("saved_at", { ascending: false })
     .limit(20); // grab recent rows then deduplicate by shift_crew in JS
@@ -914,7 +913,7 @@ export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShi
   const seen = new Set<string>();
   const result: SavedShiftLog[] = [];
   for (const row of data) {
-    const key = row.shift_crew ?? `plc-${row.shift_number}`;
+    const key = row.shift_crew ?? 'Unassigned';
     if (!seen.has(key)) {
       seen.add(key);
       result.push(row as SavedShiftLog);
