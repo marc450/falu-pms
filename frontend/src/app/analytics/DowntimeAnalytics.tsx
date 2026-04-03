@@ -70,7 +70,12 @@ function plcShiftToSlotLabel(plcShift: number, slots: TimeSlot[]): string {
 /** Get display name for a slot label, using slot names from config. */
 function slotDisplayName(label: string, slots: TimeSlot[]): string {
   const idx = label.charCodeAt(0) - 65; // A=0, B=1, etc.
-  if (idx >= 0 && idx < slots.length && slots[idx].name) return `${slots[idx].name} (${label})`;
+  if (idx >= 0 && idx < slots.length && slots[idx].name) {
+    const name = slots[idx].name;
+    // Avoid redundancy like "A (A)" when slot name equals the label
+    if (name === label) return `Shift ${label}`;
+    return `${name} (${label})`;
+  }
   return `Shift ${label}`;
 }
 
