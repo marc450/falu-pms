@@ -21,7 +21,6 @@ import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, ShiftConf
 import { fmtN, fmtPct } from "@/lib/fmt";
 import MachineAnalytics from "./MachineAnalytics";
 import ShiftAnalytics   from "./ShiftAnalytics";
-import MachinePark      from "./MachinePark";
 import DowntimeAnalytics from "./DowntimeAnalytics";
 
 // ─── Chart constants ─────────────────────────────────────────────────────────
@@ -392,7 +391,7 @@ function PeriodSelector({
 
 // ─── Tab types ────────────────────────────────────────────────────────────────
 
-type AnalyticsTab = "fleet" | "machines" | "shifts" | "park" | "downtime";
+type AnalyticsTab = "fleet" | "machines" | "shifts" | "downtime";
 
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
@@ -684,7 +683,7 @@ export default function Analytics() {
 
       {/* ── Tab navigation ── */}
       <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1 w-fit mb-5">
-        {(["fleet", "machines", "shifts", "downtime", "park"] as AnalyticsTab[]).map(t => (
+        {(["fleet", "machines", "shifts", "downtime"] as AnalyticsTab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
@@ -694,7 +693,7 @@ export default function Analytics() {
                 : "text-gray-400 hover:text-white hover:bg-gray-700"
             }`}
           >
-            {t === "fleet" ? "Production Trend" : t === "machines" ? "Machine Performance" : t === "shifts" ? "Crew Comparison" : t === "downtime" ? "Downtime" : "Park History"}
+            {t === "fleet" ? "Production Trend" : t === "machines" ? "Machine Performance" : t === "shifts" ? "Crew Comparison" : "Downtime"}
           </button>
         ))}
       </div>
@@ -708,9 +707,6 @@ export default function Analytics() {
       )}
       {tab === "downtime" && (
         <DowntimeAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
-      )}
-      {tab === "park" && (
-        <MachinePark dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
       )}
 
       {tab === "fleet" && (
