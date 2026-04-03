@@ -477,7 +477,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
           <ResponsiveContainer width="100%" height={320}>
             <AreaChart
               data={trendDisplayData}
-              stackOffset={trendRelative ? "expand" : "none"}
+              stackOffset="none"
               margin={{ left: 10, right: 10, top: 5, bottom: 30 }}
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               onMouseMove={(state: any) => {
