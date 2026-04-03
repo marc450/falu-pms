@@ -365,41 +365,47 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
         <h3 className="text-sm font-semibold text-gray-300 mb-1">Downtime by Error Code</h3>
         <p className="text-xs text-gray-500 mb-4">Total downtime hours per error code, sorted by impact. The line shows cumulative percentage.</p>
         {paretoData.length > 0 && (
-          <ResponsiveContainer width="100%" height={Math.max(280, paretoData.length * 32)}>
-            <ComposedChart data={paretoData} layout="vertical" margin={{ left: 10, right: 40, top: 5, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} horizontal={false} />
-              <XAxis type="number" tick={TICK_STYLE} stroke={AXIS_COLOR} />
-              <YAxis
-                type="category"
-                dataKey="shortLabel"
-                tick={{ fill: "#ef4444", fontSize: 11, fontFamily: "monospace" }}
-                stroke={AXIS_COLOR}
-                width={55}
-              />
-              <Tooltip
-                contentStyle={TOOLTIP_CONTENT_STYLE}
-                labelStyle={TOOLTIP_LABEL_STYLE}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                formatter={(value: any, name: any) => {
-                  const v = Number(value);
-                  if (name === "totalHours") return [`${fmtN(v, 1)}h`, "Downtime"];
-                  if (name === "cumulativePct") return [`${fmtN(v, 1)}%`, "Cumulative"];
-                  return [v, name];
-                }}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                labelFormatter={(label: any) => {
-                  const item = paretoData.find(d => d.shortLabel === label);
-                  return item ? `${item.code}: ${item.description}` : label;
-                }}
-              />
-              <Bar dataKey="totalHours" fill="#ef4444" radius={[0, 4, 4, 0]} barSize={20}>
-                {paretoData.map((_, i) => (
-                  <Cell key={i} fill={i < 3 ? "#ef4444" : i < 6 ? "#f97316" : "#6b7280"} />
-                ))}
-              </Bar>
-              <Line type="monotone" dataKey="cumulativePct" stroke="#22c55e" strokeWidth={2} dot={{ r: 3, fill: "#22c55e" }} yAxisId={0} />
-            </ComposedChart>
-          </ResponsiveContainer>
+          <div className="overflow-x-auto">
+            <div style={{ width: Math.max(600, paretoData.length * 56), minWidth: "100%" }}>
+              <ResponsiveContainer width="100%" height={320}>
+                <ComposedChart data={paretoData} margin={{ left: 10, right: 10, top: 5, bottom: 50 }}>
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                  <XAxis
+                    dataKey="shortLabel"
+                    tick={{ fill: "#ef4444", fontSize: 11, fontFamily: "monospace" }}
+                    stroke={AXIS_COLOR}
+                    angle={-45}
+                    textAnchor="end"
+                    interval={0}
+                    height={50}
+                  />
+                  <YAxis tick={TICK_STYLE} stroke={AXIS_COLOR} />
+                  <Tooltip
+                    contentStyle={TOOLTIP_CONTENT_STYLE}
+                    labelStyle={TOOLTIP_LABEL_STYLE}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    formatter={(value: any, name: any) => {
+                      const v = Number(value);
+                      if (name === "totalHours") return [`${fmtN(v, 1)}h`, "Downtime"];
+                      if (name === "cumulativePct") return [`${fmtN(v, 1)}%`, "Cumulative"];
+                      return [v, name];
+                    }}
+                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                    labelFormatter={(label: any) => {
+                      const item = paretoData.find(d => d.shortLabel === label);
+                      return item ? `${item.code}: ${item.description}` : label;
+                    }}
+                  />
+                  <Bar dataKey="totalHours" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={28}>
+                    {paretoData.map((_, i) => (
+                      <Cell key={i} fill={i < 3 ? "#ef4444" : i < 6 ? "#f97316" : "#6b7280"} />
+                    ))}
+                  </Bar>
+                  <Line type="monotone" dataKey="cumulativePct" stroke="#22c55e" strokeWidth={2} dot={{ r: 3, fill: "#22c55e" }} />
+                </ComposedChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
         )}
       </div>
 
