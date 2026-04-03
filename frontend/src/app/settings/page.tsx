@@ -207,6 +207,11 @@ function MachinesTab() {
   };
 
   const handleDeleteCell = async (id: string) => {
+    const hasMachines = machines.some(m => m.cell_id === id);
+    if (hasMachines) {
+      alert("Please remove all machines before deleting a cell.");
+      return;
+    }
     const cell = cells.find(c => c.id === id);
     setConfirmDelete({ cellId: id, cellName: cell?.name ?? "this cell" });
   };
