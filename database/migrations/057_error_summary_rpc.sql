@@ -28,7 +28,7 @@ BEGIN
     e.machine_id,
     e.machine_code,
     e.started_at::DATE AS shift_date,
-    0 AS plc_shift,
+    (EXTRACT(HOUR FROM e.started_at)::INTEGER / 8 + 1) AS plc_shift,
     e.error_code,
     COUNT(*)::INTEGER AS occurrence_count,
     COALESCE(SUM(e.duration_secs), 0)::INTEGER AS total_duration_secs

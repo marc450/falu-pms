@@ -588,7 +588,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                                             </div>
                                           </div>
                                           <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
-                                            <div className="h-full bg-red-500/60 rounded-full" style={{ width: `${pct}%` }}></div>
+                                            <div className="h-full bg-cyan-500/60 rounded-full" style={{ width: `${pct}%` }}></div>
                                           </div>
                                         </div>
                                       );
