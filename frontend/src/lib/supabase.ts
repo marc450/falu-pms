@@ -1389,7 +1389,8 @@ export async function fetchErrorShiftSummary(range: DateRange): Promise<ErrorShi
       .select("machine_id, machine_code, shift_date, plc_shift, error_code, occurrence_count, total_duration_secs")
       .gte("shift_date", startStr)
       .lte("shift_date", endStr)
-      .order("shift_date", { ascending: true }),
+      .order("shift_date", { ascending: true })
+      .limit(50000),
     sb.from("error_events")
       .select("machine_id, machine_code, error_code, started_at, duration_secs")
       .gte("started_at", range.start.toISOString())
