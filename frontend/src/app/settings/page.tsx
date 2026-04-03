@@ -206,10 +206,12 @@ function MachinesTab() {
     await reload();
   };
 
+  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+
   const handleDeleteCell = async (id: string) => {
     const hasMachines = machines.some(m => m.cell_id === id);
     if (hasMachines) {
-      alert("Please remove all machines before deleting a cell.");
+      setInfoMessage("Please remove all machines before deleting a cell.");
       return;
     }
     const cell = cells.find(c => c.id === id);
@@ -323,6 +325,17 @@ function MachinesTab() {
 
   return (
     <div className="space-y-4">
+      {/* Info modal */}
+      {infoMessage && (
+        <ConfirmModal
+          message={infoMessage}
+          confirmLabel="OK"
+          onConfirm={() => setInfoMessage(null)}
+          onCancel={() => setInfoMessage(null)}
+          danger={false}
+        />
+      )}
+
       {/* Cell delete confirmation modal */}
       {confirmDelete && (
         <ConfirmModal
