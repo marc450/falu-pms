@@ -11,11 +11,10 @@ import {
 import {
   fetchErrorShiftSummary,
   fetchErrorCodeLookup,
-  teamNameForShift,
 } from "@/lib/supabase";
 import type {
   DateRange, RegisteredMachine, ErrorShiftSummaryRow,
-  PlcErrorCode, TimeSlot, ShiftAssignment,
+  PlcErrorCode,
 } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
@@ -46,8 +45,6 @@ const AREA_COLORS = [
 interface DowntimeAnalyticsProps {
   dateRange:        DateRange;
   machines:         RegisteredMachine[];
-  shiftSlots:       TimeSlot[];
-  shiftAssignments: Record<string, ShiftAssignment>;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -55,29 +52,6 @@ interface DowntimeAnalyticsProps {
 function secsToHours(s: number): number { return s / 3600; }
 function secsToMin(s: number): number { return s / 60; }
 
-/** Map a PLC shift number (1/2/3, always 8h) to the user-defined slot label (A/B/C/D). */
-function plcShiftToSlotLabel(plcShift: number, slots: TimeSlot[]): string {
-  if (!slots.length) return String(plcShift);
-  // PLC shifts are 8h blocks: shift 1 = 00:00-08:00, shift 2 = 08:00-16:00, shift 3 = 16:00-24:00
-  const midpointHour = (plcShift - 1) * 8 + 4; // 4, 12, 20
-  const firstStart = slots[0].startHour;
-  const dur = slots.length <= 2 ? 12 : slots.length <= 3 ? 8 : 6;
-  const slotIdx = Math.floor(((midpointHour - firstStart + 24) % 24) / dur);
-  const labels = ["A", "B", "C", "D"];
-  return labels[Math.min(slotIdx, labels.length - 1)] ?? "A";
-}
-
-/** Get display name for a slot label, using slot names from config. */
-function slotDisplayName(label: string, slots: TimeSlot[]): string {
-  const idx = label.charCodeAt(0) - 65; // A=0, B=1, etc.
-  if (idx >= 0 && idx < slots.length && slots[idx].name) {
-    const name = slots[idx].name;
-    // Avoid redundancy like "A (A)" when slot name equals the label
-    if (name === label) return `Shift ${label}`;
-    return `${name} (${label})`;
-  }
-  return `Shift ${label}`;
-}
 
 function fmtDuration(secs: number): string {
   const h = Math.floor(secs / 3600);
@@ -161,7 +135,7 @@ function MachineFilterDropdown({ value, onChange, machinesWithErrors, machines }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shiftAssignments }: DowntimeAnalyticsProps) {
+export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnalyticsProps) {
   const [rows, setRows]           = useState<ErrorShiftSummaryRow[]>([]);
   const [lookup, setLookup]       = useState<Record<string, PlcErrorCode>>({});
   const [loading, setLoading]     = useState(true);
@@ -324,11 +298,11 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
       if (!entry.byMachine[r.machine_code]) entry.byMachine[r.machine_code] = { secs: 0, count: 0 };
       entry.byMachine[r.machine_code].secs += r.total_duration_secs;
       entry.byMachine[r.machine_code].count += r.occurrence_count;
-      if (r.plc_shift > 0) {
-        const slotLabel = plcShiftToSlotLabel(r.plc_shift, shiftSlots);
-        if (!entry.byShift[slotLabel]) entry.byShift[slotLabel] = { secs: 0, count: 0 };
-        entry.byShift[slotLabel].secs += r.total_duration_secs;
-        entry.byShift[slotLabel].count += r.occurrence_count;
+      if (r.shift_crew) {
+        const crew = r.shift_crew;
+        if (!entry.byShift[crew]) entry.byShift[crew] = { secs: 0, count: 0 };
+        entry.byShift[crew].secs += r.total_duration_secs;
+        entry.byShift[crew].count += r.occurrence_count;
       }
     }
 
@@ -348,7 +322,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
     });
 
     return arr;
-  }, [filtered, lookup, sortCol, sortAsc, shiftSlots]);
+  }, [filtered, lookup, sortCol, sortAsc]);
 
   // Expandable rows
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
@@ -685,7 +659,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                               <div className="bg-gray-800/50 rounded-lg p-3">
                                 <div className="flex items-center gap-1.5 mb-2.5">
                                   <i className="bi bi-clock text-gray-400 text-[11px]"></i>
-                                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">By Shift</span>
+                                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">By Crew</span>
                                 </div>
                                 <div className="space-y-1">
                                   {Object.entries(row.byShift)
@@ -695,7 +669,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                                       return (
                                         <div key={shift}>
                                           <div className="flex items-center justify-between text-xs mb-0.5">
-                                            <span className="text-gray-300 font-medium">{slotDisplayName(shift, shiftSlots)}</span>
+                                            <span className="text-gray-300 font-medium">{shift}</span>
                                             <div className="flex items-center gap-3">
                                               <span className="text-gray-400">{fmtDuration(v.secs)}</span>
                                               <span className="text-gray-500 w-12 text-right">{v.count} ev.</span>

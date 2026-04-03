@@ -1369,7 +1369,7 @@ export interface ErrorShiftSummaryRow {
   machine_id: string;
   machine_code: string;
   shift_date: string;
-  plc_shift: number;
+  shift_crew: string;
   error_code: string;
   occurrence_count: number;
   total_duration_secs: number;

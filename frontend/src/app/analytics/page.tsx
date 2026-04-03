@@ -706,7 +706,7 @@ export default function Analytics() {
         <ShiftAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
       )}
       {tab === "downtime" && (
-        <DowntimeAnalytics dateRange={kpiRange} machines={machines} shiftSlots={shiftSlots} shiftAssignments={shiftAssignments} />
+        <DowntimeAnalytics dateRange={kpiRange} machines={machines} />
       )}
 
       {tab === "fleet" && (

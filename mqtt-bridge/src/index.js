@@ -72,7 +72,7 @@ const allMachines = {};
 //                    ProductionTime, IdleTime },
 //   lastSync: Date,
 //   openErrorEvents: { "A172": eventId, ... },  // error_events.id for currently open events
-//   shiftErrorCounts: { "1": { "A172": { count: 3, totalSecs: 120 }, ... }, ... },  // in-memory aggregation
+//   shiftErrorCounts: { "SHIFT A": { "A172": { count: 3, totalSecs: 120 }, ... }, ... },  // keyed by crew name
 // }
 
 let mqttConnected = false;
@@ -88,6 +88,7 @@ const machineIdCache = {};
 let alertConfig = { enabled: false, threshold_minutes: 10 };
 let shiftConfig = null;   // loaded from app_settings
 let shiftMechanics = {};  // crew name -> user UUID
+let shiftAssignmentsCache = {};  // date string -> slot_teams array
 
 // Twilio credentials from environment
 const TWILIO_SID          = process.env.TWILIO_ACCOUNT_SID || "";
@@ -303,8 +304,7 @@ async function handleShiftMessage(payload) {
     // Close all open error_event rows for this machine
     if (m.openErrorEvents && Object.keys(m.openErrorEvents).length > 0) {
       const now = new Date();
-      const mId = machineIdCache[machineCode];
-      const currentShift = String(data.Shift || currentShiftNumber);
+      const crew = resolveCurrentCrew() || "Unassigned";
       for (const [errCode, eventId] of Object.entries(m.openErrorEvents)) {
         const { data: ev } = await supabase.from("error_events").select("started_at").eq("id", eventId).single();
         const durationSecs = ev ? Math.round((now.getTime() - new Date(ev.started_at).getTime()) / 1000) : 0;
@@ -312,11 +312,11 @@ async function handleShiftMessage(payload) {
           ended_at: now.toISOString(),
           duration_secs: durationSecs,
         }).eq("id", eventId);
-        // Add to shift aggregation
+        // Add to shift aggregation (keyed by crew name)
         if (!m.shiftErrorCounts) m.shiftErrorCounts = {};
-        if (!m.shiftErrorCounts[currentShift]) m.shiftErrorCounts[currentShift] = {};
-        if (!m.shiftErrorCounts[currentShift][errCode]) m.shiftErrorCounts[currentShift][errCode] = { count: 0, totalSecs: 0 };
-        m.shiftErrorCounts[currentShift][errCode].totalSecs += durationSecs;
+        if (!m.shiftErrorCounts[crew]) m.shiftErrorCounts[crew] = {};
+        if (!m.shiftErrorCounts[crew][errCode]) m.shiftErrorCounts[crew][errCode] = { count: 0, totalSecs: 0 };
+        m.shiftErrorCounts[crew][errCode].totalSecs += durationSecs;
       }
       m.openErrorEvents = {};
       logger.info(`Closed all open error events for ${machineCode} on transition to running`);
@@ -383,10 +383,12 @@ async function handleShiftMessage(payload) {
                   (data.ProducedBoxes || 0) > 0;
 
   if (hasData) {
+    const crew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
     const { error: insertError } = await supabase.from("shift_readings").insert({
       machine_id: machineId,
       machine_code: machineCode,
       shift_number: data.Shift,
+      shift_crew: crew,
       status: (data.Status || "run").toLowerCase(),
       speed: data.Speed || 0,
       production_time:           data.ProductionTime          || 0,
@@ -418,11 +420,12 @@ async function handleShiftMessage(payload) {
   }
 
   if (data.Save) {
-    logger.info(`Save flag (end of shift) received for ${machineCode}, Shift ${data.Shift}`);
+    const saveCrew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
+    logger.info(`Save flag (end of shift) received for ${machineCode}, crew ${saveCrew}`);
 
     // ── Flush in-memory error counts to error_shift_summary ──
-    const shiftKey = String(data.Shift || currentShiftNumber);
-    const shiftCounts = m.shiftErrorCounts?.[shiftKey];
+    // Error counts are keyed by crew name
+    const shiftCounts = m.shiftErrorCounts?.[saveCrew];
     if (shiftCounts && Object.keys(shiftCounts).length > 0) {
       const today = new Date().toISOString().slice(0, 10);
       for (const [errCode, agg] of Object.entries(shiftCounts)) {
@@ -431,20 +434,21 @@ async function handleShiftMessage(payload) {
           machine_id: machineId,
           machine_code: machineCode,
           shift_date: today,
-          plc_shift: parseInt(shiftKey),
+          shift_crew: saveCrew,
           error_code: errCode,
           occurrence_count: agg.count,
           total_duration_secs: agg.totalSecs,
-        }, { onConflict: "machine_id,shift_date,plc_shift,error_code" });
+        }, { onConflict: "machine_id,shift_date,shift_crew,error_code" });
       }
-      logger.info(`Flushed error_shift_summary for ${machineCode} shift ${shiftKey}: ${Object.keys(shiftCounts).length} codes`);
-      delete m.shiftErrorCounts[shiftKey];
+      logger.info(`Flushed error_shift_summary for ${machineCode} crew ${saveCrew}: ${Object.keys(shiftCounts).length} codes`);
+      delete m.shiftErrorCounts[saveCrew];
     }
 
     await supabase.from("saved_shift_logs").insert({
       machine_id:               machineId,
       machine_code:             machineCode,
       shift_number:             data.Shift,
+      shift_crew:               saveCrew,
       production_time:          Math.round(data.ProductionTime  || 0),
       idle_time:                Math.round(data.IdleTime        || 0),
       error_time:               Math.round(data.ErrorTime        || 0),  // seconds, from PLC
@@ -496,7 +500,7 @@ async function handleErrorMessage(payload) {
   if (!m.shiftErrorCounts) m.shiftErrorCounts = {};
 
   const machineId = machineIdCache[machineCode];
-  const currentShift = String(m.machineStatus?.Shift || currentShiftNumber);
+  const crew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
 
   if (data.ErrorStatus) {
     // Error activated
@@ -508,16 +512,16 @@ async function handleErrorMessage(payload) {
         machine_id: machineId,
         machine_code: machineCode,
         error_code: code,
-        plc_shift: Number(currentShift) || null,
+        shift_crew: crew,
         started_at: data.Timestamp ? new Date(data.Timestamp).toISOString() : new Date().toISOString(),
       }).select("id").single();
       if (row) m.openErrorEvents[code] = row.id;
     }
 
-    // Increment in-memory shift aggregation count
-    if (!m.shiftErrorCounts[currentShift]) m.shiftErrorCounts[currentShift] = {};
-    if (!m.shiftErrorCounts[currentShift][code]) m.shiftErrorCounts[currentShift][code] = { count: 0, totalSecs: 0 };
-    m.shiftErrorCounts[currentShift][code].count++;
+    // Increment in-memory shift aggregation count (keyed by crew)
+    if (!m.shiftErrorCounts[crew]) m.shiftErrorCounts[crew] = {};
+    if (!m.shiftErrorCounts[crew][code]) m.shiftErrorCounts[crew][code] = { count: 0, totalSecs: 0 };
+    m.shiftErrorCounts[crew][code].count++;
 
   } else {
     // Error cleared
@@ -537,8 +541,8 @@ async function handleErrorMessage(payload) {
       }).eq("id", eventId);
 
       // Add duration to in-memory shift aggregation
-      if (m.shiftErrorCounts[currentShift]?.[code]) {
-        m.shiftErrorCounts[currentShift][code].totalSecs += durationSecs;
+      if (m.shiftErrorCounts[crew]?.[code]) {
+        m.shiftErrorCounts[crew][code].totalSecs += durationSecs;
       }
       delete m.openErrorEvents[code];
     }
@@ -576,22 +580,59 @@ async function loadAlertConfig() {
       if (row.key === "shift_mechanics") shiftMechanics = row.value;
     }
     logger.debug(`Alert config loaded: enabled=${alertConfig.enabled}, threshold=${alertConfig.threshold_minutes}min`);
+
+    // Cache shift assignments for the current month (covers today and nearby days)
+    await loadShiftAssignments();
   } catch (err) {
     logger.error(`loadAlertConfig error: ${err.message}`);
   }
 }
 
 /**
- * Resolve which shift crew is currently active, then find the assigned mechanic.
- * Returns { mechanicId, phone, crewName } or null.
+ * Load shift assignments for a window around today so we can resolve crew names.
+ * Cached in shiftAssignmentsCache keyed by date string (YYYY-MM-DD).
  */
-async function resolveCurrentMechanic() {
+async function loadShiftAssignments() {
+  const today = new Date();
+  const from = new Date(today);
+  from.setDate(from.getDate() - 2); // 2 days back (overnight shifts)
+  const to = new Date(today);
+  to.setDate(to.getDate() + 1); // 1 day ahead
+  const fromStr = from.toISOString().slice(0, 10);
+  const toStr = to.toISOString().slice(0, 10);
+
+  const { data, error } = await supabase
+    .from("shift_assignments")
+    .select("shift_date, slot_teams, day_team, night_team")
+    .gte("shift_date", fromStr)
+    .lte("shift_date", toStr);
+
+  if (error) {
+    logger.error(`Failed to load shift assignments: ${error.message}`);
+    return;
+  }
+
+  shiftAssignmentsCache = {};
+  for (const row of data || []) {
+    const raw = row.slot_teams;
+    const hasSlotTeams = Array.isArray(raw) && raw.length > 0;
+    shiftAssignmentsCache[row.shift_date] = hasSlotTeams
+      ? raw
+      : [row.day_team || null, row.night_team || null];
+  }
+  logger.debug(`Cached shift assignments for ${Object.keys(shiftAssignmentsCache).length} days`);
+}
+
+/**
+ * Resolve the crew name currently on duty based on shift config + schedule.
+ * Returns the crew name string or null if no assignment exists.
+ */
+function resolveCurrentCrew(timestamp) {
   if (!shiftConfig || !shiftConfig.slots || shiftConfig.slots.length === 0) {
-    logger.warn("No shift config available, cannot resolve mechanic");
     return null;
   }
 
-  const now = new Date();
+  const now = timestamp ? new Date(timestamp) : new Date();
   const currentHour = now.getHours() + now.getMinutes() / 60;
   const firstStart = shiftConfig.firstShiftStartHour || 0;
   const duration = shiftConfig.shiftDurationHours || 12;
@@ -605,25 +646,27 @@ async function resolveCurrentMechanic() {
   if (currentHour < firstStart) {
     workDate.setDate(workDate.getDate() - 1);
   }
-  const dateStr = workDate.toISOString().slice(0, 10); // YYYY-MM-DD
+  const dateStr = workDate.toISOString().slice(0, 10);
 
-  // Look up shift_assignments for this date
-  const { data: assignment, error } = await supabase
-    .from("shift_assignments")
-    .select("slot_teams")
-    .eq("shift_date", dateStr)
-    .maybeSingle();
-
-  if (error) {
-    logger.error(`Failed to fetch shift assignment for ${dateStr}: ${error.message}`);
-    return null;
-  }
-  if (!assignment || !assignment.slot_teams || !assignment.slot_teams[slotIndex]) {
-    logger.warn(`No shift assignment for ${dateStr} slot ${slotIndex}`);
+  const teams = shiftAssignmentsCache[dateStr];
+  if (!teams || !teams[slotIndex]) {
     return null;
   }
 
-  const crewName = assignment.slot_teams[slotIndex]; // e.g. "SHIFT A"
+  return teams[slotIndex];
+}
+
+/**
+ * Resolve which shift crew is currently active, then find the assigned mechanic.
+ * Returns { mechanicId, phone, crewName } or null.
+ */
+async function resolveCurrentMechanic() {
+  const crewName = resolveCurrentCrew();
+  if (!crewName) {
+    logger.warn("No crew resolved for current shift, cannot resolve mechanic");
+    return null;
+  }
+
   const mechanicId = shiftMechanics[crewName] || null;
   if (!mechanicId) {
     logger.warn(`No mechanic assigned to crew ${crewName}`);
