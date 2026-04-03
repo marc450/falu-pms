@@ -519,75 +519,90 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                     </tr>
                     {isExpanded && (
                       <tr>
-                        <td colSpan={6} className="px-5 py-3 bg-gray-900/50">
-                          <div className="grid grid-cols-2 gap-6">
-                            {/* Cause + Solution */}
+                        <td colSpan={6} className="p-0">
+                          <div className="bg-gray-900/60 border-t border-b border-gray-700/30">
+                            {/* Cause + Solution cards */}
                             {(row.cause || row.solution) && (
-                              <div className="col-span-2 flex gap-6 text-xs mb-2">
+                              <div className="grid grid-cols-2 gap-4 px-6 pt-4 pb-2">
                                 {row.cause && (
-                                  <div className="flex-1">
-                                    <span className="text-gray-500 font-medium">Possible cause:</span>
-                                    <p className="text-gray-400 mt-0.5 whitespace-pre-line">{row.cause}</p>
+                                  <div className="bg-gray-800/50 rounded-lg p-3">
+                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                      <i className="bi bi-exclamation-triangle text-amber-500 text-[11px]"></i>
+                                      <span className="text-[11px] font-semibold text-amber-500 uppercase tracking-wider">Possible Cause</span>
+                                    </div>
+                                    <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">{row.cause}</p>
                                   </div>
                                 )}
                                 {row.solution && (
-                                  <div className="flex-1">
-                                    <span className="text-gray-500 font-medium">Possible solution:</span>
-                                    <p className="text-gray-400 mt-0.5 whitespace-pre-line">{row.solution}</p>
+                                  <div className="bg-gray-800/50 rounded-lg p-3">
+                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                      <i className="bi bi-wrench text-blue-400 text-[11px]"></i>
+                                      <span className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">Possible Solution</span>
+                                    </div>
+                                    <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">{row.solution}</p>
                                   </div>
                                 )}
                               </div>
                             )}
-                            {/* Per-machine breakdown */}
-                            <div>
-                              <div className="text-xs text-gray-500 font-medium mb-1.5">By Machine</div>
-                              <table className="w-full text-xs">
-                                <thead>
-                                  <tr className="text-gray-500 border-b border-gray-700/50">
-                                    <th className="text-left py-1">Machine</th>
-                                    <th className="text-right py-1">Downtime</th>
-                                    <th className="text-right py-1">Events</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
+                            {/* Distribution tables */}
+                            <div className="grid grid-cols-2 gap-4 px-6 py-4">
+                              {/* Per-machine breakdown */}
+                              <div className="bg-gray-800/50 rounded-lg p-3">
+                                <div className="flex items-center gap-1.5 mb-2.5">
+                                  <i className="bi bi-hdd-stack text-gray-400 text-[11px]"></i>
+                                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">By Machine</span>
+                                </div>
+                                <div className="space-y-1">
                                   {Object.entries(row.byMachine)
                                     .sort(([, a], [, b]) => b.secs - a.secs)
                                     .map(([mc, v]) => {
                                       const reg = machines.find(m => m.machine_code === mc);
+                                      const pct = row.totalSecs > 0 ? (v.secs / row.totalSecs) * 100 : 0;
                                       return (
-                                        <tr key={mc} className="border-b border-gray-800/50">
-                                          <td className="py-1 text-gray-300">{reg?.name ?? mc}</td>
-                                          <td className="py-1 text-right text-gray-400">{fmtDuration(v.secs)}</td>
-                                          <td className="py-1 text-right text-gray-500">{v.count}</td>
-                                        </tr>
+                                        <div key={mc}>
+                                          <div className="flex items-center justify-between text-xs mb-0.5">
+                                            <span className="text-gray-300 font-medium">{reg?.name ?? mc}</span>
+                                            <div className="flex items-center gap-3">
+                                              <span className="text-gray-400">{fmtDuration(v.secs)}</span>
+                                              <span className="text-gray-500 w-12 text-right">{v.count} ev.</span>
+                                            </div>
+                                          </div>
+                                          <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
+                                            <div className="h-full bg-red-500/60 rounded-full" style={{ width: `${pct}%` }}></div>
+                                          </div>
+                                        </div>
                                       );
                                     })}
-                                </tbody>
-                              </table>
-                            </div>
-                            {/* Per-shift breakdown */}
-                            <div>
-                              <div className="text-xs text-gray-500 font-medium mb-1.5">By PLC Shift</div>
-                              <table className="w-full text-xs">
-                                <thead>
-                                  <tr className="text-gray-500 border-b border-gray-700/50">
-                                    <th className="text-left py-1">Shift</th>
-                                    <th className="text-right py-1">Downtime</th>
-                                    <th className="text-right py-1">Events</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
+                                </div>
+                              </div>
+                              {/* Per-shift breakdown */}
+                              <div className="bg-gray-800/50 rounded-lg p-3">
+                                <div className="flex items-center gap-1.5 mb-2.5">
+                                  <i className="bi bi-clock text-gray-400 text-[11px]"></i>
+                                  <span className="text-[11px] font-semibold text-gray-400 uppercase tracking-wider">By PLC Shift</span>
+                                </div>
+                                <div className="space-y-1">
                                   {Object.entries(row.byShift)
                                     .sort(([a], [b]) => Number(a) - Number(b))
-                                    .map(([shift, v]) => (
-                                      <tr key={shift} className="border-b border-gray-800/50">
-                                        <td className="py-1 text-gray-300">Shift {shift}</td>
-                                        <td className="py-1 text-right text-gray-400">{fmtDuration(v.secs)}</td>
-                                        <td className="py-1 text-right text-gray-500">{v.count}</td>
-                                      </tr>
-                                    ))}
-                                </tbody>
-                              </table>
+                                    .map(([shift, v]) => {
+                                      const pct = row.totalSecs > 0 ? (v.secs / row.totalSecs) * 100 : 0;
+                                      return (
+                                        <div key={shift}>
+                                          <div className="flex items-center justify-between text-xs mb-0.5">
+                                            <span className="text-gray-300 font-medium">Shift {shift}</span>
+                                            <div className="flex items-center gap-3">
+                                              <span className="text-gray-400">{fmtDuration(v.secs)}</span>
+                                              <span className="text-gray-500 w-12 text-right">{v.count} ev.</span>
+                                            </div>
+                                          </div>
+                                          <div className="h-1 bg-gray-700/50 rounded-full overflow-hidden">
+                                            <div className="h-full bg-blue-500/60 rounded-full" style={{ width: `${pct}%` }}></div>
+                                          </div>
+                                        </div>
+                                      );
+                                    })}
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </td>

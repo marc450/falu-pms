@@ -1,0 +1,15 @@
+{
+  "Broker": {
+    "Host": "localhost",
+    "Port": 1883,
+    "Username": "EWON",
+    "Password": "admin123",
+    "IsLocal": true,
+    "SendFrequencyMs": 500
+  },
+  "MachineNames": [
+    "M112",
+    "M12"
+  ],
+  "SendingEnabled": true
+}

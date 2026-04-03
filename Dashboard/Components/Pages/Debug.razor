@@ -1,0 +1,109 @@
+@page "/debug"
+@using Dashboard
+@inject MqttService Mqtt
+@implements IDisposable
+
+<AuthorizeView RequiredRole="UserRole.Administrator">
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mt-3 mb-4">
+        <h2 class="text-white">Debug Information</h2>
+        <span class="badge bg-warning">Debug Mode</span>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card bg-dark text-white mb-4 border-secondary shadow">
+                <div class="card-header bg-warning text-dark">
+                    <h4 class="mb-0">Current Machine Data</h4>
+                </div>
+                <div class="card-body">
+                    @if (!Mqtt.AllMachines.Any())
+                    {
+                        <p class="text-warning">No machine data received yet...</p>
+                    }
+                    else
+                    {
+                        @foreach (var machine in Mqtt.AllMachines.Values)
+                        {
+                            <div class="mb-4 p-3 border border-secondary rounded">
+                                <h5 class="text-info">Machine: @machine.Machine</h5>
+                                
+                                <h6 class="mt-3">Shift 1:</h6>
+                                <pre class="text-white small">
+Save Flag: @machine.Shift1?.Save
+Shift: @machine.Shift1?.Shift
+ProducedSwaps: @machine.Shift1?.ProducedSwaps
+Efficiency: @machine.Shift1?.Efficiency
+                                </pre>
+
+                                <h6 class="mt-3">Shift 2:</h6>
+                                <pre class="text-white small">
+Save Flag: @machine.Shift2?.Save
+Shift: @machine.Shift2?.Shift
+ProducedSwaps: @machine.Shift2?.ProducedSwaps
+Efficiency: @machine.Shift2?.Efficiency
+                                </pre>
+
+                                <h6 class="mt-3">Shift 3:</h6>
+                                <pre class="text-white small">
+Save Flag: @machine.Shift3?.Save
+Shift: @machine.Shift3?.Shift
+ProducedSwaps: @machine.Shift3?.ProducedSwaps
+Efficiency: @machine.Shift3?.Efficiency
+                                </pre>
+
+                                <h6 class="mt-3">Total:</h6>
+                                <pre class="text-white small">
+Save Flag: @machine.Total?.Save
+Shift: @machine.Total?.Shift
+ProducedSwaps: @machine.Total?.ProducedSwaps
+Efficiency: @machine.Total?.Efficiency
+                                </pre>
+
+                                <p class="small text-muted mt-3">
+                                    Last Sync: @machine.LastSyncShift.ToString("yyyy-MM-dd HH:mm:ss")
+                                </p>
+                            </div>
+                        }
+                    }
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="row">
+        <div class="col-12">
+            <div class="card bg-dark text-white mb-4 border-secondary shadow">
+                <div class="card-header bg-info">
+                    <h4 class="mb-0">Instructions</h4>
+                </div>
+                <div class="card-body">
+                    <ol>
+                        <li>Check if the "Save Flag" shows <strong>True</strong> for any shift</li>
+                        <li>If Save Flag is always <strong>False</strong>, the MQTT message doesn't include Save=true</li>
+                        <li>Check the browser console (F12) and the application console for "Save flag received" messages</li>
+                        <li>Log files will only be created when Save=true is received</li>
+                    </ol>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    protected override void OnInitialized()
+    {
+        Mqtt.OnDataChanged += RefreshUI;
+    }
+
+    private void RefreshUI()
+    {
+        InvokeAsync(StateHasChanged);
+    }
+
+    public void Dispose()
+    {
+        Mqtt.OnDataChanged -= RefreshUI;
+    }
+}
+</AuthorizeView>

@@ -1,0 +1,73 @@
+/* ── Layout ── */
+html, body { margin: 0; padding: 0; height: 100%; background: #1a1a2e; color: #eee; }
+
+.sim-layout {
+    display: flex;
+    height: 100vh;
+    min-width: 1100px;
+    overflow-x: auto;
+}
+
+.sim-sidebar {
+    width: 200px;
+    min-width: 200px;
+    background: #16213e;
+    border-right: 1px solid #333;
+    display: flex;
+    flex-direction: column;
+}
+
+.sim-main {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.sim-topbar {
+    height: 40px;
+    background: #0f3460;
+    border-bottom: 1px solid #333;
+}
+
+.sim-content {
+    flex: 1;
+    overflow-y: auto;
+    background: #1a1a2e;
+}
+
+/* ── Sidebar nav ── */
+.sim-nav-header { background: #0f3460; border-bottom: 1px solid #333; }
+
+.sim-nav-links .nav-link:hover { background: #0f3460; }
+.sim-nav-links .nav-link.active { background: #533483; }
+
+/* ── Bootstrap overrides ── */
+.card { background: #16213e; }
+.card-header { font-size: 1rem; }
+
+.table-dark { --bs-table-bg: #1a1a2e; --bs-table-striped-bg: #16213e; }
+.table-dark.table-bordered td, .table-dark.table-bordered th { border-color: #333; }
+
+.form-control, .form-select {
+    background-color: #2a2a2e;
+    border: 1px solid #444;
+    color: #eee;
+}
+.form-control:focus, .form-select:focus {
+    background-color: #333;
+    border-color: #0d6efd;
+    color: #fff;
+    box-shadow: none;
+}
+
+.form-check-input { background-color: #333; border-color: #555; }
+.form-check-label { color: #ccc; }
+
+input[type=range].form-range::-webkit-slider-thumb { background: #0d6efd; }
+
+/* ── Scrollbars ── */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: #1a1a1a; }
+::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #666; }

@@ -1,0 +1,40 @@
+@using Dashboard
+@inject AuthenticationService AuthService
+@inject NavigationManager Navigation
+
+@if (isAuthorized)
+{
+    @ChildContent
+}
+
+@code {
+    [Parameter]
+    public RenderFragment? ChildContent { get; set; }
+
+    [Parameter]
+    public UserRole? RequiredRole { get; set; }
+
+    private bool isAuthorized = false;
+
+    protected override void OnInitialized()
+    {
+        if (!AuthService.IsAuthenticated())
+        {
+            Navigation.NavigateTo("/login");
+            return;
+        }
+
+        if (RequiredRole.HasValue)
+        {
+            isAuthorized = AuthService.HasRole(RequiredRole.Value);
+            if (!isAuthorized)
+            {
+                Navigation.NavigateTo("/unauthorized");
+            }
+        }
+        else
+        {
+            isAuthorized = true;
+        }
+    }
+}

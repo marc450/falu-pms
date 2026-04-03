@@ -1,0 +1,184 @@
+@page "/settings"
+@inject SimSettingsService SettingsSvc
+@inject SimulatorService Sim
+
+<div class="container-fluid">
+    <div class="d-flex justify-content-between align-items-center mt-3 mb-4">
+        <h2 class="text-white">Settings</h2>
+        <span class="badge bg-warning text-dark">Configuration</span>
+    </div>
+
+    @if (!string.IsNullOrEmpty(successMsg))
+    {
+        <div class="alert alert-success alert-dismissible">
+            <i class="bi bi-check-circle-fill me-2"></i>@successMsg
+            <button type="button" class="btn-close" @onclick='() => successMsg = ""'></button>
+        </div>
+    }
+
+    <div class="row">
+
+        <!-- MQTT Broker Settings -->
+        <div class="col-md-6">
+            <div class="card bg-dark text-white border-danger shadow" style="height:560px">
+                <div class="card-header bg-danger">
+                    <h4 class="mb-0"><i class="bi bi-server me-2"></i>MQTT Broker Settings</h4>
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <div class="mb-3">
+                        <label class="form-label">Host / IP Address</label>
+                        <input type="text" class="form-control" @bind="broker.Host" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Port</label>
+                        <input type="number" class="form-control" @bind="broker.Port" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Username</label>
+                        <input type="text" class="form-control" @bind="broker.Username" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Password</label>
+                        <input type="password" class="form-control" @bind="broker.Password" />
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label">Instance Type</label>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="brokerMode" id="radioLocal"
+                                   checked="@broker.IsLocal" @onchange="() => broker.IsLocal = true" />
+                            <label class="form-check-label" for="radioLocal">Local</label>
+                        </div>
+                        <div class="form-check">
+                            <input class="form-check-input" type="radio" name="brokerMode" id="radioCloud"
+                                   checked="@(!broker.IsLocal)" @onchange="() => broker.IsLocal = false" />
+                            <label class="form-check-label" for="radioCloud">Cloud (TLS)</label>
+                        </div>
+                    </div>
+                    <div class="mt-auto">
+                        <button class="btn btn-danger w-100" @onclick="SaveBroker">
+                            <i class="bi bi-save me-1"></i>Save Broker Settings
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Simulation Settings -->
+        <div class="col-md-6">
+            <div class="card bg-dark text-white border-warning shadow" style="height:560px">
+                <div class="card-header bg-warning text-dark">
+                    <h4 class="mb-0"><i class="bi bi-sliders me-2"></i>Simulation Settings</h4>
+                </div>
+                <div class="card-body d-flex flex-column">
+                    <div class="mb-3">
+                        <label class="form-label">
+                            Send Frequency
+                            <span class="text-muted ms-2">(@((broker.SendFrequencyMs / 1000.0).ToString("F1")) s)</span>
+                        </label>
+                        <input type="range" class="form-range"
+                               min="500" max="30000" step="500"
+                               @bind="broker.SendFrequencyMs"
+                               @bind:event="oninput" />
+                        <div class="d-flex justify-content-between text-muted small">
+                            <span>0.5 s</span><span>30 s</span>
+                        </div>
+                        <div class="text-center mt-1">
+                            <span class="badge bg-info fs-6">@((broker.SendFrequencyMs / 1000.0).ToString("F1")) seconds</span>
+                        </div>
+                    </div>
+
+                    <hr class="border-secondary" />
+
+                    <div class="mb-3 flex-fill d-flex flex-column">
+                        <label class="form-label">Configured Machines (@Sim.Machines.Count)</label>
+                        <div class="machine-list overflow-auto flex-fill">
+                            @if (!Sim.Machines.Any())
+                            {
+                                <div class="alert alert-info mb-0">
+                                    <i class="bi bi-info-circle"></i> No machines configured yet.
+                                    Add machines on the main page.
+                                </div>
+                            }
+                            else
+                            {
+                                <div class="list-group">
+                                    @foreach (var m in Sim.Machines.OrderBy(x => x.Name))
+                                    {
+                                        <div class="list-group-item bg-secondary text-white d-flex justify-content-between align-items-center">
+                                            <span><i class="bi bi-cpu me-2"></i>@m.Name</span>
+                                            <span class="badge @GetStatusBadge(m.Status)">@m.Status</span>
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+
+                    <div class="mt-auto">
+                        <button class="btn btn-warning text-dark w-100" @onclick="SaveSimulation">
+                            <i class="bi bi-save me-1"></i>Save Simulation Settings
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<style>
+    .form-control, .form-select {
+        background-color: #2a2a2a;
+        border: 1px solid #444;
+        color: white;
+    }
+    .form-control:focus {
+        background-color: #333;
+        border-color: #0d6efd;
+        color: white;
+    }
+    .machine-list {
+        max-height: 260px;
+    }
+    .machine-list::-webkit-scrollbar { width: 8px; }
+    .machine-list::-webkit-scrollbar-track { background: #1a1a1a; border-radius: 4px; }
+    .machine-list::-webkit-scrollbar-thumb { background: #555; border-radius: 4px; }
+</style>
+
+@code {
+    private BrokerSettings broker = new();
+    private string successMsg = "";
+
+    protected override void OnInitialized()
+    {
+        var b = SettingsSvc.GetBrokerSettings();
+        broker = new BrokerSettings
+        {
+            Host = b.Host, Port = b.Port,
+            Username = b.Username, Password = b.Password,
+            IsLocal = b.IsLocal,
+            SendFrequencyMs = b.SendFrequencyMs
+        };
+    }
+
+    private void SaveBroker()
+    {
+        SettingsSvc.SaveBrokerSettings(broker);
+        Sim.RestartTimer();
+        successMsg = "Broker settings saved. Reconnecting...";
+    }
+
+    private void SaveSimulation()
+    {
+        SettingsSvc.SaveBrokerSettings(broker);
+        Sim.RestartTimer();
+        successMsg = "Simulation settings saved.";
+    }
+
+    private string GetStatusBadge(string status) => status switch
+    {
+        "run"   => "bg-success",
+        "idle"  => "bg-secondary",
+        "error" => "bg-danger",
+        _       => "bg-secondary"
+    };
+}
