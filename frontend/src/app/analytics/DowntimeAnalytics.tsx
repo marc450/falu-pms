@@ -193,6 +193,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
         shortLabel: r.code,
         description: lookup[r.code]?.description ?? "",
         totalHours: secsToHours(r.totalSecs),
+        pct: grandTotal > 0 ? (r.totalSecs / grandTotal) * 100 : 0,
         totalSecs: r.totalSecs,
         totalOccurrences: r.totalOccurrences,
         machineCount: r.machines.size,
@@ -363,7 +364,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
       {/* ── 1. Pareto chart ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5">
         <h3 className="text-sm font-semibold text-gray-300 mb-1">Downtime by Error Code</h3>
-        <p className="text-xs text-gray-500 mb-4">Total downtime hours per error code, sorted by impact. The line shows cumulative percentage.</p>
+        <p className="text-xs text-gray-500 mb-4">Share of total downtime per error code, sorted by impact. The line shows cumulative percentage.</p>
         {paretoData.length > 0 && (
           <div className="overflow-x-auto">
             <div style={{ width: Math.max(600, paretoData.length * 56), minWidth: "100%" }}>
@@ -379,14 +380,14 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                     interval={0}
                     height={50}
                   />
-                  <YAxis tick={TICK_STYLE} stroke={AXIS_COLOR} />
+                  <YAxis tick={TICK_STYLE} stroke={AXIS_COLOR} tickFormatter={(v: number) => `${fmtN(v, 1)}%`} />
                   <Tooltip
                     contentStyle={TOOLTIP_CONTENT_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     // eslint-disable-next-line @typescript-eslint/no-explicit-any
                     formatter={(value: any, name: any) => {
                       const v = Number(value);
-                      if (name === "totalHours") return [`${fmtN(v, 1)}h`, "Downtime"];
+                      if (name === "pct") return [`${fmtN(v, 1)}%`, "Share of Downtime"];
                       if (name === "cumulativePct") return [`${fmtN(v, 1)}%`, "Cumulative"];
                       return [v, name];
                     }}
@@ -396,7 +397,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                       return item ? `${item.code}: ${item.description}` : label;
                     }}
                   />
-                  <Bar dataKey="totalHours" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={28}>
+                  <Bar dataKey="pct" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={28}>
                     {paretoData.map((_, i) => (
                       <Cell key={i} fill={i < 3 ? "#ef4444" : i < 6 ? "#f97316" : "#6b7280"} />
                     ))}
