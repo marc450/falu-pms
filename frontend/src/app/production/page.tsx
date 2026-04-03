@@ -78,45 +78,33 @@ function ProductionContent() {
   }, [machineName, loadData, loadSavedLogs]);
 
   const status = getStatusColor(machine?.machineStatus?.Status);
-  const activeShift = machine?.machineStatus?.ActShift || 0;
 
   const slots = shiftConfig?.slots ?? [];
-  const slotCount = slots.length || 3;
-  const slotIndices = Array.from({ length: slotCount }, (_, i) => i);
 
-  // Map each PLC shift (1-3, always 8h) to the user slot it falls into.
-  // The PLC always reports 3 shifts starting at firstShiftStartHour.
-  const plcShiftToSlot = (plcShift: number): number => {
-    if (slotCount === 3) return plcShift - 1; // 8h config: 1:1 mapping
-    const firstStart = shiftConfig?.firstShiftStartHour ?? 6;
-    const plcStartHour = (firstStart + (plcShift - 1) * 8) % 24;
-    // Find the user slot whose start hour is <= plcStartHour (descending search)
-    const sorted = slots.map((s, i) => ({ startHour: s.startHour, idx: i }))
-      .sort((a, b) => b.startHour - a.startHour);
-    for (const s of sorted) {
-      if (plcStartHour >= s.startHour) return s.idx;
+  // Determine which crew is currently active from time + shift config + schedule
+  const currentCrew = (() => {
+    if (!shiftConfig || slots.length === 0) return null;
+    const now = new Date();
+    const hour = now.getHours();
+    let activeSlotIdx = 0;
+    for (let i = slots.length - 1; i >= 0; i--) {
+      if (hour >= slots[i].startHour) { activeSlotIdx = i; break; }
     }
-    return sorted[0]?.idx ?? 0; // wrap-around: before all starts = last slot (overnight)
-  };
+    return todayTeams[activeSlotIdx] ?? null;
+  })();
 
-  // Which user slot is currently active?
-  const activeSlot = activeShift > 0 ? plcShiftToSlot(activeShift) : -1;
+  // Crew names for today's columns (from shift schedule)
+  const crewNames = todayTeams.filter((t): t is string => t !== null);
 
-  const shiftCellClass = (slotIdx: number) =>
-    activeSlot === slotIdx ? "font-bold bg-cyan-900/20" : "";
+  const shiftCellClass = (crew: string) =>
+    crew === currentCrew ? "font-bold bg-cyan-900/20" : "";
 
-  // Derive column label for a user slot: team name > slot name > "Shift A/B/C/D"
-  const shiftLabel = (slotIdx: number): string => {
-    const team = todayTeams[slotIdx] ?? null;
-    if (team) return team;
-    const slotName = slots[slotIdx]?.name ?? null;
-    if (slotName) return slotName;
-    const letters = ["A", "B", "C", "D"];
-    return `Shift ${letters[slotIdx] ?? slotIdx + 1}`;
-  };
-
-  // Map saved logs by shift number for O(1) lookup
-  const savedByShift = Object.fromEntries(savedLogs.map(l => [l.shift_number, l]));
+  // Map saved logs by shift_crew for O(1) lookup
+  const savedByCrew: Record<string, SavedShiftLog> = {};
+  for (const l of savedLogs) {
+    const key = l.shift_crew ?? `plc-${l.shift_number}`;
+    if (!savedByCrew[key]) savedByCrew[key] = l;
+  }
 
   // Planned downtime budget for uptime correction
   const plannedDowntimeMins = thresholds?.bu.plannedDowntimeMinutes ?? 0;
@@ -134,22 +122,22 @@ function ProductionContent() {
   // Derive bridge-tracked error minutes for the active shift (completed stints
   // plus the current ongoing stint if the machine is in error state).
   const activeShiftErrorMins = (() => {
-    const status = (machine?.machineStatus?.Status || "").toLowerCase();
+    const st = (machine?.machineStatus?.Status || "").toLowerCase();
     const currentStint = machine?.statusSince
       ? Math.max(0, (Date.now() - machine.statusSince) / 60000)
       : 0;
-    return (machine?.errorTimeCalc ?? 0) + (status === "error" ? currentStint : 0);
+    return (machine?.errorTimeCalc ?? 0) + (st === "error" ? currentStint : 0);
   })();
 
-  // Build a unified ShiftDataMessage for a given shift number:
-  // - active shift → live bridge data (machineStatus fields)
-  // - completed shift → most recent saved_shift_logs row
-  const shiftData = (shiftNum: number): ShiftDataMessage | undefined => {
-    if (shiftNum === activeShift) {
+  // Build a unified ShiftDataMessage for a given crew:
+  // - active crew → live bridge data (machineStatus fields)
+  // - completed crew → most recent saved_shift_logs row
+  const crewData = (crew: string): ShiftDataMessage | undefined => {
+    if (crew === currentCrew) {
       const s = machine?.machineStatus;
       if (!s) return undefined;
       return {
-        Shift:                  shiftNum,
+        Shift:                  0,
         ProductionTime:         s.ProductionTime         ?? 0,
         IdleTime:               s.IdleTime               ?? 0,
         ProducedSwabs:          s.ProducedSwabs          ?? s.Swabs ?? 0,
@@ -165,10 +153,10 @@ function ProductionContent() {
         Reject:                 s.Reject                 ?? 0,
       };
     }
-    const log = savedByShift[shiftNum];
+    const log = savedByCrew[crew];
     if (!log) return undefined;
     return {
-      Shift:                  log.shift_number,
+      Shift:                  0,
       ProductionTime:         log.production_time,
       IdleTime:               log.idle_time,
       ProducedSwabs:          log.produced_swabs,
@@ -185,41 +173,11 @@ function ProductionContent() {
     };
   };
 
-  // Aggregate PLC shift data for a user slot (may combine multiple PLC shifts)
-  const slotData = (slotIdx: number): ShiftDataMessage | undefined => {
-    const plcShifts = [1, 2, 3].filter(n => plcShiftToSlot(n) === slotIdx);
-    const datas = plcShifts.map(shiftData).filter((s): s is ShiftDataMessage => !!s);
-    if (datas.length === 0) return undefined;
-    if (datas.length === 1) return datas[0];
-    // Aggregate multiple PLC shifts into one user slot
-    const sum = datas.reduce((acc, s) => ({
-      Shift:                  0,
-      ProductionTime:         acc.ProductionTime         + s.ProductionTime,
-      IdleTime:               acc.IdleTime               + s.IdleTime,
-      ProducedSwabs:          acc.ProducedSwabs          + s.ProducedSwabs,
-      PackagedSwabs:          acc.PackagedSwabs          + s.PackagedSwabs,
-      DiscardedSwabs:         acc.DiscardedSwabs         + s.DiscardedSwabs,
-      ProducedBoxes:          acc.ProducedBoxes          + s.ProducedBoxes,
-      ProducedBoxesLayerPlus: acc.ProducedBoxesLayerPlus + s.ProducedBoxesLayerPlus,
-      CottonTears:            acc.CottonTears            + s.CottonTears,
-      MissingSticks:          acc.MissingSticks          + s.MissingSticks,
-      FoultyPickups:          acc.FoultyPickups          + s.FoultyPickups,
-      OtherErrors:            acc.OtherErrors            + s.OtherErrors,
-      Efficiency:             0,
-      Reject:                 0,
-    }));
-    const totalUnplannedIdle = datas.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
-    const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle;
-    sum.Efficiency = effectiveTotalTime > 0 ? (sum.ProductionTime / effectiveTotalTime) * 100 : 0;
-    sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
-    return sum;
-  };
-
-  // Total across all 3 PLC shifts
+  // Total across all crews
   const totalData = (): ShiftDataMessage | undefined => {
-    const allShifts = [1, 2, 3].map(shiftData).filter((s): s is ShiftDataMessage => !!s);
-    if (allShifts.length === 0) return undefined;
-    const sum = allShifts.reduce((acc, s) => ({
+    const allCrews = crewNames.map(crewData).filter((s): s is ShiftDataMessage => !!s);
+    if (allCrews.length === 0) return undefined;
+    const sum = allCrews.reduce((acc, s) => ({
       Shift:                  0,
       ProductionTime:         acc.ProductionTime         + s.ProductionTime,
       IdleTime:               acc.IdleTime               + s.IdleTime,
@@ -235,8 +193,7 @@ function ProductionContent() {
       Efficiency:             0,
       Reject:                 0,
     }));
-    // Apply per-slot downtime budget: each slot's planned idle does not penalise uptime.
-    const totalUnplannedIdle = allShifts.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
+    const totalUnplannedIdle = allCrews.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
     const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle;
     sum.Efficiency = effectiveTotalTime > 0 ? (sum.ProductionTime / effectiveTotalTime) * 100 : 0;
     sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
@@ -387,9 +344,9 @@ function ProductionContent() {
               <thead>
                 <tr className="text-center text-gray-400 border-b border-gray-700">
                   <th className="px-4 py-3 text-left w-1/5 font-medium">Metric</th>
-                  {slotIndices.map(i => (
-                    <th key={i} className={`px-4 py-3 font-medium ${activeSlot === i ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                      {shiftLabel(i)}
+                  {crewNames.map(crew => (
+                    <th key={crew} className={`px-4 py-3 font-medium ${crew === currentCrew ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
+                      {crew}
                     </th>
                   ))}
                   <th className="px-4 py-3 font-medium text-cyan-400">Total</th>
@@ -399,9 +356,9 @@ function ProductionContent() {
                 {metrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5">
                     <td className="px-4 py-2.5 font-medium text-gray-200">{metric.label}</td>
-                    {slotIndices.map(i => (
-                      <td key={i} className={`px-4 py-2.5 text-center ${shiftCellClass(i)} ${cellColor(metric, slotData(i))}`}>
-                        {renderShiftValue(slotData(i), metric.key, metric.format)}
+                    {crewNames.map(crew => (
+                      <td key={crew} className={`px-4 py-2.5 text-center ${shiftCellClass(crew)} ${cellColor(metric, crewData(crew))}`}>
+                        {renderShiftValue(crewData(crew), metric.key, metric.format)}
                       </td>
                     ))}
                     <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
@@ -411,16 +368,16 @@ function ProductionContent() {
                 ))}
                 {/* Errors section separator */}
                 <tr className="bg-gray-900/40">
-                  <td colSpan={slotCount + 2} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-600">
+                  <td colSpan={crewNames.length + 2} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-600">
                     <i className="bi bi-exclamation-triangle mr-1.5"></i>Errors
                   </td>
                 </tr>
                 {errorMetrics.map((metric) => (
                   <tr key={metric.key} className="hover:bg-white/5 bg-gray-900/20">
                     <td className="px-4 py-2.5 font-medium text-gray-300">{metric.label}</td>
-                    {slotIndices.map(i => (
-                      <td key={i} className={`px-4 py-2.5 text-center ${shiftCellClass(i)} ${cellColor(metric, slotData(i))}`}>
-                        {renderShiftValue(slotData(i), metric.key, metric.format)}
+                    {crewNames.map(crew => (
+                      <td key={crew} className={`px-4 py-2.5 text-center ${shiftCellClass(crew)} ${cellColor(metric, crewData(crew))}`}>
+                        {renderShiftValue(crewData(crew), metric.key, metric.format)}
                       </td>
                     ))}
                     <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>

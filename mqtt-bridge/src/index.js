@@ -77,6 +77,7 @@ const allMachines = {};
 
 let mqttConnected = false;
 let currentShiftNumber = 1;
+let currentCrew = null;
 let shiftStartedAt = Date.now();
 
 // Machine cache: machine_code -> UUID
@@ -264,6 +265,8 @@ async function handleShiftMessage(payload) {
     shiftStartedAt = Date.now();
     logger.info(`Global shift changed to ${currentShiftNumber} at ${new Date(shiftStartedAt).toISOString()}`);
   }
+  // Always refresh current crew (schedule may change intra-shift)
+  currentCrew = resolveCurrentCrew() || null;
 
   // ── Status transition detection — update statusSince for the badge timer ──
   const prevStatus = (m.machineStatus?.Status || "").toLowerCase();
@@ -959,6 +962,7 @@ app.get("/api/machines", (req, res) => {
     machines: allMachines,
     mqttConnected,
     currentShiftNumber,
+    currentCrew,
     shiftStartedAt,
   });
 });

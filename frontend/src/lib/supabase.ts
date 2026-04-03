@@ -91,6 +91,7 @@ export interface BridgeState {
   machines: Record<string, MachineData>;
   mqttConnected: boolean;
   currentShiftNumber: number;
+  currentCrew: string | null;
   shiftStartedAt: number; // Unix ms timestamp when current shift began
 }
 
@@ -759,16 +760,12 @@ export function shiftLabelToName(
 }
 
 /**
- * Return the team name assigned to a specific work-day + shift slot.
+ * Return the team/crew name for a shift.
  *
- * The PLC sends shift_number 1 / 2 / 3 which the RPC maps to slot labels
- * 'A' / 'B' / 'C' / 'D' based on time-of-day.  The shift_assignments
- * calendar stores which TEAM worked each slot on each date.
- *
- * This function joins those two sources so analytics can display
- * e.g. "SHIFT C" instead of the generic "Shift A".
- *
- * Falls back to the configured slot name when no assignment exists.
+ * The bridge now stores the crew name directly in shift_label (e.g. "SHIFT A").
+ * For backwards compatibility with legacy data that may still contain slot
+ * letters ("A", "B", "C", "D"), this function resolves those via the
+ * shift_assignments calendar. Full crew names are returned as-is.
  */
 export function teamNameForShift(
   workDay:     string,
@@ -776,12 +773,15 @@ export function teamNameForShift(
   assignments: Record<string, ShiftAssignment>,
   slots:       TimeSlot[],
 ): string {
+  // If shiftLabel is a single letter (legacy slot label), resolve via assignments
   const slotIndex = ["A", "B", "C", "D"].indexOf(shiftLabel);
   if (slotIndex !== -1) {
     const team = assignments[workDay]?.slot_teams?.[slotIndex];
     if (team) return team;
+    return shiftLabelToName(shiftLabel, slots);
   }
-  return shiftLabelToName(shiftLabel, slots);
+  // Already a crew name (e.g. "SHIFT A", "Unassigned") — return as-is
+  return shiftLabel;
 }
 
 export const DEFAULT_SHIFT_CONFIG: ShiftConfig = {
@@ -879,6 +879,7 @@ export async function saveShiftConfig(config: ShiftConfig): Promise<void> {
 
 export interface SavedShiftLog {
   shift_number:             number;
+  shift_crew:               string | null;
   production_time:          number;
   idle_time:                number;
   cotton_tears:             number;
@@ -896,25 +897,26 @@ export interface SavedShiftLog {
 }
 
 /**
- * Fetch the most recent saved shift log for each shift number for a machine.
- * Returns one row per shift_number (the latest save for that shift).
+ * Fetch the most recent saved shift log for each crew for a machine.
+ * Returns one row per shift_crew (the latest save for that crew).
  */
 export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShiftLog[]> {
   const sb = getSupabase();
   const { data, error } = await sb
     .from("saved_shift_logs")
-    .select("shift_number, production_time, idle_time, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, reject_rate, saved_at")
+    .select("shift_number, shift_crew, production_time, idle_time, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, reject_rate, saved_at")
     .eq("machine_code", machineCode)
     .order("saved_at", { ascending: false })
-    .limit(20); // grab recent rows then deduplicate by shift_number in JS
+    .limit(20); // grab recent rows then deduplicate by shift_crew in JS
   if (error) throw new Error(error.message);
   if (!data) return [];
-  // Keep only the most recent row per shift_number
-  const seen = new Set<number>();
+  // Keep only the most recent row per shift_crew
+  const seen = new Set<string>();
   const result: SavedShiftLog[] = [];
   for (const row of data) {
-    if (!seen.has(row.shift_number)) {
-      seen.add(row.shift_number);
+    const key = row.shift_crew ?? `plc-${row.shift_number}`;
+    if (!seen.has(key)) {
+      seen.add(key);
       result.push(row as SavedShiftLog);
     }
   }
@@ -1006,7 +1008,7 @@ export async function saveShiftAssignmentsBulk(
 
 export interface MachineShiftRow {
   work_day:       string;   // 'YYYY-MM-DD'
-  shift_label:    string;   // 'A' | 'B' | 'C' | 'D' (based on configured shift slots)
+  shift_label:    string;   // crew name from bridge (e.g. 'SHIFT A'), used as display and grouping key
   machine_id:     string;
   machine_code:   string;
   run_hours:      number | null;
@@ -1017,10 +1019,9 @@ export interface MachineShiftRow {
   avg_scrap:      number | null;
 }
 
-export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot[] = slotsFromDuration(12, 7)): Promise<MachineShiftRow[]> {
+export async function fetchMachineShiftSummary(range: DateRange, _slots: TimeSlot[] = slotsFromDuration(12, 7)): Promise<MachineShiftRow[]> {
+  void _slots; // no longer needed: crew is stored directly by the bridge
   const sb = getSupabase();
-  const slotCount    = slots.length;
-  const durationHrs  = slotCount > 0 ? 24 / slotCount : 12;
 
   // Helper: local YYYY-MM-DD string (no UTC offset shift)
   const toLocalDate = (d: Date) => {
@@ -1030,46 +1031,21 @@ export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot
     return `${y}-${m}-${day}`;
   };
 
-  // Determine which configured slot a save timestamp belongs to.
-  // We completely ignore the PLC shift_number — it only signals that a shift
-  // transition occurred. The actual slot is derived from the saved_at time
-  // and the configured slot start hours.
-  // Because saved_shift_logs are written at the END of a shift, saved_at right
-  // at a slot boundary (e.g. 07:00 local) means the PREVIOUS slot just ended.
-  // Subtracting 1 hour pushes the check into the correct slot.
-  const resolveSlot = (savedAt: Date): number => {
-    const localHour = savedAt.getHours(); // browser local time
-    const adjusted  = (localHour - 1 + 24) % 24;
-    for (let i = 0; i < slots.length; i++) {
-      const start = slots[i].startHour;
-      const end   = (start + durationHrs) % 24;
-      if (start < end) {
-        if (adjusted >= start && adjusted < end) return i;
-      } else {
-        // Wraps midnight (e.g. 19:00 – 07:00)
-        if (adjusted >= start || adjusted < end) return i;
-      }
-    }
-    return 0; // fallback
-  };
-
   const logsResult = await sb
     .from("saved_shift_logs")
-    .select("machine_id, machine_code, shift_number, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
+    .select("machine_id, machine_code, shift_crew, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
     .gte("saved_at", range.start.toISOString())
     .lte("saved_at", range.end.toISOString())
     .order("saved_at", { ascending: false });
 
   if (logsResult.error) throw new Error(logsResult.error.message);
 
-  // Aggregate by (shift_date, slot_index, machine_id).
-  // slot_index is derived from the saved_at timestamp and the configured time slots.
-  // shift_date = calendar date when the slot STARTED (derived from local time).
-  // The crew label comes from shift_assignments[shift_date].slot_teams[slotIndex].
+  // Aggregate by (shift_date, shift_crew, machine_id).
+  // The bridge stores the crew name directly so no slot resolution is needed.
   type Acc = {
     machineCode:  string;
     shiftDate:    string;
-    slotIndex:    number;
+    crew:         string;
     swabs:        number;
     boxes:        number;
     prodTimeSecs: number;
@@ -1080,25 +1056,12 @@ export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot
   const map = new Map<string, Acc>();
 
   for (const row of (logsResult.data ?? []) as Record<string, unknown>[]) {
-    const savedAt   = new Date(String(row.saved_at));
-    const slotIndex = resolveSlot(savedAt);
+    const crew = String(row.shift_crew ?? "Unassigned");
+    const shiftDate = toLocalDate(new Date(String(row.saved_at)));
 
-    // shift_date: calendar date when this slot STARTED (local time).
-    // For the first slot (e.g. 07:00–19:00) this is the same calendar day.
-    // For a night slot (e.g. 19:00–07:00) that saves after midnight, the slot
-    // started the previous evening — subtract one day.
-    const slotStart = slots[slotIndex].startHour;
-    const localHour = savedAt.getHours();
-    const startedYesterday = localHour < slotStart; // e.g. 06:00 local < 19:00 start
-    const shiftDateObj = new Date(savedAt);
-    if (startedYesterday) {
-      shiftDateObj.setDate(shiftDateObj.getDate() - 1);
-    }
-    const shiftDate = toLocalDate(shiftDateObj);
-
-    const key = `${shiftDate}|${slotIndex}|${String(row.machine_id)}`;
+    const key = `${shiftDate}|${crew}|${String(row.machine_id)}`;
     if (!map.has(key)) {
-      map.set(key, { machineCode: String(row.machine_code), shiftDate, slotIndex, swabs: 0, boxes: 0, prodTimeSecs: 0, discarded: 0, effSum: 0, effCount: 0 });
+      map.set(key, { machineCode: String(row.machine_code), shiftDate, crew, swabs: 0, boxes: 0, prodTimeSecs: 0, discarded: 0, effSum: 0, effCount: 0 });
     }
     const b = map.get(key)!;
     b.swabs        += Number(row.produced_swabs)  || 0;
@@ -1110,13 +1073,7 @@ export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot
   }
 
   return Array.from(map.entries()).map(([key, b]) => {
-    // key = "shiftDate|slotIndex|machineId"
     const machineId = key.split("|")[2];
-
-    // Store the slot letter ("A", "B", …) so the display layer (teamNameForShift)
-    // can resolve the crew name from shift_assignments at render time.
-    // Using a raw slot letter here avoids "Shift SHIFT A" double-prefix bugs.
-    const shiftLabel = String.fromCharCode(65 + b.slotIndex); // 0→"A", 1→"B", …
 
     const runHours = b.prodTimeSecs > 0 ? b.prodTimeSecs / 3600 : null;
     const buNorm   = runHours && runHours > 0
@@ -1124,7 +1081,7 @@ export async function fetchMachineShiftSummary(range: DateRange, slots: TimeSlot
       : null;
     return {
       work_day:       b.shiftDate,
-      shift_label:    shiftLabel,
+      shift_label:    b.crew,
       machine_id:     machineId,
       machine_code:   b.machineCode,
       run_hours:      runHours != null ? Math.round(runHours * 100) / 100 : null,
