@@ -28,7 +28,7 @@ BEGIN
     e.machine_id,
     e.machine_code,
     e.started_at::DATE AS shift_date,
-    0 AS plc_shift,  -- error_events don't have PLC shift; excluded from shift breakdown
+    COALESCE(e.plc_shift, 0) AS plc_shift,
     e.error_code,
     COUNT(*)::INTEGER AS occurrence_count,
     COALESCE(SUM(e.duration_secs), 0)::INTEGER AS total_duration_secs
@@ -42,6 +42,6 @@ BEGIN
         AND s2.shift_date = e.started_at::DATE
         AND s2.error_code = e.error_code
     )
-  GROUP BY e.machine_id, e.machine_code, e.started_at::DATE, e.error_code;
+  GROUP BY e.machine_id, e.machine_code, e.started_at::DATE, e.plc_shift, e.error_code;
 END;
 $$;

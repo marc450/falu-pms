@@ -508,6 +508,7 @@ async function handleErrorMessage(payload) {
         machine_id: machineId,
         machine_code: machineCode,
         error_code: code,
+        plc_shift: Number(currentShift) || null,
         started_at: data.Timestamp ? new Date(data.Timestamp).toISOString() : new Date().toISOString(),
       }).select("id").single();
       if (row) m.openErrorEvents[code] = row.id;
