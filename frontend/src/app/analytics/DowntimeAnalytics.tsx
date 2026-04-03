@@ -94,10 +94,10 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
     return rows.filter(r => r.machine_code === machineFilter);
   }, [rows, machineFilter]);
 
-  // Unique machines that have error data
+  // Unique machines that have error data, sorted naturally (CB-3 before CB-30)
   const machinesWithErrors = useMemo(() => {
     const codes = new Set(rows.map(r => r.machine_code));
-    return Array.from(codes).sort();
+    return Array.from(codes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   }, [rows]);
 
   // ─── 1. Pareto data: error codes ranked by total downtime ────────────────
