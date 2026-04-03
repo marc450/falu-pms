@@ -260,16 +260,21 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
   const trendVisibleCodes = useMemo(() => trendCodes.filter(c => !trendHiddenCodes.has(c)), [trendCodes, trendHiddenCodes]);
 
   const trendDisplayData = useMemo(() => {
-    if (!trendRelative) return trendData;
     return trendData.map(row => {
-      const total = trendVisibleCodes.reduce((s, c) => s + Number(row[c] || 0), 0);
       const out: Record<string, string | number> = { date: row.date };
+      // Zero out hidden codes so they don't occupy stack space
       for (const c of trendCodes) {
-        out[c] = total > 0 ? (Number(row[c] || 0) / total) * 100 : 0;
+        out[c] = trendHiddenCodes.has(c) ? 0 : Number(row[c] || 0);
+      }
+      if (trendRelative) {
+        const total = trendVisibleCodes.reduce((s, c) => s + Number(row[c] || 0), 0);
+        for (const c of trendVisibleCodes) {
+          out[c] = total > 0 ? (Number(row[c] || 0) / total) * 100 : 0;
+        }
       }
       return out;
     });
-  }, [trendData, trendRelative, trendCodes, trendVisibleCodes]);
+  }, [trendData, trendRelative, trendCodes, trendVisibleCodes, trendHiddenCodes]);
 
   // ─── 3. Breakdown table: sortable detail ─────────────────────────────────
 
@@ -503,17 +508,20 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                 label={trendRelative ? undefined : { value: "hours", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }}
               />
               <Tooltip content={() => null} cursor={{ stroke: "#9ca3af", strokeWidth: 1 }} />
-              {trendCodes.map((code, i) => (
-                <Area
-                  key={code}
-                  type="monotone"
-                  dataKey={code}
-                  stackId="1"
-                  fill={trendHiddenCodes.has(code) ? "transparent" : AREA_COLORS[i % AREA_COLORS.length]}
-                  stroke={trendHiddenCodes.has(code) ? "transparent" : AREA_COLORS[i % AREA_COLORS.length]}
-                  fillOpacity={0.6}
-                />
-              ))}
+              {trendCodes.map((code, i) => {
+                if (trendHiddenCodes.has(code)) return null;
+                return (
+                  <Area
+                    key={code}
+                    type="monotone"
+                    dataKey={code}
+                    stackId="1"
+                    fill={AREA_COLORS[i % AREA_COLORS.length]}
+                    stroke={AREA_COLORS[i % AREA_COLORS.length]}
+                    fillOpacity={0.6}
+                  />
+                );
+              })}
             </AreaChart>
           </ResponsiveContainer>
           {/* Interactive legend below chart */}
