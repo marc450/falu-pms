@@ -295,10 +295,12 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
       if (!entry.byMachine[r.machine_code]) entry.byMachine[r.machine_code] = { secs: 0, count: 0 };
       entry.byMachine[r.machine_code].secs += r.total_duration_secs;
       entry.byMachine[r.machine_code].count += r.occurrence_count;
-      const slotLabel = plcShiftToSlotLabel(r.plc_shift, shiftSlots);
-      if (!entry.byShift[slotLabel]) entry.byShift[slotLabel] = { secs: 0, count: 0 };
-      entry.byShift[slotLabel].secs += r.total_duration_secs;
-      entry.byShift[slotLabel].count += r.occurrence_count;
+      if (r.plc_shift > 0) {
+        const slotLabel = plcShiftToSlotLabel(r.plc_shift, shiftSlots);
+        if (!entry.byShift[slotLabel]) entry.byShift[slotLabel] = { secs: 0, count: 0 };
+        entry.byShift[slotLabel].secs += r.total_duration_secs;
+        entry.byShift[slotLabel].count += r.occurrence_count;
+      }
     }
 
     const arr = Object.values(byCode);
@@ -402,19 +404,18 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                   />
                   <YAxis tick={TICK_STYLE} stroke={AXIS_COLOR} tickFormatter={(v: number) => `${fmtN(v, 1)}%`} />
                   <Tooltip
-                    contentStyle={TOOLTIP_CONTENT_STYLE}
-                    labelStyle={TOOLTIP_LABEL_STYLE}
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    formatter={(value: any, name: any, props: any) => {
-                      const v = Number(value);
-                      if (name === "pct") return [`${fmtN(v, 1)}% (${fmtN(props?.payload?.totalHours ?? 0, 1)}h)`, "Share of Downtime"];
-                      if (name === "cumulativePct") return [`${fmtN(v, 1)}%`, "Cumulative"];
-                      return [v, name];
-                    }}
-                    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                    labelFormatter={(label: any) => {
-                      const item = paretoData.find(d => d.shortLabel === label);
-                      return item ? `${item.code}: ${item.description}` : label;
+                    content={({ active, payload }) => {
+                      if (!active || !payload?.length) return null;
+                      const d = payload[0]?.payload;
+                      if (!d) return null;
+                      return (
+                        <div style={TOOLTIP_CONTENT_STYLE} className="px-3 py-2.5">
+                          <div className="text-white font-medium mb-2">{d.code}: {d.description}</div>
+                          <div className="text-red-400 text-sm">Share of Downtime: {fmtN(d.pct, 1)}%</div>
+                          <div className="text-gray-300 text-sm">Total Downtime: {fmtN(d.totalHours, 1)}h</div>
+                          <div className="text-green-400 text-sm">Cumulative: {fmtN(d.cumulativePct, 1)}%</div>
+                        </div>
+                      );
                     }}
                   />
                   <Bar dataKey="pct" fill="#ef4444" radius={[4, 4, 0, 0]} barSize={28}>

@@ -28,7 +28,7 @@ BEGIN
     e.machine_id,
     e.machine_code,
     e.started_at::DATE AS shift_date,
-    (EXTRACT(HOUR FROM e.started_at)::INTEGER / 8 + 1) AS plc_shift,
+    0 AS plc_shift,  -- error_events don't have PLC shift; excluded from shift breakdown
     e.error_code,
     COUNT(*)::INTEGER AS occurrence_count,
     COALESCE(SUM(e.duration_secs), 0)::INTEGER AS total_duration_secs
