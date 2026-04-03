@@ -102,7 +102,7 @@ function MachineFilterDropdown({ value, onChange, machinesWithErrors, machines }
       </button>
 
       {open && (
-        <div className="absolute left-0 top-full mt-1 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden py-2 min-w-[180px]">
+        <div className="absolute left-0 top-full mt-1 z-50 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden py-2 min-w-[180px] w-fit max-h-[400px] overflow-y-auto">
           <button
             onClick={() => { onChange("all"); setOpen(false); }}
             className={`w-full text-left px-4 py-1.5 text-sm transition-colors ${
@@ -162,11 +162,15 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
     return rows.filter(r => r.machine_code === machineFilter);
   }, [rows, machineFilter]);
 
-  // Unique machines that have error data, sorted naturally (CB-3 before CB-30)
+  // Unique machines that have error data, sorted naturally by display name
   const machinesWithErrors = useMemo(() => {
     const codes = new Set(rows.map(r => r.machine_code));
-    return Array.from(codes).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  }, [rows]);
+    return Array.from(codes).sort((a, b) => {
+      const nameA = machines.find(m => m.machine_code === a)?.name ?? a;
+      const nameB = machines.find(m => m.machine_code === b)?.name ?? b;
+      return nameA.localeCompare(nameB, undefined, { numeric: true });
+    });
+  }, [rows, machines]);
 
   // ─── 1. Pareto data: error codes ranked by total downtime ────────────────
 
