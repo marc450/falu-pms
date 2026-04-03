@@ -483,11 +483,11 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
               margin={{ left: 10, right: 10, top: 5, bottom: 30 }}
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
               onMouseMove={(state: any) => {
-                if (state?.activePayload?.length) {
-                  // Store the original (absolute) data for the legend, not the % data
-                  const date = state.activePayload[0].payload?.date;
-                  const orig = trendData.find(r => r.date === date);
-                  if (orig) setTrendHover(orig);
+                // activeTooltipIndex is more reliable than activePayload
+                // when some Area elements are hidden (transparent)
+                const idx = state?.activeTooltipIndex;
+                if (idx != null && idx >= 0 && idx < trendData.length) {
+                  setTrendHover(trendData[idx]);
                 }
               }}
               onMouseLeave={() => setTrendHover(null)}
@@ -545,6 +545,7 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
               {trendCodes.map((code, i) => {
                 const hidden = trendHiddenCodes.has(code);
                 const hrs = trendHover ? Number(trendHover[code] || 0) : 0;
+                const totalH = trendHover ? trendCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0) : 0;
                 return (
                   <div
                     key={code}
@@ -562,7 +563,11 @@ export default function DowntimeAnalytics({ dateRange, machines, shiftSlots, shi
                       {code} {lookup[code]?.description ?? ""}
                     </span>
                     <span className={`font-mono flex-shrink-0 ${trendHover ? (hidden ? "text-gray-600" : "text-gray-200") : "text-gray-700"}`}>
-                      {trendHover ? `${fmtN(hrs, 1)}h` : ""}
+                      {trendHover ? (
+                        trendRelative
+                          ? `${fmtN(hrs, 1)}h (${totalH > 0 ? fmtN((hrs / totalH) * 100, 1) : "0.0"}%)`
+                          : `${fmtN(hrs, 1)}h`
+                      ) : ""}
                     </span>
                   </div>
                 );
