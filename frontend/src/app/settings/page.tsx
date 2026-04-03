@@ -384,7 +384,8 @@ function MachinesTab() {
         </div>
       )}
 
-      {/* Unassigned pool — always on top */}
+      {/* Unassigned pool — only visible when there are unassigned machines or during a drag */}
+      {(unassigned.length > 0 || dropTarget !== null) && (
       <div
         className={`rounded-lg border overflow-hidden transition-colors ${
           dropTarget?.cellId === null ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
@@ -405,14 +406,15 @@ function MachinesTab() {
           </h4>
         </div>
         <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-center">
-          {unassigned.length === 0 && dropTarget?.cellId !== null && (
+          {unassigned.length === 0 && (
             <div className="flex items-center justify-center w-full text-gray-700 text-xs select-none">
-              All machines assigned
+              Drop here to unassign
             </div>
           )}
           {renderChips(unassigned, null)}
         </div>
       </div>
+      )}
 
       {/* Production cells */}
       {cells.length === 0 && !addingCell && (
