@@ -1636,9 +1636,9 @@ function ShiftsTab() {
 
       {/* ── Right column: Shift Mechanics + Downtime Alerts + Factory Location ── */}
       <div className="flex-1 min-w-0 flex flex-col gap-5 self-stretch">
+        <FactoryTimezoneCard />
         <ShiftMechanicsCard teams={config.teams} />
         <DowntimeAlertsCard />
-        <FactoryTimezoneCard />
       </div>
 
       </div>{/* end top row */}

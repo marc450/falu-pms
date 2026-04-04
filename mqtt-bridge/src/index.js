@@ -90,6 +90,7 @@ let alertConfig = { enabled: false, threshold_minutes: 10 };
 let shiftConfig = null;   // loaded from app_settings
 let shiftMechanics = {};  // crew name -> user UUID
 let shiftAssignmentsCache = {};  // date string -> slot_teams array
+let factoryTimezone = "Europe/Zurich";  // loaded from app_settings
 
 // Twilio credentials from environment
 const TWILIO_SID          = process.env.TWILIO_ACCOUNT_SID || "";
@@ -566,7 +567,7 @@ async function handleErrorMessage(payload) {
 
 async function loadAlertConfig() {
   try {
-    const keys = ["downtime_alert_config", "shift_config", "shift_mechanics"];
+    const keys = ["downtime_alert_config", "shift_config", "shift_mechanics", "factory_timezone"];
     const { data, error } = await supabase
       .from("app_settings")
       .select("key, value")
@@ -579,8 +580,9 @@ async function loadAlertConfig() {
       if (row.key === "downtime_alert_config") alertConfig = row.value;
       if (row.key === "shift_config") shiftConfig = row.value;
       if (row.key === "shift_mechanics") shiftMechanics = row.value;
+      if (row.key === "factory_timezone" && row.value) factoryTimezone = row.value;
     }
-    logger.debug(`Alert config loaded: enabled=${alertConfig.enabled}, threshold=${alertConfig.threshold_minutes}min`);
+    logger.debug(`Alert config loaded: enabled=${alertConfig.enabled}, threshold=${alertConfig.threshold_minutes}min, tz=${factoryTimezone}`);
 
     // Cache shift assignments for the current month (covers today and nearby days)
     await loadShiftAssignments();
@@ -634,7 +636,19 @@ function resolveCurrentCrew(timestamp) {
   }
 
   const now = timestamp ? new Date(timestamp) : new Date();
-  const currentHour = now.getHours() + now.getMinutes() / 60;
+
+  // Convert to factory-local time using Intl (works correctly on UTC servers)
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: factoryTimezone,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit",
+    hour12: false,
+  });
+  const parts = {};
+  for (const { type, value } of fmt.formatToParts(now)) {
+    parts[type] = parseInt(value, 10);
+  }
+  const currentHour = parts.hour + parts.minute / 60;
   const firstStart = shiftConfig.firstShiftStartHour || 0;
   const duration = shiftConfig.shiftDurationHours || 12;
 
@@ -642,12 +656,18 @@ function resolveCurrentCrew(timestamp) {
   const hoursSinceFirst = ((currentHour - firstStart) + 24) % 24;
   const slotIndex = Math.floor(hoursSinceFirst / duration);
 
-  // Determine work date (if before first shift start, use yesterday)
-  const workDate = new Date(now);
+  // Determine work date in factory timezone (if before first shift start, use yesterday)
+  const localYear  = parts.year;
+  const localMonth = String(parts.month).padStart(2, "0");
+  const localDay   = String(parts.day).padStart(2, "0");
+  let dateStr = `${localYear}-${localMonth}-${localDay}`;
   if (currentHour < firstStart) {
-    workDate.setDate(workDate.getDate() - 1);
+    const yesterday = new Date(localYear, parts.month - 1, parts.day - 1);
+    const y = yesterday.getFullYear();
+    const m = String(yesterday.getMonth() + 1).padStart(2, "0");
+    const d = String(yesterday.getDate()).padStart(2, "0");
+    dateStr = `${y}-${m}-${d}`;
   }
-  const dateStr = workDate.toISOString().slice(0, 10);
 
   const teams = shiftAssignmentsCache[dateStr];
   if (!teams || !teams[slotIndex]) {

@@ -128,14 +128,48 @@ const MACHINE_NAMES = Object.keys(MACHINE_UID_MAP);
 const topicPrefix = IS_LOCAL ? "local" : "cloud";
 
 // ============================================
-// SHIFT CONFIG
+// SHIFT CONFIG (loaded from DB at startup)
 // ============================================
-const SHIFT_MIN  = 720;               // 12 hours in minutes
-const SHIFT_MS   = SHIFT_MIN * 60000;
-const CYCLE_MS   = 3 * SHIFT_MS;      // 36-hour cycle
+let SHIFT_DURATION_HOURS = 12;        // default, overridden by DB
+let FIRST_SHIFT_START_HOUR = 7;       // default, overridden by DB
+let FACTORY_TIMEZONE = "Europe/Zurich"; // default, overridden by DB
 
-// Reference: a known Shift 1 start — 2026-01-01 06:00:00 local time
-const REFERENCE_MS = new Date(2026, 0, 1, 6, 0, 0, 0).getTime();
+// Derived values (recalculated after loading config from DB)
+let SHIFT_MIN  = SHIFT_DURATION_HOURS * 60;
+let SHIFT_MS   = SHIFT_MIN * 60000;
+let NUM_SHIFTS = Math.round(24 / SHIFT_DURATION_HOURS);  // 2 for 12h, 3 for 8h, 4 for 6h
+let CYCLE_MS   = NUM_SHIFTS * SHIFT_MS;
+
+function recalcShiftConstants() {
+  SHIFT_MIN  = SHIFT_DURATION_HOURS * 60;
+  SHIFT_MS   = SHIFT_MIN * 60000;
+  NUM_SHIFTS = Math.round(24 / SHIFT_DURATION_HOURS);
+  CYCLE_MS   = NUM_SHIFTS * SHIFT_MS;
+}
+
+async function loadShiftConfigFromDB() {
+  if (!supabase) return;
+  const { data, error } = await supabase
+    .from("app_settings")
+    .select("key, value")
+    .in("key", ["shift_config", "factory_timezone"]);
+  if (error) {
+    console.warn("[CONFIG] Failed to load shift config from DB:", error.message);
+    return;
+  }
+  for (const row of data || []) {
+    if (row.key === "shift_config" && row.value) {
+      if (row.value.shiftDurationHours) SHIFT_DURATION_HOURS = row.value.shiftDurationHours;
+      if (row.value.firstShiftStartHour !== undefined) FIRST_SHIFT_START_HOUR = row.value.firstShiftStartHour;
+      console.log(`[CONFIG] Shift config: ${SHIFT_DURATION_HOURS}h shifts, first at ${FIRST_SHIFT_START_HOUR}:00`);
+    }
+    if (row.key === "factory_timezone" && row.value) {
+      FACTORY_TIMEZONE = row.value;
+      console.log(`[CONFIG] Factory timezone: ${FACTORY_TIMEZONE}`);
+    }
+  }
+  recalcShiftConstants();
+}
 
 // Breaks: synchronized for all machines (minutes into shift)
 const BREAKS = [
@@ -269,15 +303,33 @@ function pickErrorCodes() {
 // HELPERS
 // ============================================
 function getShiftInfo() {
-  const now     = Date.now();
-  const elapsed = now - REFERENCE_MS;
-  const cyclePos = ((elapsed % CYCLE_MS) + CYCLE_MS) % CYCLE_MS;
-  const idx      = Math.floor(cyclePos / SHIFT_MS);
-  const elapsedInShiftMs = cyclePos - idx * SHIFT_MS;
+  const now = Date.now();
+
+  // Get current time in factory timezone
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: FACTORY_TIMEZONE,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", second: "2-digit",
+    hour12: false,
+  });
+  const parts = {};
+  for (const { type, value } of fmt.formatToParts(new Date(now))) {
+    parts[type] = parseInt(value, 10);
+  }
+  const localHour   = parts.hour;
+  const localMinute = parts.minute;
+  const localSecond = parts.second;
+  const currentTimeInDay = localHour * 60 + localMinute + localSecond / 60; // minutes since midnight
+
+  // How far into the 24h shift cycle are we? (minutes since first shift start)
+  const minutesSinceFirst = ((currentTimeInDay - FIRST_SHIFT_START_HOUR * 60) + 1440) % 1440;
+  const shiftIndex = Math.floor(minutesSinceFirst / SHIFT_MIN);
+  const elapsedInShiftMin = minutesSinceFirst - shiftIndex * SHIFT_MIN;
+
   return {
-    shiftNumber:    idx + 1,
-    elapsedMinutes: elapsedInShiftMs / 60000,
-    shiftStartMs:   now - elapsedInShiftMs,  // absolute timestamp when this shift began
+    shiftNumber:    shiftIndex + 1,                          // 1-based
+    elapsedMinutes: elapsedInShiftMin,
+    shiftStartMs:   now - elapsedInShiftMin * 60000,         // absolute timestamp when this shift began
   };
 }
 
@@ -512,7 +564,7 @@ console.log(`\n=== FALU PMS Machine Simulator v4 (full PLC spec) ===`);
 console.log(`Broker:     ${url}`);
 console.log(`Machines:   ${MACHINE_NAMES.map(uid => `${uid} (${MACHINE_UID_MAP[uid]})`).join(", ")}`);
 console.log(`Tick:       ${TICK_MS}ms`);
-console.log(`Shift ref:  Shift 1 at ${new Date(REFERENCE_MS).toLocaleString()}`);
+console.log(`Shift ref:  ${SHIFT_DURATION_HOURS}h shifts, first at ${FIRST_SHIFT_START_HOUR}:00 ${FACTORY_TIMEZONE}`);
 console.log(`=====================================\n`);
 
 const client = mqtt.connect(url, {
@@ -532,7 +584,8 @@ let simulationStarted = false;
 client.on("connect", async () => {
   console.log("Connected to MQTT broker");
 
-  // Load real error codes from DB before starting simulation
+  // Load shift config + timezone + error codes from DB before starting simulation
+  await loadShiftConfigFromDB();
   await loadErrorCodesFromDB();
 
   MACHINE_NAMES.forEach(name => { if (!machines[name]) machines[name] = initMachine(name); });
