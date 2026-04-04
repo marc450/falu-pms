@@ -475,13 +475,16 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
               />
               <Tooltip
                 cursor={{ stroke: "#9ca3af", strokeWidth: 1 }}
-                content={({ active, label }) => {
+                content={({ active, label, payload }) => {
                   if (!active || !label) return null;
                   let formatted: string;
                   try { formatted = fmtDateShort(parseISO(String(label))); } catch { formatted = String(label); }
+                  const row = payload?.[0]?.payload;
+                  const totalH = row ? trendCodes.reduce((s, c) => s + Number(row[c] || 0), 0) : 0;
                   return (
-                    <div style={TOOLTIP_CONTENT_STYLE} className="px-2.5 py-1.5 text-xs text-white font-medium">
-                      {formatted}
+                    <div style={{ backgroundColor: "#111827", border: "1px solid #4b5563", borderRadius: "8px", boxShadow: "0 4px 12px rgba(0,0,0,0.5)" }} className="px-3.5 py-2.5">
+                      <div className="text-white font-semibold text-sm">{formatted}</div>
+                      <div className="text-cyan-400 font-mono text-xs mt-1">Total downtime: {fmtN(totalH, 1)}h</div>
                     </div>
                   );
                 }}
@@ -538,15 +541,6 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
                 );
               })}
             </div>
-            {trendHover && (
-              <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-gray-700/50 text-xs">
-                <span className="w-2.5 h-2.5 flex-shrink-0"></span>
-                <span className="text-gray-300 font-medium">Total</span>
-                <span className="font-mono text-white font-medium">
-                  {fmtN(trendCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0), 1)}h
-                </span>
-              </div>
-            )}
           </div>
         </div>
       )}
