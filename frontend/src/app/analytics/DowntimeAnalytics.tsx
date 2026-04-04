@@ -509,6 +509,7 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
                 const hidden = trendHiddenCodes.has(code);
                 const hrs = trendHover ? Number(trendHover[code] || 0) : 0;
                 const totalH = trendHover ? trendCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0) : 0;
+                const pct = totalH > 0 ? (hrs / totalH) * 100 : 0;
                 return (
                   <div
                     key={code}
@@ -522,15 +523,11 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
                     }}
                   >
                     <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: AREA_COLORS[i % AREA_COLORS.length] }}></span>
-                    <span className={`truncate flex-1 ${hidden ? "text-gray-600 line-through" : "text-gray-400"}`} title={lookup[code]?.description ?? code}>
+                    <span className={`truncate ${hidden ? "text-gray-600 line-through" : "text-gray-400"}`} title={lookup[code]?.description ?? code}>
                       {code} {lookup[code]?.description ?? ""}
                     </span>
-                    <span className={`font-mono flex-shrink-0 ${trendHover ? (hidden ? "text-gray-600" : "text-gray-200") : "text-gray-700"}`}>
-                      {trendHover ? (
-                        trendRelative
-                          ? `${fmtN(hrs, 1)}h (${totalH > 0 ? fmtN((hrs / totalH) * 100, 1) : "0.0"}%)`
-                          : `${fmtN(hrs, 1)}h`
-                      ) : ""}
+                    <span className={`font-mono flex-shrink-0 ml-auto ${trendHover ? (hidden ? "text-gray-600" : "text-gray-200") : "text-gray-700"}`}>
+                      {trendHover ? `${fmtN(hrs, 1)}h (${fmtN(pct, 1)}%)` : ""}
                     </span>
                   </div>
                 );
@@ -539,9 +536,9 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
             {trendHover && (
               <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-gray-700/50 text-xs">
                 <span className="w-2.5 h-2.5 flex-shrink-0"></span>
-                <span className="text-gray-300 font-medium flex-1">Total (visible)</span>
-                <span className="font-mono text-white font-medium flex-shrink-0">
-                  {fmtN(trendVisibleCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0), 1)}h
+                <span className="text-gray-300 font-medium">Total</span>
+                <span className="font-mono text-white font-medium ml-auto">
+                  {fmtN(trendCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0), 1)}h
                 </span>
               </div>
             )}
