@@ -473,7 +473,19 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
                 tickFormatter={trendRelative ? (v: number) => `${fmtN(v, 0)}%` : (v: number) => `${fmtN(v, 1)}h`}
                 label={trendRelative ? undefined : { value: "hours", angle: -90, position: "insideLeft", fill: "#6b7280", fontSize: 11 }}
               />
-              <Tooltip content={() => null} cursor={{ stroke: "#9ca3af", strokeWidth: 1 }} />
+              <Tooltip
+                cursor={{ stroke: "#9ca3af", strokeWidth: 1 }}
+                content={({ active, label }) => {
+                  if (!active || !label) return null;
+                  let formatted: string;
+                  try { formatted = fmtDateShort(parseISO(String(label))); } catch { formatted = String(label); }
+                  return (
+                    <div style={TOOLTIP_CONTENT_STYLE} className="px-2.5 py-1.5 text-xs text-white font-medium">
+                      {formatted}
+                    </div>
+                  );
+                }}
+              />
               {trendCodes.map((code, i) => {
                 const hidden = trendHiddenCodes.has(code);
                 return (
@@ -492,17 +504,10 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
           </ResponsiveContainer>
           {/* Interactive legend below chart */}
           <div className="mt-3 pt-3 border-t border-gray-700/30">
-            <div className="flex items-center gap-3 mb-2">
-              <span className="text-xs text-gray-500 font-medium">
-                {trendHover
-                  ? (() => { try { return fmtDateShort(parseISO(String(trendHover.date))); } catch { return String(trendHover.date); } })()
-                  : "Hover chart for details"}
-              </span>
-              <div className="flex gap-1.5 text-[10px]">
-                <button className="text-gray-500 hover:text-gray-300 transition-colors" onClick={() => setTrendHiddenCodes(new Set())}>All</button>
-                <span className="text-gray-600">/</span>
-                <button className="text-gray-500 hover:text-gray-300 transition-colors" onClick={() => setTrendHiddenCodes(new Set(trendCodes))}>None</button>
-              </div>
+            <div className="flex items-center gap-1.5 mb-2 text-[10px]">
+              <button className="text-gray-500 hover:text-gray-300 transition-colors" onClick={() => setTrendHiddenCodes(new Set())}>All</button>
+              <span className="text-gray-600">/</span>
+              <button className="text-gray-500 hover:text-gray-300 transition-colors" onClick={() => setTrendHiddenCodes(new Set(trendCodes))}>None</button>
             </div>
             <div className="grid grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-1 text-xs">
               {trendCodes.map((code, i) => {
@@ -526,7 +531,7 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
                     <span className={`truncate ${hidden ? "text-gray-600 line-through" : "text-gray-400"}`} title={lookup[code]?.description ?? code}>
                       {code} {lookup[code]?.description ?? ""}
                     </span>
-                    <span className={`font-mono flex-shrink-0 ml-auto ${trendHover ? (hidden ? "text-gray-600" : "text-gray-200") : "text-gray-700"}`}>
+                    <span className={`font-mono flex-shrink-0 ${trendHover ? (hidden ? "text-gray-600" : "text-gray-200") : "text-gray-700"}`}>
                       {trendHover ? `${fmtN(hrs, 1)}h (${fmtN(pct, 1)}%)` : ""}
                     </span>
                   </div>
@@ -537,7 +542,7 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
               <div className="flex items-center gap-2 mt-1.5 pt-1.5 border-t border-gray-700/50 text-xs">
                 <span className="w-2.5 h-2.5 flex-shrink-0"></span>
                 <span className="text-gray-300 font-medium">Total</span>
-                <span className="font-mono text-white font-medium ml-auto">
+                <span className="font-mono text-white font-medium">
                   {fmtN(trendCodes.reduce((s, c) => s + Number(trendHover[c] || 0), 0), 1)}h
                 </span>
               </div>
