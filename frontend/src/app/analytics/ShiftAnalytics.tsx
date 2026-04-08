@@ -432,7 +432,6 @@ export default function ShiftAnalytics({
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-semibold text-white flex items-center gap-2">
-            <i className="bi bi-graph-up text-cyan-400"></i>
             BU Trend
           </span>
           <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap justify-end">
