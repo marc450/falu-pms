@@ -176,16 +176,9 @@ interface CrewStats {
   shiftCount: number;
 }
 
-function CrewCard({ crew, isBest }: { crew: CrewStats; isBest: boolean }) {
+function CrewCard({ crew }: { crew: CrewStats }) {
   return (
-    <div className={`relative bg-gray-800/50 border rounded-lg px-4 py-4 flex flex-col gap-2 ${
-      isBest ? "border-yellow-500/60 ring-1 ring-yellow-500/20" : "border-gray-700"
-    }`}>
-      {isBest && (
-        <span className="absolute -top-2.5 right-3 bg-yellow-500/20 text-yellow-400 text-[10px] font-bold px-2 py-0.5 rounded-full border border-yellow-500/30 uppercase tracking-wider">
-          Top Crew
-        </span>
-      )}
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-4 flex flex-col gap-2">
       <div className="flex items-center gap-2">
         <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: crew.color }}></span>
         <span className="text-sm font-bold text-white">{crew.name}</span>
@@ -280,19 +273,6 @@ export default function ShiftAnalytics({
       };
     });
   }, [crewsInData, annotated]);
-
-  // ── Best crew ──
-  const bestCrew = useMemo(() => {
-    let best: string | null = null;
-    let bestVal = -Infinity;
-    for (const c of crewStats) {
-      if (c.avgBu !== null && c.avgBu > bestVal) {
-        bestVal = c.avgBu;
-        best = c.name;
-      }
-    }
-    return best;
-  }, [crewStats]);
 
   // ── Crew color map ──
   const crewColorMap = useMemo(() => {
@@ -420,7 +400,7 @@ export default function ShiftAnalytics({
             .slice()
             .sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0))
             .map(crew => (
-              <CrewCard key={crew.name} crew={crew} isBest={crew.name === bestCrew} />
+              <CrewCard key={crew.name} crew={crew} />
             ))
           }
         </div>
