@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback, useMemo } from "react";
 import { format, parseISO } from "date-fns";
 import { fmtN, fmtH, fmtPct } from "@/lib/fmt";
 import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import {
@@ -68,6 +68,19 @@ function stdDev(values: number[]): number | null {
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
   const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1);
   return Math.sqrt(variance);
+}
+
+/** Simple linear regression slope (BU per day) */
+function trendSlope(points: { x: number; y: number }[]): number | null {
+  if (points.length < 3) return null;
+  const n = points.length;
+  const sumX  = points.reduce((s, p) => s + p.x, 0);
+  const sumY  = points.reduce((s, p) => s + p.y, 0);
+  const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
+  const sumX2 = points.reduce((s, p) => s + p.x * p.x, 0);
+  const denom = n * sumX2 - sumX * sumX;
+  if (denom === 0) return null;
+  return (n * sumXY - sumX * sumY) / denom;
 }
 
 function buColor(val: number | null): string {
@@ -255,6 +268,26 @@ export default function ShiftAnalytics({
     }).sort((a, b) => b.avgAll - a.avgAll);
   }, [annotated, crewsInData]);
 
+  // ── Per-crew trend (slope + consistency) ──
+  const crewTrends = useMemo(() => {
+    return crewStats.map(c => {
+      // Get daily BU values for this crew
+      const dailyBu: { x: number; y: number }[] = [];
+      const workDays = Array.from(new Set(annotated.filter(r => r.crewName === c.name).map(r => r.work_day))).sort();
+      workDays.forEach((day, i) => {
+        const dayRows = annotated.filter(r => r.work_day === day && r.crewName === c.name);
+        const bu = avgBu(dayRows);
+        if (bu !== null) dailyBu.push({ x: i, y: bu });
+      });
+      const slope = trendSlope(dailyBu);
+      const buValues = dailyBu.map(p => p.y);
+      const std = stdDev(buValues);
+      const minBu = buValues.length > 0 ? Math.min(...buValues) : null;
+      const maxBu = buValues.length > 0 ? Math.max(...buValues) : null;
+      return { name: c.name, color: c.color, slope, std, minBu, maxBu, days: buValues.length };
+    });
+  }, [crewStats, annotated]);
+
   // ── Render ──
   if (loading) {
     return (
@@ -309,13 +342,13 @@ export default function ShiftAnalytics({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          SECTION 2: ALL CREWS BU COMPARISON
+          SECTION 2: CREW BU TREND
           ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
         <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-semibold text-white flex items-center gap-2">
-            <i className="bi bi-people-fill text-cyan-400"></i>
-            Crew Comparison
+            <i className="bi bi-graph-up text-cyan-400"></i>
+            BU Trend
           </span>
           <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap justify-end">
             {crewStats.map(c => (
@@ -327,60 +360,14 @@ export default function ShiftAnalytics({
           </div>
         </div>
 
-        {/* KPI comparison: all crews side by side */}
-        {(() => {
-          const kpis = [
-            { label: "Avg BU",    field: "avgBu"    as const, fmt: (v: number | null) => fmtN(v, 1), colorFn: buColor, higherBetter: true },
-            { label: "Avg Run",   field: "avgRun"   as const, fmt: (v: number | null) => fmtH(v, 1), colorFn: () => "text-gray-200", higherBetter: true },
-            { label: "Avg Eff",   field: "avgEff"   as const, fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200", higherBetter: true },
-            { label: "Avg Scrap", field: "avgScrap"  as const, fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200", higherBetter: false },
-          ];
-          const sorted = crewStats.slice().sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0));
-          return (
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
-              {kpis.map(k => {
-                // Find best value for this KPI
-                const vals = sorted.map(c => c[k.field]).filter((v): v is number => v !== null);
-                const bestVal = vals.length > 0 ? (k.higherBetter ? Math.max(...vals) : Math.min(...vals)) : null;
-                return (
-                  <div key={k.label} className="bg-gray-900/40 rounded-lg px-3 py-3">
-                    <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">{k.label}</div>
-                    <div className="flex flex-col gap-1.5">
-                      {sorted.map(c => {
-                        const val = c[k.field];
-                        const isBest = val !== null && val === bestVal;
-                        return (
-                          <div key={c.name} className="flex items-center justify-between gap-2">
-                            <span className="flex items-center gap-1.5 min-w-0">
-                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c.color }}></span>
-                              <span className="text-[10px] text-gray-400 truncate">{c.name}</span>
-                            </span>
-                            <span className={`text-xs font-mono font-bold ${k.colorFn(val)} ${isBest ? "underline underline-offset-2" : ""}`}
-                              style={isBest ? { textDecorationColor: c.color } : {}}>
-                              {k.fmt(val)}
-                            </span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
-          );
-        })()}
-
-        {/* Bar chart: all crews */}
-        <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-gray-400">Avg BU per Day (last 30 days)</span>
-        </div>
+        {/* Line chart */}
         {chartData.length === 0 ? (
           <div className="flex items-center justify-center h-48 text-gray-500 text-sm">No data</div>
         ) : (
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={chartData} margin={{ top: 4, right: 8, left: -18, bottom: 16 }} barCategoryGap="25%">
+          <ResponsiveContainer width="100%" height={260}>
+            <LineChart data={chartData} margin={{ top: 4, right: 8, left: -18, bottom: 16 }}>
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-              <ReferenceLine y={BU_TARGET_DEFAULT}   stroke="#4ade80" strokeDasharray="6 3" strokeOpacity={0.5} />
+              <ReferenceLine y={BU_TARGET_DEFAULT}   stroke="#4ade80" strokeDasharray="6 3" strokeOpacity={0.5} label={{ value: "Target", position: "right", fill: "#4ade80", fontSize: 10 }} />
               <ReferenceLine y={BU_MEDIOCRE_DEFAULT} stroke="#eab308" strokeDasharray="6 3" strokeOpacity={0.35} />
               <XAxis
                 dataKey="dateLabel"
@@ -390,7 +377,7 @@ export default function ShiftAnalytics({
                 interval={chartData.length > 14 ? Math.ceil(chartData.length / 14) - 1 : 0}
               />
               <YAxis
-                domain={[0, "auto"]}
+                domain={[100, "auto"]}
                 tick={TICK_STYLE}
                 tickLine={false}
                 axisLine={false}
@@ -404,11 +391,64 @@ export default function ShiftAnalytics({
                 formatter={(v: any, name: any) => [`${fmtN(Number(v), 1)} BU`, name]}
               />
               {crewStats.map(c => (
-                <Bar key={c.name} dataKey={c.name} name={c.name} fill={c.color} fillOpacity={0.85} radius={[2, 2, 0, 0]} barSize={10} />
+                <Line
+                  key={c.name}
+                  type="monotone"
+                  dataKey={c.name}
+                  name={c.name}
+                  stroke={c.color}
+                  strokeWidth={2}
+                  dot={false}
+                  activeDot={{ r: 4, strokeWidth: 0 }}
+                  connectNulls
+                />
               ))}
-            </BarChart>
+            </LineChart>
           </ResponsiveContainer>
         )}
+
+        {/* Trend summary row */}
+        <div className={`grid gap-3 mt-4 ${
+          crewTrends.length <= 2 ? "grid-cols-2" :
+          crewTrends.length === 3 ? "grid-cols-3" :
+          "grid-cols-2 sm:grid-cols-4"
+        }`}>
+          {crewTrends.map(t => {
+            const trendLabel = t.slope === null ? "N/A"
+              : t.slope > 0.3 ? "Improving"
+              : t.slope < -0.3 ? "Declining"
+              : "Stable";
+            const trendColor = t.slope === null ? "text-gray-500"
+              : t.slope > 0.3 ? "text-green-400"
+              : t.slope < -0.3 ? "text-red-400"
+              : "text-gray-400";
+            const trendIcon = t.slope === null ? "bi-dash"
+              : t.slope > 0.3 ? "bi-arrow-up-right"
+              : t.slope < -0.3 ? "bi-arrow-down-right"
+              : "bi-arrow-right";
+            return (
+              <div key={t.name} className="bg-gray-900/40 rounded-lg px-3 py-3">
+                <div className="flex items-center gap-1.5 mb-2">
+                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: t.color }}></span>
+                  <span className="text-xs font-semibold text-white">{t.name}</span>
+                </div>
+                <div className="flex items-center gap-2 mb-1.5">
+                  <i className={`bi ${trendIcon} ${trendColor}`}></i>
+                  <span className={`text-sm font-bold ${trendColor}`}>{trendLabel}</span>
+                  {t.slope !== null && (
+                    <span className="text-[10px] text-gray-500">
+                      ({t.slope > 0 ? "+" : ""}{fmtN(t.slope, 2)} BU/day)
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center justify-between text-[10px] text-gray-500">
+                  <span>Range: {fmtN(t.minBu, 0)}{"\u2013"}{fmtN(t.maxBu, 0)} BU</span>
+                  <span>±{fmtN(t.std, 1)}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
