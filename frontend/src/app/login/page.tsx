@@ -5,14 +5,8 @@ import { useRouter } from "next/navigation";
 import { getSupabase } from "@/lib/supabase";
 
 function FaluLogo({ className }: { className?: string }) {
-  return (
-    <svg className={className} viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
-      <rect width="100" height="100" fill="#FF0000"/>
-      <text x="5" y="88" fontFamily="Arial, Helvetica, sans-serif" fontWeight="900" fontSize="42" fill="#FFFFFF" letterSpacing="-1">FALU</text>
-      <circle cx="88" cy="12" r="7" fill="none" stroke="#FFFFFF" strokeWidth="1.5"/>
-      <text x="85" y="15.5" fontFamily="Arial, Helvetica, sans-serif" fontWeight="700" fontSize="10" fill="#FFFFFF">R</text>
-    </svg>
-  );
+  // eslint-disable-next-line @next/next/no-img-element
+  return <img src="/usc-logo.svg" alt="Logo" className={className} />;
 }
 
 export default function LoginPage() {
