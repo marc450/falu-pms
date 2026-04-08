@@ -6,7 +6,7 @@ import { getSupabase } from "@/lib/supabase";
 
 function FaluLogo({ className }: { className?: string }) {
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/usc-logo.svg" alt="Logo" className={className} />;
+  return <img src="/falu-logo.png" alt="Logo" className={className} />;
 }
 
 export default function LoginPage() {
