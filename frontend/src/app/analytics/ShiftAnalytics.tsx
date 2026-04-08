@@ -5,7 +5,7 @@ import { format, parseISO } from "date-fns";
 import { fmtN, fmtH, fmtPct } from "@/lib/fmt";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, Cell, ReferenceLine, Legend,
+  ResponsiveContainer, ReferenceLine,
 } from "recharts";
 import {
   fetchMachineShiftSummary,
@@ -87,7 +87,6 @@ interface CrewStats {
   avgEff:     number | null;
   avgScrap:   number | null;
   shiftCount: number;
-  winRate:    number | null;  // % of shifts beating fleet avg
 }
 
 function CrewCard({ crew, isBest }: { crew: CrewStats; isBest: boolean }) {
@@ -112,8 +111,8 @@ function CrewCard({ crew, isBest }: { crew: CrewStats; isBest: boolean }) {
           <div className={`text-lg font-bold ${buColor(crew.avgBu)}`}>{fmtN(crew.avgBu, 1)}</div>
         </div>
         <div>
-          <div className="text-[10px] text-gray-500 uppercase tracking-wide">Win Rate</div>
-          <div className="text-lg font-bold text-gray-200">{crew.winRate !== null ? fmtPct(crew.winRate, 0) : "—"}</div>
+          <div className="text-[10px] text-gray-500 uppercase tracking-wide">Avg Scrap</div>
+          <div className="text-sm text-gray-300">{fmtPct(crew.avgScrap, 1)}</div>
         </div>
         <div>
           <div className="text-[10px] text-gray-500 uppercase tracking-wide">Avg Run</div>
@@ -173,9 +172,6 @@ export default function ShiftAnalytics({
     return Array.from(dataCrews).sort();
   }, [annotated]);
 
-  // ── Fleet avg BU (for win rate calculation) ──
-  const fleetAvgBu = useMemo(() => avgBu(annotated), [annotated]);
-
   // ── Per-crew stats ──
   const crewStats: CrewStats[] = useMemo(() => {
     return crewsInData.map((name, i) => {
@@ -185,21 +181,6 @@ export default function ShiftAnalytics({
       const shiftKeys = new Set(crewR.map(r => `${r.work_day}|${r.shift_label}`));
       const shiftCount = shiftKeys.size;
 
-      // Win rate: % of shift-days where crew avg BU > fleet avg
-      let wins = 0;
-      let counted = 0;
-      if (fleetAvgBu !== null) {
-        for (const sk of shiftKeys) {
-          const [wd, sl] = sk.split("|");
-          const shiftR = crewR.filter(r => r.work_day === wd && r.shift_label === sl);
-          const shiftBu = avgBu(shiftR);
-          if (shiftBu !== null) {
-            counted++;
-            if (shiftBu >= fleetAvgBu) wins++;
-          }
-        }
-      }
-
       return {
         name,
         color: CREW_COLORS[i % CREW_COLORS.length],
@@ -208,10 +189,9 @@ export default function ShiftAnalytics({
         avgEff: avgField(crewR, "avg_efficiency"),
         avgScrap: avgField(crewR, "avg_scrap"),
         shiftCount,
-        winRate: counted > 0 ? (wins / counted) * 100 : null,
       };
     });
-  }, [crewsInData, annotated, fleetAvgBu]);
+  }, [crewsInData, annotated]);
 
   // ── Best crew ──
   const bestCrew = useMemo(() => {
@@ -233,63 +213,47 @@ export default function ShiftAnalytics({
     return m;
   }, [crewStats]);
 
-  // ── Pairwise comparison selection ──
-  const [pick1, setPick1] = useState<string>("");
-  const [pick2, setPick2] = useState<string>("");
-  const pick1Eff = pick1 || crewsInData[0] || "";
-  const pick2Eff = pick2 || crewsInData[1] || crewsInData[0] || "";
-
-  const crew1Color = crewColorMap.get(pick1Eff) ?? "#22d3ee";
-  const crew2Color = crewColorMap.get(pick2Eff) ?? "#a78bfa";
-
-  // ── Per-day chart data for two selected crews ──
+  // ── Per-day chart data for ALL crews ──
   const chartData = useMemo(() => {
     const workDays = Array.from(new Set(annotated.map(r => r.work_day))).sort();
     const days = workDays.slice(-30);
     return days.map(day => {
-      const d1 = annotated.filter(r => r.work_day === day && r.crewName === pick1Eff);
-      const d2 = annotated.filter(r => r.work_day === day && r.crewName === pick2Eff);
       let dateLabel = day;
       try { dateLabel = format(parseISO(day), "dd.MM"); } catch { /* noop */ }
-      return { day, dateLabel, bu1: avgBu(d1) ?? 0, bu2: avgBu(d2) ?? 0 };
+      const entry: Record<string, string | number> = { day, dateLabel };
+      for (const crew of crewsInData) {
+        const crewRows = annotated.filter(r => r.work_day === day && r.crewName === crew);
+        entry[crew] = avgBu(crewRows) ?? 0;
+      }
+      return entry;
     });
-  }, [annotated, pick1Eff, pick2Eff]);
+  }, [annotated, crewsInData]);
 
-  // ── Verdict ──
-  const verdict = useMemo(() => {
-    const c1Rows = annotated.filter(r => r.crewName === pick1Eff);
-    const c2Rows = annotated.filter(r => r.crewName === pick2Eff);
-    const bu1 = avgBu(c1Rows);
-    const bu2 = avgBu(c2Rows);
-    if (bu1 === null || bu2 === null) return null;
-    const diff = bu1 - bu2;
-    if (Math.abs(diff) < 0.5) return { text: "Virtually tied", leader: null, diff: 0 };
-    const leader = diff > 0 ? pick1Eff : pick2Eff;
-    return { text: `${leader} leads by +${fmtN(Math.abs(diff), 1)} BU`, leader, diff: Math.abs(diff) };
-  }, [annotated, pick1Eff, pick2Eff]);
-
-  // ── Machine comparison for two selected crews ──
+  // ── Per-machine comparison for ALL crews ──
   const machineComparison = useMemo(() => {
     const allCodes = Array.from(new Set(annotated.map(r => r.machine_code))).sort();
     return allCodes.map(code => {
-      const m1 = annotated.filter(r => r.machine_code === code && r.crewName === pick1Eff);
-      const m2 = annotated.filter(r => r.machine_code === code && r.crewName === pick2Eff);
-      const bu1 = avgBu(m1);
-      const bu2 = avgBu(m2);
-      const delta = bu1 !== null && bu2 !== null ? bu1 - bu2 : null;
-      const better = delta === null ? "N/A" : delta > 0.5 ? "1" : delta < -0.5 ? "2" : "Even";
-
-      // Consistency: std dev of BU values per shift for each crew
-      const buVals1 = m1.filter(r => r.bu_normalized !== null).map(r => r.bu_normalized!);
-      const buVals2 = m2.filter(r => r.bu_normalized !== null).map(r => r.bu_normalized!);
-
-      return { code, bu1, bu2, delta, better, std1: stdDev(buVals1), std2: stdDev(buVals2) };
-    }).sort((a, b) => {
-      const sA = a.bu1 !== null && a.bu2 !== null ? (a.bu1 + a.bu2) / 2 : a.bu1 ?? a.bu2 ?? 0;
-      const sB = b.bu1 !== null && b.bu2 !== null ? (b.bu1 + b.bu2) / 2 : b.bu1 ?? b.bu2 ?? 0;
-      return sB - sA;
-    });
-  }, [annotated, pick1Eff, pick2Eff]);
+      const perCrew: Record<string, { bu: number | null; std: number | null }> = {};
+      let totalBu = 0;
+      let buCount = 0;
+      for (const crew of crewsInData) {
+        const mRows = annotated.filter(r => r.machine_code === code && r.crewName === crew);
+        const bu = avgBu(mRows);
+        const buVals = mRows.filter(r => r.bu_normalized !== null).map(r => r.bu_normalized!);
+        perCrew[crew] = { bu, std: stdDev(buVals) };
+        if (bu !== null) { totalBu += bu; buCount++; }
+      }
+      const avgAll = buCount > 0 ? totalBu / buCount : 0;
+      // Find best crew for this machine
+      let bestCrew: string | null = null;
+      let bestBu = -Infinity;
+      for (const crew of crewsInData) {
+        const bu = perCrew[crew]?.bu;
+        if (bu !== null && bu !== undefined && bu > bestBu) { bestBu = bu; bestCrew = crew; }
+      }
+      return { code, perCrew, avgAll, bestCrew };
+    }).sort((a, b) => b.avgAll - a.avgAll);
+  }, [annotated, crewsInData]);
 
   // ── Render ──
   if (loading) {
@@ -345,73 +309,59 @@ export default function ShiftAnalytics({
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          SECTION 2: HEAD-TO-HEAD COMPARISON
+          SECTION 2: ALL CREWS BU COMPARISON
           ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-        {/* Picker row */}
-        <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="flex items-center justify-between mb-4">
           <span className="text-sm font-semibold text-white flex items-center gap-2">
             <i className="bi bi-people-fill text-cyan-400"></i>
-            Head to Head
+            Crew Comparison
           </span>
-          <div className="flex items-center gap-2 ml-auto">
-            <select
-              value={pick1Eff}
-              onChange={e => setPick1(e.target.value)}
-              className="bg-gray-900 border text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none"
-              style={{ borderColor: crew1Color + "99", color: crew1Color }}
-            >
-              {crewsInData.map(c => (
-                <option key={c} value={c} className="bg-gray-800 text-white">{c}</option>
-              ))}
-            </select>
-            <span className="text-xs text-gray-500 font-medium">vs</span>
-            <select
-              value={pick2Eff}
-              onChange={e => setPick2(e.target.value)}
-              className="bg-gray-900 border text-xs font-semibold rounded px-2.5 py-1.5 focus:outline-none"
-              style={{ borderColor: crew2Color + "99", color: crew2Color }}
-            >
-              {crewsInData.map(c => (
-                <option key={c} value={c} className="bg-gray-800 text-white">{c}</option>
-              ))}
-            </select>
+          <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap justify-end">
+            {crewStats.map(c => (
+              <span key={c.name} className="flex items-center gap-1.5">
+                <span className="w-3 h-2 rounded-sm inline-block" style={{ background: c.color }}></span>
+                {c.name}
+              </span>
+            ))}
           </div>
         </div>
 
-        {/* KPI comparison row */}
+        {/* KPI comparison: all crews side by side */}
         {(() => {
-          const c1 = annotated.filter(r => r.crewName === pick1Eff);
-          const c2 = annotated.filter(r => r.crewName === pick2Eff);
           const kpis = [
-            { label: "Avg BU", v1: avgBu(c1), v2: avgBu(c2), fmt: (v: number | null) => fmtN(v, 1), colorFn: buColor },
-            { label: "Avg Run", v1: avgField(c1, "run_hours"), v2: avgField(c2, "run_hours"), fmt: (v: number | null) => fmtH(v, 1), colorFn: () => "text-gray-200" },
-            { label: "Avg Eff", v1: avgField(c1, "avg_efficiency"), v2: avgField(c2, "avg_efficiency"), fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200" },
-            { label: "Avg Scrap", v1: avgField(c1, "avg_scrap"), v2: avgField(c2, "avg_scrap"), fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200" },
+            { label: "Avg BU",    field: "avgBu"    as const, fmt: (v: number | null) => fmtN(v, 1), colorFn: buColor, higherBetter: true },
+            { label: "Avg Run",   field: "avgRun"   as const, fmt: (v: number | null) => fmtH(v, 1), colorFn: () => "text-gray-200", higherBetter: true },
+            { label: "Avg Eff",   field: "avgEff"   as const, fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200", higherBetter: true },
+            { label: "Avg Scrap", field: "avgScrap"  as const, fmt: (v: number | null) => fmtPct(v, 1), colorFn: () => "text-gray-200", higherBetter: false },
           ];
+          const sorted = crewStats.slice().sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0));
           return (
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
               {kpis.map(k => {
-                const better = k.label === "Avg Scrap"
-                  ? (k.v1 !== null && k.v2 !== null ? (k.v1 < k.v2 ? 1 : k.v1 > k.v2 ? 2 : 0) : 0)
-                  : (k.v1 !== null && k.v2 !== null ? (k.v1 > k.v2 ? 1 : k.v1 < k.v2 ? 2 : 0) : 0);
+                // Find best value for this KPI
+                const vals = sorted.map(c => c[k.field]).filter((v): v is number => v !== null);
+                const bestVal = vals.length > 0 ? (k.higherBetter ? Math.max(...vals) : Math.min(...vals)) : null;
                 return (
                   <div key={k.label} className="bg-gray-900/40 rounded-lg px-3 py-3">
                     <div className="text-[10px] text-gray-500 uppercase tracking-wide mb-2">{k.label}</div>
-                    <div className="flex items-end justify-between gap-2">
-                      <div>
-                        <div className={`text-base font-bold ${k.colorFn(k.v1)}`} style={better === 1 ? { textDecoration: "underline", textDecorationColor: crew1Color, textUnderlineOffset: "3px" } : {}}>
-                          {k.fmt(k.v1)}
-                        </div>
-                        <div className="text-[10px] mt-0.5" style={{ color: crew1Color }}>{pick1Eff}</div>
-                      </div>
-                      <div className="text-gray-600 text-xs pb-1">vs</div>
-                      <div className="text-right">
-                        <div className={`text-base font-bold ${k.colorFn(k.v2)}`} style={better === 2 ? { textDecoration: "underline", textDecorationColor: crew2Color, textUnderlineOffset: "3px" } : {}}>
-                          {k.fmt(k.v2)}
-                        </div>
-                        <div className="text-[10px] mt-0.5 text-right" style={{ color: crew2Color }}>{pick2Eff}</div>
-                      </div>
+                    <div className="flex flex-col gap-1.5">
+                      {sorted.map(c => {
+                        const val = c[k.field];
+                        const isBest = val !== null && val === bestVal;
+                        return (
+                          <div key={c.name} className="flex items-center justify-between gap-2">
+                            <span className="flex items-center gap-1.5 min-w-0">
+                              <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: c.color }}></span>
+                              <span className="text-[10px] text-gray-400 truncate">{c.name}</span>
+                            </span>
+                            <span className={`text-xs font-mono font-bold ${k.colorFn(val)} ${isBest ? "underline underline-offset-2" : ""}`}
+                              style={isBest ? { textDecorationColor: c.color } : {}}>
+                              {k.fmt(val)}
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -420,31 +370,9 @@ export default function ShiftAnalytics({
           );
         })()}
 
-        {/* Verdict badge */}
-        {verdict && (
-          <div className={`text-center text-xs font-medium py-1.5 px-3 rounded-full w-fit mx-auto mb-4 ${
-            verdict.leader ? "bg-gray-700/60 text-gray-200" : "bg-gray-700/40 text-gray-400"
-          }`}>
-            {verdict.leader && (
-              <span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: crewColorMap.get(verdict.leader) ?? "#9ca3af" }}></span>
-            )}
-            {verdict.text}
-          </div>
-        )}
-
-        {/* Bar chart */}
+        {/* Bar chart: all crews */}
         <div className="flex items-center justify-between mb-3">
-          <span className="text-xs text-gray-400">Fleet Avg BU per Day</span>
-          <div className="flex items-center gap-3 text-xs text-gray-500">
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-2 rounded-sm inline-block" style={{ background: crew1Color }}></span>
-              {pick1Eff}
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-3 h-2 rounded-sm inline-block" style={{ background: crew2Color }}></span>
-              {pick2Eff}
-            </span>
-          </div>
+          <span className="text-xs text-gray-400">Avg BU per Day (last 30 days)</span>
         </div>
         {chartData.length === 0 ? (
           <div className="flex items-center justify-center h-48 text-gray-500 text-sm">No data</div>
@@ -473,34 +401,24 @@ export default function ShiftAnalytics({
                 labelStyle={TOOLTIP_LABEL_STYLE}
                 itemStyle={TOOLTIP_ITEM_STYLE}
                 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                formatter={(v: any, name: any) => [
-                  `${fmtN(Number(v), 1)} BU`,
-                  name === "bu1" ? pick1Eff : pick2Eff,
-                ]}
+                formatter={(v: any, name: any) => [`${fmtN(Number(v), 1)} BU`, name]}
               />
-              <Bar dataKey="bu1" name="bu1" radius={[2, 2, 0, 0]} barSize={10}>
-                {chartData.map((d, i) => (
-                  <Cell key={`1-${i}`} fill={d.bu1 > 0 ? crew1Color : "#374151"} fillOpacity={0.85} />
-                ))}
-              </Bar>
-              <Bar dataKey="bu2" name="bu2" radius={[2, 2, 0, 0]} barSize={10}>
-                {chartData.map((d, i) => (
-                  <Cell key={`2-${i}`} fill={d.bu2 > 0 ? crew2Color : "#374151"} fillOpacity={0.75} />
-                ))}
-              </Bar>
+              {crewStats.map(c => (
+                <Bar key={c.name} dataKey={c.name} name={c.name} fill={c.color} fillOpacity={0.85} radius={[2, 2, 0, 0]} barSize={10} />
+              ))}
             </BarChart>
           </ResponsiveContainer>
         )}
       </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
-          SECTION 3: PER-MACHINE BREAKDOWN
+          SECTION 3: PER-MACHINE BREAKDOWN (ALL CREWS)
           ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="px-4 py-3 border-b border-gray-700">
-          <h3 className="text-sm font-semibold text-white">Per-Machine Breakdown</h3>
+          <h3 className="text-sm font-semibold text-white">Per Machine Breakdown</h3>
           <p className="text-xs text-gray-500 mt-0.5">
-            {pick1Eff} vs {pick2Eff} — ranked by avg BU, with consistency (lower = more consistent)
+            All crews ranked by avg BU, with consistency (lower = more consistent)
           </p>
         </div>
         <div className="overflow-x-auto">
@@ -508,47 +426,40 @@ export default function ShiftAnalytics({
             <thead>
               <tr className="border-b border-gray-700 bg-gray-900/40">
                 <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Machine</th>
-                <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: crew1Color }}>{pick1Eff} BU</th>
-                <th className="text-right px-3 py-2 text-[10px] font-medium text-gray-500">Consistency</th>
-                <th className="text-right px-4 py-2 text-xs font-semibold" style={{ color: crew2Color }}>{pick2Eff} BU</th>
-                <th className="text-right px-3 py-2 text-[10px] font-medium text-gray-500">Consistency</th>
-                <th className="text-right px-4 py-2 text-xs font-semibold text-gray-400">Delta</th>
-                <th className="text-center px-3 py-2 text-xs font-semibold text-gray-400">Better</th>
+                {crewStats.slice().sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0)).map(c => (
+                  <th key={c.name} className="text-right px-3 py-2 text-xs font-semibold" style={{ color: c.color }}>
+                    {c.name}
+                    <div className="text-[9px] font-normal text-gray-500">BU / ±</div>
+                  </th>
+                ))}
+                <th className="text-center px-3 py-2 text-xs font-semibold text-gray-400">Best</th>
               </tr>
             </thead>
             <tbody>
-              {machineComparison.map(({ code, bu1, bu2, delta, better, std1, std2 }) => (
+              {machineComparison.map(({ code, perCrew, bestCrew: best }) => (
                 <tr key={code} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
                   <td className="px-4 py-2 text-xs font-medium text-gray-300 text-center" title={code}>
                     {displayName(code)}
                   </td>
-                  <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu1)}`}>
-                    {fmtN(bu1, 1)}
-                  </td>
-                  <td className="px-3 py-2 text-[10px] text-right font-mono text-gray-500">
-                    {std1 !== null ? `±${fmtN(std1, 1)}` : "—"}
-                  </td>
-                  <td className={`px-4 py-2 text-xs text-right font-mono ${buColor(bu2)}`}>
-                    {fmtN(bu2, 1)}
-                  </td>
-                  <td className="px-3 py-2 text-[10px] text-right font-mono text-gray-500">
-                    {std2 !== null ? `±${fmtN(std2, 1)}` : "—"}
-                  </td>
-                  <td className={`px-4 py-2 text-xs text-right font-mono ${
-                    delta === null ? "text-gray-600"
-                    : delta > 0    ? "text-green-400"
-                    : delta < 0    ? "text-red-400"
-                    :                "text-gray-400"
-                  }`}>
-                    {delta !== null ? `${delta > 0 ? "+" : ""}${fmtN(delta, 1)}` : "—"}
-                  </td>
+                  {crewStats.slice().sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0)).map(c => {
+                    const data = perCrew[c.name];
+                    return (
+                      <td key={c.name} className="px-3 py-2 text-right">
+                        <span className={`text-xs font-mono ${buColor(data?.bu ?? null)}`}>
+                          {fmtN(data?.bu ?? null, 1)}
+                        </span>
+                        <span className="text-[9px] font-mono text-gray-500 ml-1">
+                          {data?.std !== null && data?.std !== undefined ? `±${fmtN(data.std, 1)}` : ""}
+                        </span>
+                      </td>
+                    );
+                  })}
                   <td className="px-3 py-2 text-xs text-center font-medium">
-                    {better === "1"
-                      ? <span style={{ color: crew1Color }}>{pick1Eff}</span>
-                      : better === "2"
-                      ? <span style={{ color: crew2Color }}>{pick2Eff}</span>
-                      : <span className="text-gray-500">{better}</span>
-                    }
+                    {best ? (
+                      <span style={{ color: crewColorMap.get(best) ?? "#9ca3af" }}>{best}</span>
+                    ) : (
+                      <span className="text-gray-500">N/A</span>
+                    )}
                   </td>
                 </tr>
               ))}
