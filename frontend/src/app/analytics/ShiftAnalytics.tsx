@@ -34,6 +34,80 @@ const AXIS_COLOR          = "#4b5563";
 
 const CREW_COLORS = ["#22d3ee", "#a78bfa", "#4ade80", "#fb923c", "#f472b6", "#facc15"];
 
+type ColorMode = "simple" | "gradient";
+
+// ─── Gradient helper (same as MachineAnalytics) ──────────────────────────────
+
+function lerpHsl(
+  t: number,
+  stops: Array<{ t: number; h: number; s: number; l: number }>,
+): string {
+  if (t <= stops[0].t) {
+    const s = stops[0];
+    return `hsl(${s.h},${s.s}%,${s.l}%)`;
+  }
+  const last = stops[stops.length - 1];
+  if (t >= last.t) return `hsl(${last.h},${last.s}%,${last.l}%)`;
+  for (let i = 0; i < stops.length - 1; i++) {
+    if (t >= stops[i].t && t <= stops[i + 1].t) {
+      const a = stops[i], b = stops[i + 1];
+      const f = (t - a.t) / (b.t - a.t);
+      return `hsl(${(a.h + f * (b.h - a.h)).toFixed(1)},${(a.s + f * (b.s - a.s)).toFixed(1)}%,${(a.l + f * (b.l - a.l)).toFixed(1)}%)`;
+    }
+  }
+  return `hsl(0,0%,20%)`;
+}
+
+const GRADIENT_STOPS = [
+  { t: 0.00, h:   4, s: 78, l: 22 },
+  { t: 0.20, h:  14, s: 80, l: 27 },
+  { t: 0.42, h:  36, s: 75, l: 30 },
+  { t: 0.65, h:  72, s: 60, l: 28 },
+  { t: 0.85, h: 128, s: 50, l: 28 },
+  { t: 1.00, h: 148, s: 55, l: 26 },
+];
+
+function rangeGradientBg(val: number, min: number, max: number, invert = false): string {
+  const range = max > min ? max - min : 1;
+  let t = (val - min) / range;
+  if (invert) t = 1 - t;
+  return lerpHsl(Math.max(0, Math.min(1, t)), GRADIENT_STOPS);
+}
+
+interface CellStyle {
+  className: string;
+  style?:    React.CSSProperties;
+}
+
+function buCellStyle(val: number | null, mode: ColorMode, tMin = 0, tMax = 1): CellStyle {
+  if (val === null || val === 0) return { className: "bg-gray-900 text-gray-600" };
+  if (mode === "simple") {
+    if (val >= BU_TARGET_DEFAULT)   return { className: "bg-green-900/40 text-green-300" };
+    if (val >= BU_MEDIOCRE_DEFAULT) return { className: "bg-yellow-900/40 text-yellow-300" };
+    return                                 { className: "bg-red-900/40 text-red-300" };
+  }
+  return { className: "text-white font-medium", style: { backgroundColor: rangeGradientBg(val, tMin, tMax) } };
+}
+
+function GradientSwatch({ fn, labelLeft, labelRight }: {
+  fn: (t: number) => string;
+  labelLeft:  string;
+  labelRight: string;
+}) {
+  const steps = 32;
+  const gradient = Array.from({ length: steps }, (_, i) => fn(i / (steps - 1))).join(", ");
+  return (
+    <span className="flex items-center gap-1.5">
+      <span className="text-gray-500 text-xs">{labelLeft}</span>
+      <span
+        className="w-20 h-3 rounded-sm"
+        style={{ background: `linear-gradient(to right, ${gradient})` }}
+      />
+      <span className="text-gray-500 text-xs">{labelRight}</span>
+    </span>
+  );
+}
+
 // ─── Props ────────────────────────────────────────────────────────────────────
 
 interface ShiftAnalyticsProps {
@@ -148,6 +222,7 @@ export default function ShiftAnalytics({
   const [rows,    setRows]    = useState<MachineShiftRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error,   setError]   = useState<string | null>(null);
+  const [colorMode, setColorMode] = useState<ColorMode>("gradient");
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -269,6 +344,14 @@ export default function ShiftAnalytics({
       return { code, perCrew, avgAll, bestCrew };
     }).sort((a, b) => b.avgAll - a.avgAll);
   }, [annotated, crewsInData]);
+
+  // ── Table BU min/max for gradient scaling ──
+  const tableBuRange = useMemo(() => {
+    const allBu = machineComparison.flatMap(m =>
+      Object.values(m.perCrew).map(d => d.bu).filter((v): v is number => v !== null && v > 0)
+    );
+    return { min: allBu.length > 0 ? Math.min(...allBu) : 0, max: allBu.length > 0 ? Math.max(...allBu) : 1 };
+  }, [machineComparison]);
 
   // ── Per-crew trend (slope + consistency) ──
   const crewTrends = useMemo(() => {
@@ -457,11 +540,48 @@ export default function ShiftAnalytics({
           SECTION 3: PER-MACHINE BREAKDOWN (ALL CREWS)
           ═══════════════════════════════════════════════════════════════════ */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-        <div className="px-4 py-3 border-b border-gray-700">
-          <h3 className="text-sm font-semibold text-white">Per Machine Breakdown</h3>
-          <p className="text-xs text-gray-500 mt-0.5">
-            All crews ranked by avg BU, with consistency (lower = more consistent)
-          </p>
+        <div className="px-4 py-3 border-b border-gray-700 flex items-center justify-between flex-wrap gap-2">
+          <div>
+            <h3 className="text-sm font-semibold text-white">Per Machine Breakdown</h3>
+            <p className="text-xs text-gray-500 mt-0.5">
+              All crews ranked by avg BU
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Color mode toggle */}
+            <div className="flex rounded-md overflow-hidden border border-gray-600">
+              <button
+                onClick={() => setColorMode("simple")}
+                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                  colorMode === "simple" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                }`}
+              >
+                Target
+              </button>
+              <button
+                onClick={() => setColorMode("gradient")}
+                className={`px-2.5 py-1 text-xs font-medium transition-colors ${
+                  colorMode === "gradient" ? "bg-blue-600 text-white" : "bg-gray-800 text-gray-400 hover:bg-gray-700"
+                }`}
+              >
+                Gradient
+              </button>
+            </div>
+            {/* Legend */}
+            {colorMode === "simple" ? (
+              <div className="flex items-center gap-2 text-[10px]">
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-green-900/60"></span><span className="text-gray-500">&ge; {BU_TARGET_DEFAULT} BU</span></span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-yellow-900/60"></span><span className="text-gray-500">&ge; {BU_MEDIOCRE_DEFAULT} BU</span></span>
+                <span className="flex items-center gap-1"><span className="w-2.5 h-2.5 rounded-sm bg-red-900/60"></span><span className="text-gray-500">&lt; {BU_MEDIOCRE_DEFAULT} BU</span></span>
+              </div>
+            ) : (
+              <GradientSwatch
+                fn={(t) => lerpHsl(t, GRADIENT_STOPS)}
+                labelLeft={fmtN(tableBuRange.min, 0)}
+                labelRight={fmtN(tableBuRange.max, 0)}
+              />
+            )}
+          </div>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
@@ -469,9 +589,8 @@ export default function ShiftAnalytics({
               <tr className="border-b border-gray-700 bg-gray-900/40">
                 <th className="text-center px-4 py-2 text-xs font-semibold text-gray-400">Machine</th>
                 {crewStats.slice().sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0)).map(c => (
-                  <th key={c.name} className="text-right px-3 py-2 text-xs font-semibold" style={{ color: c.color }}>
+                  <th key={c.name} className="text-center px-3 py-2 text-xs font-semibold" style={{ color: c.color }}>
                     {c.name}
-                    <div className="text-[9px] font-normal text-gray-500">BU / ±</div>
                   </th>
                 ))}
                 <th className="text-center px-3 py-2 text-xs font-semibold text-gray-400">Best</th>
@@ -479,20 +598,17 @@ export default function ShiftAnalytics({
             </thead>
             <tbody>
               {machineComparison.map(({ code, perCrew, bestCrew: best }) => (
-                <tr key={code} className="border-b border-gray-700/50 hover:bg-gray-700/20 transition-colors">
+                <tr key={code} className="border-b border-gray-700/50">
                   <td className="px-4 py-2 text-xs font-medium text-gray-300 text-center" title={code}>
                     {displayName(code)}
                   </td>
                   {crewStats.slice().sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0)).map(c => {
                     const data = perCrew[c.name];
+                    const bu = data?.bu ?? null;
+                    const cs = buCellStyle(bu, colorMode, tableBuRange.min, tableBuRange.max);
                     return (
-                      <td key={c.name} className="px-3 py-2 text-right">
-                        <span className={`text-xs font-mono ${buColor(data?.bu ?? null)}`}>
-                          {fmtN(data?.bu ?? null, 1)}
-                        </span>
-                        <span className="text-[9px] font-mono text-gray-500 ml-1">
-                          {data?.std !== null && data?.std !== undefined ? `±${fmtN(data.std, 1)}` : ""}
-                        </span>
+                      <td key={c.name} className={`px-3 py-1.5 text-center text-xs font-mono ${cs.className}`} style={cs.style}>
+                        {fmtN(bu, 1)}
                       </td>
                     );
                   })}
