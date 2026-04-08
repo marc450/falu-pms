@@ -226,17 +226,19 @@ export default function ShiftAnalytics({
     return m;
   }, [crewStats]);
 
-  // ── Per-day chart data for ALL crews ──
+  // ── Per-day chart data for ALL crews (only on-duty days) ──
   const chartData = useMemo(() => {
     const workDays = Array.from(new Set(annotated.map(r => r.work_day))).sort();
     const days = workDays.slice(-30);
     return days.map(day => {
       let dateLabel = day;
       try { dateLabel = format(parseISO(day), "dd.MM"); } catch { /* noop */ }
-      const entry: Record<string, string | number> = { day, dateLabel };
+      const entry: Record<string, string | number | undefined> = { day, dateLabel };
       for (const crew of crewsInData) {
         const crewRows = annotated.filter(r => r.work_day === day && r.crewName === crew);
-        entry[crew] = avgBu(crewRows) ?? 0;
+        // Only include a value when the crew actually worked that day
+        const bu = avgBu(crewRows);
+        entry[crew] = bu !== null ? bu : undefined;
       }
       return entry;
     });
@@ -400,7 +402,7 @@ export default function ShiftAnalytics({
                   strokeWidth={2}
                   dot={false}
                   activeDot={{ r: 4, strokeWidth: 0 }}
-                  connectNulls
+                  connectNulls={true}
                 />
               ))}
             </LineChart>
