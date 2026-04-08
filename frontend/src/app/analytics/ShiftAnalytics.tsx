@@ -176,10 +176,20 @@ interface CrewStats {
   shiftCount: number;
 }
 
-function CrewCard({ crew }: { crew: CrewStats }) {
+const RANK_STYLES = [
+  "text-yellow-400 bg-yellow-500/15",  // #1
+  "text-gray-300 bg-gray-500/15",      // #2
+  "text-amber-600 bg-amber-600/15",    // #3
+];
+
+function CrewCard({ crew, rank }: { crew: CrewStats; rank: number }) {
+  const rankStyle = RANK_STYLES[rank - 1] ?? "text-gray-500 bg-gray-500/10";
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-4 flex flex-col gap-2">
       <div className="flex items-center gap-2">
+        <span className={`w-5 h-5 rounded-full flex-shrink-0 flex items-center justify-center text-[10px] font-bold ${rankStyle}`}>
+          {rank}
+        </span>
         <span className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: crew.color }}></span>
         <span className="text-sm font-bold text-white">{crew.name}</span>
         <span className="ml-auto text-[10px] text-gray-500">{crew.shiftCount} shifts</span>
@@ -399,8 +409,8 @@ export default function ShiftAnalytics({
           {crewStats
             .slice()
             .sort((a, b) => (b.avgBu ?? 0) - (a.avgBu ?? 0))
-            .map(crew => (
-              <CrewCard key={crew.name} crew={crew} />
+            .map((crew, i) => (
+              <CrewCard key={crew.name} crew={crew} rank={i + 1} />
             ))
           }
         </div>
