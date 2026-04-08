@@ -8,8 +8,9 @@ import { updateUserProfile, changePassword } from "@/lib/supabase";
 
 // Inline SVG so it works regardless of basePath / CDN configuration
 function FaluLogo({ className }: { className?: string }) {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src="/falu-logo.png" alt="Logo" className={className} />;
+  return <img src={`${basePath}/falu-logo.png`} alt="Logo" className={className} />;
 }
 
 // ─────────────────────────────────────────────────────────────
