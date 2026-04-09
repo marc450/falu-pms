@@ -1442,6 +1442,8 @@ function ShiftsTab() {
   return (
     <div className="space-y-5">
 
+      <FactoryTimezoneCard />
+
       {/* ── Shift teams ─────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
@@ -1477,8 +1479,6 @@ function ShiftsTab() {
           </div>
         </div>
       </div>
-
-      <FactoryTimezoneCard />
 
       {/* ── PLC Shift Structure ──────────────────────────── */}
       <div className={`bg-gray-800/50 border rounded-lg overflow-hidden ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
