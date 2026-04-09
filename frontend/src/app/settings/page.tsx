@@ -1442,14 +1442,11 @@ function ShiftsTab() {
   return (
     <div className="space-y-5">
 
-      {/* ── Top row: left cards + Mechanics side by side ── */}
-      <div className="flex gap-5 items-stretch">
-
-      {/* ── Left column: Teams + Structure ── */}
-      <div className="space-y-5 shrink-0">
+      {/* ── Row 1: Teams + Factory Location + Shift Mechanics ── */}
+      <div className="grid grid-cols-3 gap-5">
 
       {/* ── Shift teams ─────────────────────────────────── */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden max-w-lg">
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
             <i className="bi bi-people-fill text-cyan-400"></i>Shift Teams
@@ -1484,8 +1481,15 @@ function ShiftsTab() {
         </div>
       </div>
 
+        <FactoryTimezoneCard />
+        <ShiftMechanicsCard teams={config.teams} />
+      </div>{/* end row 1 */}
+
+      {/* ── Row 2: Shift Structure + Downtime Alerts side by side ── */}
+      <div className="grid grid-cols-2 gap-5">
+
       {/* ── PLC Shift Structure ──────────────────────────── */}
-      <div className={`bg-gray-800/50 border rounded-lg overflow-hidden max-w-lg ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
+      <div className={`bg-gray-800/50 border rounded-lg overflow-hidden ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
           <h4 className="text-white font-semibold text-sm flex items-center gap-2">
             <i className="bi bi-clock text-cyan-400"></i>Shift Structure
@@ -1632,16 +1636,8 @@ function ShiftsTab() {
         </div>
       </div>
 
-      </div>{/* end left column */}
-
-      {/* ── Right column: Shift Mechanics + Downtime Alerts + Factory Location ── */}
-      <div className="flex-1 min-w-0 flex flex-col gap-5 self-stretch">
-        <FactoryTimezoneCard />
-        <ShiftMechanicsCard teams={config.teams} />
         <DowntimeAlertsCard />
-      </div>
-
-      </div>{/* end top row */}
+      </div>{/* end row 2 */}
 
       {/* ── Monthly calendar — full width ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
