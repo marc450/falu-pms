@@ -338,8 +338,8 @@ export default function ShiftAnalytics({
         if (bu !== null && bu !== undefined && bu > bestBu) { bestBu = bu; bestCrew = crew; }
       }
       return { code, perCrew, avgAll, bestCrew };
-    }).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
-  }, [annotated, crewsInData]);
+    }).sort((a, b) => displayName(a.code).localeCompare(displayName(b.code), undefined, { numeric: true }));
+  }, [annotated, crewsInData, displayName]);
 
   // ── Table BU min/max for gradient scaling ──
   const tableBuRange = useMemo(() => {
