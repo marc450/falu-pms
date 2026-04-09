@@ -1444,42 +1444,6 @@ function ShiftsTab() {
 
       <FactoryTimezoneCard />
 
-      {/* ── Shift teams ─────────────────────────────────── */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
-          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
-            <i className="bi bi-people-fill text-cyan-400"></i>Shift Teams
-          </h4>
-          <p className="text-gray-500 text-xs mt-0.5">Define which teams rotate through shifts</p>
-        </div>
-        <div className="px-5 py-3">
-          <div className="flex flex-wrap gap-2 mb-3">
-            {config.teams.map(team => (
-              <span key={team} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold ${teamColor(team, config.teams)}`}>
-                {team}
-                {config.teams.length > 1 && (
-                  <button onClick={() => removeTeam(team)} className="ml-1 opacity-60 hover:opacity-100 transition-opacity" title={`Remove team ${team}`}>
-                    <i className="bi bi-x-lg text-xs"></i>
-                  </button>
-                )}
-              </span>
-            ))}
-          </div>
-          <div className="flex gap-2">
-            <input
-              type="text" value={newTeamName}
-              onChange={e => setNewTeamName(e.target.value)}
-              onKeyDown={e => e.key === "Enter" && addTeam()}
-              placeholder="New team name…" maxLength={10}
-              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-cyan-500"
-            />
-            <button onClick={addTeam} disabled={!newTeamName.trim()} className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm rounded transition-colors">
-              Add
-            </button>
-          </div>
-        </div>
-      </div>
-
       {/* ── PLC Shift Structure ──────────────────────────── */}
       <div className={`bg-gray-800/50 border rounded-lg overflow-hidden ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
@@ -1626,6 +1590,42 @@ function ShiftsTab() {
               <i className="bi bi-exclamation-circle"></i> Unsaved changes
             </span>
           )}
+        </div>
+      </div>
+
+      {/* ── Shift teams ─────────────────────────────────── */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
+        <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
+          <h4 className="text-white font-semibold text-sm flex items-center gap-2">
+            <i className="bi bi-people-fill text-cyan-400"></i>Shift Teams
+          </h4>
+          <p className="text-gray-500 text-xs mt-0.5">Define which teams rotate through shifts</p>
+        </div>
+        <div className="px-5 py-3">
+          <div className="flex flex-wrap gap-2 mb-3">
+            {config.teams.map(team => (
+              <span key={team} className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-white text-sm font-semibold ${teamColor(team, config.teams)}`}>
+                {team}
+                {config.teams.length > 1 && (
+                  <button onClick={() => removeTeam(team)} className="ml-1 opacity-60 hover:opacity-100 transition-opacity" title={`Remove team ${team}`}>
+                    <i className="bi bi-x-lg text-xs"></i>
+                  </button>
+                )}
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              type="text" value={newTeamName}
+              onChange={e => setNewTeamName(e.target.value)}
+              onKeyDown={e => e.key === "Enter" && addTeam()}
+              placeholder="New team name…" maxLength={10}
+              className="bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white w-36 focus:outline-none focus:border-cyan-500"
+            />
+            <button onClick={addTeam} disabled={!newTeamName.trim()} className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-30 disabled:cursor-not-allowed text-white text-sm rounded transition-colors">
+              Add
+            </button>
+          </div>
         </div>
       </div>
 
