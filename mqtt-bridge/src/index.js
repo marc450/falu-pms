@@ -916,6 +916,34 @@ function connectMqtt() {
   setInterval(() => {
     logger.info(`[HEARTBEAT] MQTT connected: ${mqttConnected} | machines: ${Object.keys(allMachines).length}`);
   }, 30000);
+
+  // Staleness sweep: mark machines as "offline" if no MQTT message in 60 seconds.
+  // Also updates Supabase so the dashboard reflects reality even after a page reload.
+  const STALE_TIMEOUT_MS = 60 * 1000;
+  setInterval(async () => {
+    const now = Date.now();
+    for (const [code, m] of Object.entries(allMachines)) {
+      if (!m.lastSync) continue;
+      const age = now - new Date(m.lastSync).getTime();
+      const currentStatus = (m.machineStatus?.Status || "").toLowerCase();
+      if (age > STALE_TIMEOUT_MS && currentStatus !== "offline") {
+        logger.info(`Marking ${code} as offline (no MQTT for ${Math.round(age / 1000)}s)`);
+        m.machineStatus = { ...m.machineStatus, Status: "offline", Speed: 0 };
+        m.statusSince = new Date().toISOString();
+        m.activeErrors = [];
+        // Persist to DB
+        const machineId = machineIdCache[code];
+        if (machineId) {
+          await supabase.from("machines").update({
+            status: "offline",
+            speed: 0,
+            status_since: m.statusSince,
+            active_error_codes: [],
+          }).eq("id", machineId);
+        }
+      }
+    }
+  }, 15000);
 }
 
 // ============================================
