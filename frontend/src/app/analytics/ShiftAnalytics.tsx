@@ -9,8 +9,6 @@ import {
 } from "recharts";
 import {
   fetchMachineShiftSummary,
-  shiftLabelToName,
-  teamNameForShift,
 } from "@/lib/supabase";
 import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 
@@ -256,11 +254,11 @@ export default function ShiftAnalytics({
   }, [machines]);
   const displayName = (code: string) => machineNameMap.get(code) ?? code;
 
-  // ── Annotate rows with crew name from shift assignments ──
+  // ── Annotate rows with crew name (shift_crew comes directly from the bridge) ──
   const annotated: AnnotatedRow[] = useMemo(() => rows.map(r => ({
     ...r,
-    crewName: teamNameForShift(r.work_day, r.shift_label, shiftAssignments, shiftSlots),
-  })), [rows, shiftAssignments, shiftSlots]);
+    crewName: r.shift_crew,
+  })), [rows]);
 
   // ── Crew list (from configured teams, filtered to those with data) ──
   const crewsInData = useMemo(() => {
@@ -274,8 +272,8 @@ export default function ShiftAnalytics({
     return crewsInData.map((name, i) => {
       const crewR = annotated.filter(r => r.crewName === name);
 
-      // Count "shifts" as unique (work_day, shift_label) combos
-      const shiftKeys = new Set(crewR.map(r => `${r.work_day}|${r.shift_label}`));
+      // Count "shifts" as unique (work_day, shift_crew) combos
+      const shiftKeys = new Set(crewR.map(r => `${r.work_day}|${r.shift_crew}`));
       const shiftCount = shiftKeys.size;
 
       return {

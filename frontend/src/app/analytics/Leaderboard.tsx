@@ -5,7 +5,6 @@ import { fmtN, fmtPct } from "@/lib/fmt";
 import {
   fetchMachineShiftSummary,
   fetchProductionCells,
-  teamNameForShift,
 } from "@/lib/supabase";
 import type {
   DateRange, RegisteredMachine, MachineShiftRow,
@@ -51,7 +50,7 @@ interface CellStats {
   avgBu:    number | null;
   avgEff:   number | null;
   avgScrap: number | null;
-  shifts:   number;          // unique (work_day, shift_label) combos
+  shifts:   number;          // unique (work_day, shift_crew) combos
 }
 
 // ─── Rank badge colors ────────────────────────────────────────────────────────
@@ -158,7 +157,7 @@ export default function Leaderboard({
       const name = cellNameMap.get(cellId);
       if (!name) continue;
 
-      const shiftKeys = new Set(cellRows.map(r => `${r.work_day}|${r.shift_label}`));
+      const shiftKeys = new Set(cellRows.map(r => `${r.work_day}|${r.shift_crew}`));
 
       stats.push({
         cellId,

@@ -757,7 +757,7 @@ export function shiftLabelToName(
 /**
  * Return the team/crew name for a shift.
  *
- * The bridge now stores the crew name directly in shift_label (e.g. "SHIFT A").
+ * The bridge now stores the crew name directly in shift_crew (e.g. "SHIFT A").
  * For backwards compatibility with legacy data that may still contain slot
  * letters ("A", "B", "C", "D"), this function resolves those via the
  * shift_assignments calendar. Full crew names are returned as-is.
@@ -1002,7 +1002,7 @@ export async function saveShiftAssignmentsBulk(
 
 export interface MachineShiftRow {
   work_day:       string;   // 'YYYY-MM-DD'
-  shift_label:    string;   // crew name from bridge (e.g. 'SHIFT A'), used as display and grouping key
+  shift_crew:     string;   // crew name from bridge (e.g. 'SHIFT A'), used as display and grouping key
   machine_id:     string;
   machine_code:   string;
   run_hours:      number | null;
@@ -1075,7 +1075,7 @@ export async function fetchMachineShiftSummary(range: DateRange, _slots: TimeSlo
       : null;
     return {
       work_day:       b.shiftDate,
-      shift_label:    b.crew,
+      shift_crew:     b.crew,
       machine_id:     machineId,
       machine_code:   b.machineCode,
       run_hours:      runHours != null ? Math.round(runHours * 100) / 100 : null,
@@ -1087,7 +1087,7 @@ export async function fetchMachineShiftSummary(range: DateRange, _slots: TimeSlo
     };
   }).sort((a, b) =>
     b.work_day.localeCompare(a.work_day)
-    || a.shift_label.localeCompare(b.shift_label)
+    || a.shift_crew.localeCompare(b.shift_crew)
     || a.machine_code.localeCompare(b.machine_code)
   );
 }

@@ -6,7 +6,6 @@ import { fmtN, fmtPct, fmtH } from "@/lib/fmt";
 import {
   fetchMachineShiftSummary,
   fetchProductionCells,
-  teamNameForShift,
 } from "@/lib/supabase";
 import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 
@@ -144,8 +143,8 @@ interface MachineAnalyticsProps {
 export default function MachineAnalytics({ dateRange, machines, shiftSlots, shiftAssignments }: MachineAnalyticsProps) {
   // Returns the team name assigned to a specific work-day and slot.
   // Falls back to the configured slot name when no assignment exists.
-  const slotName = (workDay: string, label: string) =>
-    teamNameForShift(workDay, label, shiftAssignments, shiftSlots);
+  // shift_crew already contains the crew name from the bridge, no calendar lookup needed
+  const slotName = (_workDay: string, label: string) => label;
   const [rows,       setRows]       = useState<MachineShiftRow[]>([]);
   const [cells,      setCells]      = useState<ProductionCell[]>([]);
   const [loading,    setLoading]    = useState(true);
@@ -192,20 +191,20 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
     return machineCell.get(code) === cellFilter;
   });
 
-  // Unique (work_day, shift_label) pairs, newest first, A before B within day
+  // Unique (work_day, shift_crew) pairs, newest first, A before B within day
   const slotKeys = Array.from(
     new Map(rows.map(r => [
-      `${r.work_day}|${r.shift_label}`,
-      { work_day: r.work_day, shift_label: r.shift_label },
+      `${r.work_day}|${r.shift_crew}`,
+      { work_day: r.work_day, shift_crew: r.shift_crew },
     ])).values()
   ).sort((a, b) => {
     if (a.work_day !== b.work_day) return b.work_day.localeCompare(a.work_day);
-    return a.shift_label.localeCompare(b.shift_label);
+    return a.shift_crew.localeCompare(b.shift_crew);
   });
 
   // Row index
   const rowIndex = new Map<string, MachineShiftRow>();
-  for (const r of rows) rowIndex.set(`${r.work_day}|${r.shift_label}|${r.machine_code}`, r);
+  for (const r of rows) rowIndex.set(`${r.work_day}|${r.shift_crew}|${r.machine_code}`, r);
 
   // Machine target lookup
   const machineTargets = new Map<string, { bu_target: number; bu_mediocre: number }>();
@@ -217,9 +216,9 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
   }
 
   // ── Table-range min/max for gradient mode (excludes the summary row) ──
-  const tableDataValues: number[] = slotKeys.flatMap(({ work_day, shift_label }) =>
+  const tableDataValues: number[] = slotKeys.flatMap(({ work_day, shift_crew }) =>
     filteredCodes.flatMap(code => {
-      const r = rowIndex.get(`${work_day}|${shift_label}|${code}`);
+      const r = rowIndex.get(`${work_day}|${shift_crew}|${code}`);
       if (!r) return [];
       if (metric === "bu")         return [(normalized ? r.bu_normalized : r.swabs_produced / SWABS_PER_BU) ?? null].filter((v): v is number => v !== null);
       if (metric === "hours")      return r.run_hours      != null ? [r.run_hours]      : [];
@@ -231,8 +230,8 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
   const tableMax = tableDataValues.length > 0 ? Math.max(...tableDataValues) : 1;
 
   // ── Cell value ──
-  function cellValue(code: string, work_day: string, shift_label: string): { display: string } & CellStyle {
-    const r   = rowIndex.get(`${work_day}|${shift_label}|${code}`);
+  function cellValue(code: string, work_day: string, shift_crew: string): { display: string } & CellStyle {
+    const r   = rowIndex.get(`${work_day}|${shift_crew}|${code}`);
     const tgt = machineTargets.get(code) ?? { bu_target: BU_TARGET_DEFAULT, bu_mediocre: BU_MEDIOCRE_DEFAULT };
 
     if (!r) return { display: "—", className: "bg-gray-900/60 text-gray-700" };
@@ -515,19 +514,19 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
               </tr>
             </thead>
             <tbody>
-              {slotKeys.map(({ work_day, shift_label }) => {
+              {slotKeys.map(({ work_day, shift_crew }) => {
                 let dateLabel = work_day;
                 try { dateLabel = format(parseISO(work_day), "dd.MM.yy"); } catch { /* keep raw */ }
                 return (
-                  <tr key={`${work_day}|${shift_label}`} className="border-b border-gray-700/50 hover:bg-gray-700/10 transition-colors">
+                  <tr key={`${work_day}|${shift_crew}`} className="border-b border-gray-700/50 hover:bg-gray-700/10 transition-colors">
                     <td className="px-3 py-1.5 text-xs text-gray-400 bg-gray-900 sticky left-0 z-10 whitespace-nowrap">
                       {dateLabel}
                     </td>
                     <td className="px-2 py-1.5 text-xs text-center font-medium text-gray-300 bg-gray-900 sticky left-[72px] z-10 border-r border-gray-700 whitespace-nowrap">
-                      {slotName(work_day, shift_label)}
+                      {slotName(work_day, shift_crew)}
                     </td>
                     {filteredCodes.map(code => {
-                      const { display, className, style } = cellValue(code, work_day, shift_label);
+                      const { display, className, style } = cellValue(code, work_day, shift_crew);
                       return (
                         <td key={code} className={`px-2 py-1.5 text-xs text-right font-mono ${className}`} style={style}>
                           {display}
