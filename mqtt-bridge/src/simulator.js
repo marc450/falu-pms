@@ -1,7 +1,7 @@
 /**
  * FALU PMS - Machine Simulator v3 (combined topic)
  *
- * Publishes a single combined cloud/Shift message every 5 seconds per machine,
+ * Publishes a single combined Status/CB message every 5 seconds per machine,
  * containing both status fields and production data.
  *
  * Realistic simulation featuring:
@@ -125,7 +125,8 @@ const MACHINE_UID_MAP = {
 };
 const MACHINE_NAMES = Object.keys(MACHINE_UID_MAP);
 
-const topicPrefix = IS_LOCAL ? "local" : "cloud";
+const topicPrefix = IS_LOCAL ? "local" : "Status";
+const errorTopicPrefix = IS_LOCAL ? "local" : "Error";
 
 // ============================================
 // SHIFT CONFIG (loaded from DB at startup)
@@ -218,7 +219,7 @@ const TIER_LOCK_MIN   = 45;   // minutes a machine stays in the same speed tier
 // ============================================
 // ERROR CODE CONFIG
 // ============================================
-// Error codes by machine type — sent as individual cloud/Error messages when
+// Error codes by machine type — sent as individual Error/CB messages when
 // a machine enters the error state (2-3 codes per error event).
 // Weighted error code distribution for realistic simulation.
 // Weight tiers: very_common (40), common (15), moderate (5), rare (1).
@@ -518,7 +519,7 @@ function simulateTick(machine, elapsedMin) {
 }
 
 // ============================================
-// PUBLISH — single combined cloud/Shift message
+// PUBLISH — single combined Status/CB message
 // ============================================
 function publishCombinedShift(client, machine, shiftNum, save = false) {
   const shift = machine.shifts[shiftNum];
@@ -550,7 +551,7 @@ function publishCombinedShift(client, machine, shiftNum, save = false) {
     Save:                   save,
     Timestamp:              new Date().toISOString(),
   };
-  client.publish(`${topicPrefix}/Shift`, JSON.stringify(msg), { qos: 1 });
+  client.publish(`${topicPrefix}/CB`, JSON.stringify(msg), { qos: 1 });
 }
 
 // ============================================
@@ -629,7 +630,7 @@ client.on("connect", async () => {
       simulateTick(machine, elapsedMinutes);
       const newStatus = machine.status;
 
-      // Determine error code transitions (before publishing cloud/Shift)
+      // Determine error code transitions (before publishing Status/CB)
       let codesToActivate = null;
       let codesToClear    = null;
       if (prevStatus !== newStatus) {
@@ -655,14 +656,14 @@ client.on("connect", async () => {
         machine.activeErrorCodes = null;
       }
 
-      // cloud/Shift is always sent first (PLC spec: cloud/Shift with Status:"Error"
-      // arrives before any cloud/Error code messages)
+      // Status/CB is always sent first (PLC spec: Status/CB with Status:"Error"
+      // arrives before any Error/CB code messages)
       publishCombinedShift(client, machine, machine.activeShift, false);
 
-      // Publish error code activations after cloud/Shift
+      // Publish error code activations after Status/CB
       if (codesToActivate) {
         for (const code of codesToActivate) {
-          client.publish(`${topicPrefix}/Error`, JSON.stringify({
+          client.publish(`${errorTopicPrefix}/CB`, JSON.stringify({
             Machine:     machine.name,
             ErrorCode:   code,
             ErrorStatus: true,
@@ -673,7 +674,7 @@ client.on("connect", async () => {
       // Publish error code clearances when returning to running
       if (codesToClear) {
         for (const code of codesToClear) {
-          client.publish(`${topicPrefix}/Error`, JSON.stringify({
+          client.publish(`${errorTopicPrefix}/CB`, JSON.stringify({
             Machine:     machine.name,
             ErrorCode:   code,
             ErrorStatus: false,

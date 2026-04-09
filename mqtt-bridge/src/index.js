@@ -1,22 +1,27 @@
 /**
  * FALU PMS - MQTT Bridge + REST API (v3 — full PLC message spec)
  *
- * Subscribes to two topics from cotton swab machines:
- *   - cloud/Shift  → Combined status + production data (every 5 s normally;
+ * Subscribes to two topic trees from cotton swab machines:
+ *   - Status/<type> (e.g. Status/CB, Status/SV, Status/CT)
+ *                    Combined status + production data (every 5 s normally;
  *                    immediately on status change, e.g. when error occurs)
  *                    Fields: Machine, Status, Shift, Speed, ProductionTime,
  *                    IdleTime, ErrorTime, CottonTears, MissingSticks,
  *                    FoultyPickups, OtherErrors, ProducedSwabs, PackagedSwabs,
  *                    ProducedBoxes, ProducedBoxesLayerPlus, DisgardedSwabs,
- *                    Efficiency, Reject, Save, Timestamp
- *   - cloud/Error  → Individual error code per message (many may arrive in
- *                    quick succession for one error event; cloud/Shift with
+ *                    Efficiency, Reject, ErrorSince, IdleSince, Save, Timestamp
+ *   - Error/<type>  (e.g. Error/CB, Error/SV, Error/CT)
+ *                    Individual error code per message (many may arrive in
+ *                    quick succession for one error event; Status/<type> with
  *                    Status:"Error" always arrives FIRST)
  *                    Fields: Machine, ErrorCode, ErrorStatus, Timestamp
  *
- * IdleTime and ErrorTime are authoritative PLC values (seconds) — the bridge
- * no longer accumulates these per-tick; it simply converts to minutes and
- * stores them. Values reset automatically when the PLC reports a shift change.
+ * ErrorSince / IdleSince are ISO timestamps from the PLC indicating when the
+ * current error or idle episode started. The bridge computes elapsed time as
+ * (data.Timestamp - data.ErrorSince) using PLC clock exclusively.
+ *
+ * IdleTime and ErrorTime are authoritative PLC values (cumulative seconds for
+ * the current shift). The bridge converts to minutes and stores them.
  *
  * Historical shift data is stored in Supabase; the bridge no longer
  * publishes RequestShift — the dashboard reads past shifts from the DB.
@@ -109,8 +114,9 @@ const brokerSettings = {
   isLocal: process.env.MQTT_IS_LOCAL === "true",
 };
 
-function getSubscribeTopic() {
-  return brokerSettings.isLocal ? "local/#" : "cloud/#";
+function getSubscribeTopics() {
+  if (brokerSettings.isLocal) return ["local/#"];
+  return ["Status/#", "Error/#"];
 }
 
 // ============================================
@@ -239,7 +245,7 @@ async function getMachineId(machineCode) {
 // ============================================
 // COMBINED SHIFT MESSAGE HANDLER
 // ============================================
-// cloud/Shift now carries everything: status fields + production data.
+// Status/<type> now carries everything: status fields + production data.
 // Confirmed field list:
 //   Machine, Status, Speed, Shift, ProductionTime, IdleTime,
 //   ProducedSwabs, PackagedSwabs, DiscardedSwabs, ProducedBoxes,
@@ -276,33 +282,22 @@ async function handleShiftMessage(payload) {
     m.statusSince = new Date().toISOString();
     logger.info(`Status change for ${machineCode}: ${prevStatus || "(none)"}→${nextStatus} at ${m.statusSince}`);
   }
-  // Trust the authoritative episode-start timestamps from the simulator when
-  // present.  This corrects a stale statusSince caused by the bridge missing a
-  // status-change message while it was offline or reconnecting.
+  // Trust the authoritative episode-start timestamps from the PLC.
+  // ErrorSince / IdleSince are ISO timestamps indicating when the current
+  // episode started. This corrects a stale statusSince caused by the bridge
+  // missing a status-change message while it was offline or reconnecting.
   if (nextStatus === "error" && data.ErrorSince) {
     m.statusSince = data.ErrorSince;
   } else if (nextStatus === "idle" && data.IdleSince) {
     m.statusSince = data.IdleSince;
-  } else if (nextStatus === "error") {
-    // Real PLCs do not send ErrorSince, so apply a hard-constraint correction:
-    // the current error episode cannot be longer than the total accumulated
-    // ErrorTime for the shift.  If the badge would exceed that, statusSince is
-    // stale (bridge missed a recovery while offline) and we reset it so the
-    // badge shows at most the accumulated error time.
-    const errorMins  = (data.ErrorTime || 0) / 60;   // ErrorTime is seconds from PLC
-    const badgeMins  = (Date.now() - new Date(m.statusSince).getTime()) / 60000;
-    if (badgeMins > errorMins + 1) {                  // +1 min rounding tolerance
-      m.statusSince = new Date(Date.now() - errorMins * 60000).toISOString();
-      logger.warn(`Corrected stale statusSince for ${machineCode}: badge was ${badgeMins.toFixed(1)} min but ErrorTime is ${errorMins.toFixed(1)} min`);
-    }
   }
   if (!m.statusSince) {
     m.statusSince = new Date().toISOString();
   }
 
   // ── Clear active error codes when machine returns to running ──────────────
-  // The PLC sends cloud/Shift Status:"Error" before sending cloud/Error codes.
-  // When the machine recovers, it sends cloud/Shift Status:"Running" — at that
+  // The PLC sends Status/<type> Status:"Error" before sending Error/<type> codes.
+  // When the machine recovers, it sends Status/<type> Status:"Running" — at that
   // point all error codes are resolved.
   if (nextStatus === "running" || nextStatus === "run") {
     // Close all open error_event rows for this machine
@@ -353,7 +348,7 @@ async function handleShiftMessage(payload) {
 
   const updatePayload = {
     status: nextStatus,
-    error_message: null, // errors come via cloud/Error; active codes tracked in active_error_codes
+    error_message: null, // errors come via Error/<type>; active codes tracked in active_error_codes
     active_shift: data.Shift || 1,
     speed: data.Speed || 0,
     current_swaps: data.ProducedSwabs || 0,
@@ -475,11 +470,11 @@ async function handleShiftMessage(payload) {
 }
 
 // ============================================
-// ERROR MESSAGE HANDLER — cloud/Error
+// ERROR MESSAGE HANDLER — Error/<type>
 // ============================================
 // PLC sends one message per error code. Many codes may arrive in quick
-// succession for a single error event. The cloud/Shift message with
-// Status:"Error" ALWAYS arrives before any cloud/Error messages, so the
+// succession for a single error event. The Status/<type> message with
+// Status:"Error" ALWAYS arrives before any Error/<type> messages, so the
 // machine is already registered in allMachines when these arrive.
 // Payload: { Machine: "11564", ErrorCode: 232, ErrorStatus: true, Timestamp: "..." }
 async function handleErrorMessage(payload) {
@@ -487,10 +482,10 @@ async function handleErrorMessage(payload) {
   const machineCode = data.Machine;
   if (!machineCode) return;
 
-  // Do NOT auto-register from error messages — cloud/Shift always arrives first.
+  // Do NOT auto-register from error messages — Status/<type> always arrives first.
   const m = allMachines[machineCode];
   if (!m) {
-    logger.warn(`cloud/Error for unknown machine ${machineCode} — ignoring`);
+    logger.warn(`Error/<type> for unknown machine ${machineCode} — ignoring`);
     return;
   }
 
@@ -869,12 +864,12 @@ function connectMqtt() {
 
   mqttClient.on("connect", () => {
     mqttConnected = true;
-    const topic = getSubscribeTopic();
-    mqttClient.subscribe(topic, { qos: 1 }, (err) => {
+    const topics = getSubscribeTopics();
+    mqttClient.subscribe(topics, { qos: 1 }, (err) => {
       if (err) {
         logger.error(`Subscribe failed: ${err.message}`);
       } else {
-        logger.info(`Subscribed to: ${topic}`);
+        logger.info(`Subscribed to: ${topics.join(", ")}`);
       }
     });
   });
@@ -883,12 +878,12 @@ function connectMqtt() {
     try {
       const payload = message.toString();
 
-      if (topic.includes("Error")) {
+      if (topic.startsWith("Error/") || topic.includes("Error")) {
         await handleErrorMessage(payload);
-      } else if (topic.includes("Shift")) {
+      } else if (topic.startsWith("Status/") || topic.includes("Shift") || topic.includes("local/")) {
         await handleShiftMessage(payload);
       }
-      // All other topics (e.g. old Status, RequestShift) are silently ignored
+      // All other topics are silently ignored
     } catch (err) {
       logger.error(`Message handling error on ${topic}: ${err.message}`);
     }
@@ -1020,7 +1015,7 @@ app.get("/api/settings/broker", (req, res) => {
     port: brokerSettings.port,
     username: brokerSettings.username,
     isLocal: brokerSettings.isLocal,
-    subscribeTopic: getSubscribeTopic(),
+    subscribeTopics: getSubscribeTopics(),
   });
 });
 
@@ -1032,7 +1027,7 @@ const PORT = process.env.PORT || process.env.API_PORT || 3001;
 app.listen(PORT, () => {
   logger.info(`FALU PMS Bridge API v2 running on port ${PORT} (process.env.PORT=${process.env.PORT ?? "unset"})`);
   logger.info(`MQTT Broker: ${brokerSettings.host}:${brokerSettings.port} (${brokerSettings.isLocal ? "local" : "cloud"})`);
-  logger.info(`Topic: ${getSubscribeTopic()}`);
+  logger.info(`Topics: ${getSubscribeTopics().join(", ")}`);
 
   loadRegisteredMachines()
     .then(() => restoreNotificationTimestamps())
