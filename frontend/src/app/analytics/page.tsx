@@ -65,7 +65,7 @@ const PRESETS: Preset[] = [
   { id: "all", label: "All time",        getRange: () => ({ start: new Date(2020, 0, 1),                end: mkNow() }) },
 ];
 
-const DEFAULT_PRESET_ID: PresetId = "24h";
+const DEFAULT_PRESET_ID: PresetId = "7d";
 
 // ─── Bucket formatting ────────────────────────────────────────────────────────
 

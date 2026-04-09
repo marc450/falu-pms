@@ -565,8 +565,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
     machineIds:     Set<string>;
     shiftCrews:     Set<string>;
     readingCount:   number;
-    effSum:         number;  // weighted sum of avg_efficiency by reading_count
-    weightTotal:    number;  // total reading_count weight (all machines, incl. idle)
+    totalProdSecs:  number;  // sum of production_time_seconds (delta) across machines
   };
 
   const bucketMap = new Map<string, BucketAcc>();
@@ -583,8 +582,7 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
         machineIds:     new Set(),
         shiftCrews:     new Set(),
         readingCount:   0,
-        effSum:         0,
-        weightTotal:    0,
+        totalProdSecs:  0,
       });
     }
 
@@ -596,12 +594,9 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
     b.machineIds.add(row.machine_id);
     b.shiftCrews.add(row.shift_crew);
 
-    // Uptime: include ALL machines weighted by reading_count.
-    // Idle machines report efficiency = 0 and must count toward the average.
-    const w   = Number(row.reading_count)  || 1;
-    const eff = Number(row.avg_efficiency) || 0;
-    b.effSum      += eff * w;
-    b.weightTotal += w;
+    // Uptime: sum production_time_seconds (delta-based, same logic as swabs).
+    // Divided by (machineCount * 3600) later to get avg % of hour spent producing.
+    b.totalProdSecs += Number(row.production_time_seconds) || 0;
   }
 
   // Fill every hour in the requested range so the chart has no gaps.
@@ -628,8 +623,8 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
       // Real data from hourly_analytics — include now that the hour is complete.
       filledRows.push({
         date:         key,
-        avgUptime:    b.weightTotal > 0
-          ? Math.round((b.effSum / b.weightTotal) * 10) / 10
+        avgUptime:    b.machineIds.size > 0
+          ? Math.round((b.totalProdSecs / (b.machineIds.size * 3600)) * 1000) / 10
           : 0,
         avgScrap:     b.totalSwabs > 0
           ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
