@@ -1490,100 +1490,101 @@ function ShiftsTab() {
             Match the shift structure to the shift configuration on the machine HMI. You <em className="text-gray-400 not-italic font-semibold">cannot</em> override the machine&apos;s shift structure here.
           </p>
         </div>
-        <div className="px-5 py-3 space-y-2">
-          {/* Shift duration selector */}
-          <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-white">Shift duration</span>
-            <div className="flex gap-2">
-              {([6, 8, 12] as const).map(h => (
-                <button
-                  key={h}
-                  onClick={() => updateDraftDuration(h)}
-                  className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
-                    draftDurationHours === h
-                      ? "bg-cyan-600 text-white"
-                      : "bg-gray-700 text-gray-400 hover:text-white hover:bg-gray-600"
-                  }`}
-                >
-                  {h}h
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* First shift start hour */}
-          <div className="flex items-center justify-between py-2 border-t border-gray-700/30">
-            <span className="text-sm text-white">First shift starts at</span>
-            <div className="flex items-center gap-2">
-              <input
-                type="number" min={0} max={23}
-                value={draftFirstStartDisplay}
-                onChange={e => updateDraftFirstStart(e.target.value)}
-                onBlur={commitDraftFirstStart}
-                onWheel={e => e.currentTarget.blur()}
-                className="w-14 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
-              />
-              <span className="text-gray-400 text-sm">:00</span>
-            </div>
-          </div>
-
-          {/* Derived slot schedule preview */}
-          <div className="pt-1 pb-2 border-t border-gray-700/30 space-y-1">
-            <span className="text-[11px] text-gray-600 uppercase tracking-wide">Resulting schedule ({draftSlotsPerDay} shifts/day)</span>
-            {previewSlots.map((s, i) => {
-              const endHour = (s.startHour + draftDurationHours) % 24;
-              return (
-                <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
-                  <span className="text-gray-600 w-10">#{i + 1}</span>
-                  <span className="font-mono">{fmtHour(s.startHour)}</span>
-                  <span className="text-gray-600">&ndash;</span>
-                  <span className="font-mono">{fmtHour(endHour)}</span>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Planned downtime + effective time */}
-        <div className="px-5 py-3 border-t border-gray-700/50 divide-y divide-gray-700/30">
-          <div className="flex items-center justify-between py-2">
-            <div className="flex items-center gap-1.5">
-              <span className="text-sm text-white">Planned downtime</span>
-              {/* Info tooltip */}
-              <div className="relative">
-                <button
-                  className="text-gray-600 hover:text-gray-400 transition-colors"
-                  onMouseEnter={() => setTooltipVisible(true)}
-                  onMouseLeave={() => setTooltipVisible(false)}
-                  tabIndex={-1}
-                  type="button"
-                >
-                  <i className="bi bi-info-circle text-xs"></i>
-                </button>
-                {tooltipVisible && (
-                  <div className="absolute left-5 top-1/2 -translate-y-1/2 z-50 w-64 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-300 shadow-xl pointer-events-none">
-                    Scheduled non-production time per shift. Include handovers, cleaning, planned maintenance, and breaks. The effective production time (shift duration minus planned downtime) is used in all production efficiency calculations.
-                  </div>
-                )}
+        <div className="px-5 py-3 flex gap-8">
+          {/* Left: duration + start hour */}
+          <div className="space-y-2 min-w-[220px]">
+            <div className="flex items-center gap-4 py-2">
+              <span className="text-sm text-white whitespace-nowrap">Shift duration</span>
+              <div className="flex gap-2">
+                {([6, 8, 12] as const).map(h => (
+                  <button
+                    key={h}
+                    onClick={() => updateDraftDuration(h)}
+                    className={`px-3 py-1.5 rounded text-sm font-medium transition-colors ${
+                      draftDurationHours === h
+                        ? "bg-cyan-600 text-white"
+                        : "bg-gray-700 text-gray-400 hover:text-white hover:bg-gray-600"
+                    }`}
+                  >
+                    {h}h
+                  </button>
+                ))}
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <input
-                type="number" min={0} max={draftShiftMins - 1}
-                value={downtimeDisplay}
-                onChange={e => updateDraftDowntime(e.target.value)}
-                onBlur={commitDraftDowntime}
-                onWheel={e => e.currentTarget.blur()}
-                className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
-              />
-              <span className="text-gray-400 text-sm w-8">min</span>
+            <div className="flex items-center gap-4 py-2 border-t border-gray-700/30">
+              <span className="text-sm text-white whitespace-nowrap">First shift starts at</span>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number" min={0} max={23}
+                  value={draftFirstStartDisplay}
+                  onChange={e => updateDraftFirstStart(e.target.value)}
+                  onBlur={commitDraftFirstStart}
+                  onWheel={e => e.currentTarget.blur()}
+                  className="w-14 bg-gray-900 border border-gray-700 rounded px-2 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
+                />
+                <span className="text-gray-400 text-sm">:00</span>
+              </div>
             </div>
           </div>
-          <div className="flex items-center justify-between py-2">
-            <span className="text-sm text-white">Effective production time</span>
-            <span className="text-sm text-cyan-400">
-              {fmtH(draftEffectiveMins / 60, 1).replace(" h", " hrs")}
-            </span>
+
+          {/* Middle: schedule preview */}
+          <div className="border-l border-gray-700/30 pl-8 min-w-[200px]">
+            <span className="text-[11px] text-gray-600 uppercase tracking-wide">Resulting schedule ({draftSlotsPerDay} shifts/day)</span>
+            <div className="mt-1 space-y-0.5">
+              {previewSlots.map((s, i) => {
+                const endHour = (s.startHour + draftDurationHours) % 24;
+                return (
+                  <div key={i} className="flex items-center gap-2 text-xs text-gray-400">
+                    <span className="text-gray-600">#{i + 1}</span>
+                    <span className="font-mono">{fmtHour(s.startHour)}</span>
+                    <span className="text-gray-600">&ndash;</span>
+                    <span className="font-mono">{fmtHour(endHour)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          {/* Right: downtime + effective time */}
+          <div className="border-l border-gray-700/30 pl-8 space-y-2 min-w-[260px]">
+            <div className="flex items-center gap-4 py-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-sm text-white whitespace-nowrap">Planned downtime</span>
+                <div className="relative">
+                  <button
+                    className="text-gray-600 hover:text-gray-400 transition-colors"
+                    onMouseEnter={() => setTooltipVisible(true)}
+                    onMouseLeave={() => setTooltipVisible(false)}
+                    tabIndex={-1}
+                    type="button"
+                  >
+                    <i className="bi bi-info-circle text-xs"></i>
+                  </button>
+                  {tooltipVisible && (
+                    <div className="absolute left-5 top-1/2 -translate-y-1/2 z-50 w-64 bg-gray-900 border border-gray-600 rounded-lg px-3 py-2 text-xs text-gray-300 shadow-xl pointer-events-none">
+                      Scheduled non-production time per shift. Include handovers, cleaning, planned maintenance, and breaks. The effective production time (shift duration minus planned downtime) is used in all production efficiency calculations.
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number" min={0} max={draftShiftMins - 1}
+                  value={downtimeDisplay}
+                  onChange={e => updateDraftDowntime(e.target.value)}
+                  onBlur={commitDraftDowntime}
+                  onWheel={e => e.currentTarget.blur()}
+                  className="w-20 bg-gray-900 border border-gray-700 rounded px-3 py-1.5 text-sm text-white text-right focus:border-cyan-500 outline-none"
+                />
+                <span className="text-gray-400 text-sm">min</span>
+              </div>
+            </div>
+            <div className="flex items-center gap-4 py-2 border-t border-gray-700/30">
+              <span className="text-sm text-white whitespace-nowrap">Effective production time</span>
+              <span className="text-sm text-cyan-400">
+                {fmtH(draftEffectiveMins / 60, 1).replace(" h", " hrs")}
+              </span>
+            </div>
           </div>
         </div>
 
