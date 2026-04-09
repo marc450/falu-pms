@@ -683,7 +683,7 @@ export default function Analytics() {
 
       {/* ── Tab navigation ── */}
       <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1 w-fit mb-5">
-        {(["fleet", "machines", "shifts", "downtime"] as AnalyticsTab[]).map(t => (
+        {(["fleet", "machines", "downtime", "shifts"] as AnalyticsTab[]).map(t => (
           <button
             key={t}
             onClick={() => setTab(t)}
