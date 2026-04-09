@@ -781,9 +781,9 @@ export default function Analytics() {
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                     {/* Background zones — higher is better for uptime */}
-                    <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.08} />
-                    <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.07} />
-                    <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.07} />
+                    <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
+                    <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
+                    <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
@@ -837,9 +837,9 @@ export default function Analytics() {
                 <ResponsiveContainer width="100%" height={220}>
                   <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                     {/* Background zones — lower is better for scrap */}
-                    <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.08} />
-                    <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.07} />
-                    <ReferenceArea y1={thresholds.scrap.mediocre} y2={scrapMax} fill="#ef4444" fillOpacity={0.07} />
+                    <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.15} />
+                    <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.12} />
+                    <ReferenceArea y1={thresholds.scrap.mediocre} y2={scrapMax} fill="#ef4444" fillOpacity={0.12} />
                     <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                     <XAxis
                       dataKey="date"
@@ -891,31 +891,24 @@ export default function Analytics() {
             ) : undefined}
           >
             {!hasData ? <NoData /> : (
-              <ResponsiveContainer width="100%" height={240}>
-                <BarChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 16 }}>
-                  <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-                  {/* Reference line at per-shift target (baseline) */}
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                  {/* Background zones — higher is better for BU output */}
                   {buTargetLine !== null && (
-                    <ReferenceLine
-                      y={buTargetLine}
-                      stroke="#4ade80"
-                      strokeDasharray="6 3"
-                      strokeOpacity={0.5}
-                    />
+                    <ReferenceArea y1={buTargetLine} y2={buMax} fill="#4ade80" fillOpacity={0.15} />
+                  )}
+                  {buTargetLine !== null && buMediocreLine !== null && (
+                    <ReferenceArea y1={buMediocreLine} y2={buTargetLine} fill="#eab308" fillOpacity={0.12} />
                   )}
                   {buMediocreLine !== null && (
-                    <ReferenceLine
-                      y={buMediocreLine}
-                      stroke="#eab308"
-                      strokeDasharray="6 3"
-                      strokeOpacity={0.35}
-                    />
+                    <ReferenceArea y1={0} y2={buMediocreLine} fill="#ef4444" fillOpacity={0.12} />
                   )}
+                  <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                   <XAxis
                     dataKey="date"
+                    tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                     tickLine={false}
                     axisLine={{ stroke: AXIS_COLOR }}
-                    tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                     interval={tickInterval}
                     height={shouldAngle ? 56 : 36}
                     {...(dailyTicks ? { ticks: dailyTicks } : {})}
@@ -931,24 +924,19 @@ export default function Analytics() {
                     contentStyle={TOOLTIP_CONTENT_STYLE}
                     labelStyle={TOOLTIP_LABEL_STYLE}
                     itemStyle={TOOLTIP_ITEM_STYLE}
-                    labelFormatter={(l) => {
-                      const [from, to] = fmtBucketRange(l as string, granularity);
-                      return `${from} – ${to}`;
-                    }}
+                    labelFormatter={(l) => fmtLabel(l as string)}
                     formatter={(v) => [`${Number(v ?? 0).toLocaleString()} BUs`, "BU Output"]}
-                    cursor={{ fill: "rgba(255,255,255,0.04)" }}
                   />
-                  <Bar
+                  <Line
+                    type="monotone"
                     dataKey="totalBU"
                     name="BU Output"
-                    radius={[2, 2, 0, 0]}
-                    barSize={Math.min(64, Math.max(8, Math.round(480 / Math.max(1, buRows.length))))}
-                  >
-                    {buRows.map((entry, index) => (
-                      <Cell key={`bu-${index}`} fill={entry.barColor} />
-                    ))}
-                  </Bar>
-                </BarChart>
+                    stroke="#22d3ee"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
+                  />
+                </LineChart>
               </ResponsiveContainer>
             )}
           </ChartCard>
