@@ -338,7 +338,7 @@ export default function ShiftAnalytics({
         if (bu !== null && bu !== undefined && bu > bestBu) { bestBu = bu; bestCrew = crew; }
       }
       return { code, perCrew, avgAll, bestCrew };
-    }).sort((a, b) => b.avgAll - a.avgAll);
+    }).sort((a, b) => a.code.localeCompare(b.code, undefined, { numeric: true }));
   }, [annotated, crewsInData]);
 
   // ── Table BU min/max for gradient scaling ──
@@ -539,7 +539,7 @@ export default function ShiftAnalytics({
           <div>
             <h3 className="text-sm font-semibold text-white">Per Machine Breakdown</h3>
             <p className="text-xs text-gray-500 mt-0.5">
-              All crews ranked by avg BU
+              All crews, sorted alphabetically
             </p>
           </div>
           <div className="flex items-center gap-2">
