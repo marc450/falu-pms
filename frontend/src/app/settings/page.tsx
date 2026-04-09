@@ -1442,9 +1442,6 @@ function ShiftsTab() {
   return (
     <div className="space-y-5">
 
-      {/* ── Row 1: Teams + Factory Location + Shift Mechanics ── */}
-      <div className="grid grid-cols-3 gap-5">
-
       {/* ── Shift teams ─────────────────────────────────── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
         <div className="bg-gray-800 px-5 py-3 border-b border-gray-700">
@@ -1481,12 +1478,7 @@ function ShiftsTab() {
         </div>
       </div>
 
-        <FactoryTimezoneCard />
-        <ShiftMechanicsCard teams={config.teams} />
-      </div>{/* end row 1 */}
-
-      {/* ── Row 2: Shift Structure + Downtime Alerts side by side ── */}
-      <div className="grid grid-cols-2 gap-5">
+      <FactoryTimezoneCard />
 
       {/* ── PLC Shift Structure ──────────────────────────── */}
       <div className={`bg-gray-800/50 border rounded-lg overflow-hidden ${slotsDirty ? "border-amber-500/60" : "border-gray-700"}`}>
@@ -1636,8 +1628,8 @@ function ShiftsTab() {
         </div>
       </div>
 
-        <DowntimeAlertsCard />
-      </div>{/* end row 2 */}
+      <ShiftMechanicsCard teams={config.teams} />
+      <DowntimeAlertsCard />
 
       {/* ── Monthly calendar — full width ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
