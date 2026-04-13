@@ -65,6 +65,17 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+/**
+ * PLC timestamps are set by hand on the machine and may drift from real time.
+ * This helper rejects sentinel values like the PLC's "null" (epoch-zero
+ * 1969-12-31T23:00:00.00Z) and any obviously wrong date before 2020.
+ */
+function isValidPlcTimestamp(ts) {
+  if (!ts) return false;
+  const d = new Date(ts);
+  return !isNaN(d.getTime()) && d.getFullYear() >= 2020;
+}
+
 // ============================================
 // IN-MEMORY STATE
 // ============================================
@@ -276,23 +287,28 @@ async function handleShiftMessage(payload) {
   currentCrew = resolveCurrentCrew() || null;
 
   // ── Status transition detection — update statusSince for the badge timer ──
+  // All timestamps come from the PLC clock (data.Timestamp). The PLC clock is
+  // set by hand and may drift from real time, but we use it consistently so
+  // that durations (idle time, error time) are always self-consistent.
   const prevStatus = (m.machineStatus?.Status || "").toLowerCase();
   const nextStatus = (data.Status || "offline").toLowerCase();
+  const plcNow = isValidPlcTimestamp(data.Timestamp) ? data.Timestamp : new Date().toISOString();
   if (prevStatus !== nextStatus) {
-    m.statusSince = new Date().toISOString();
+    m.statusSince = plcNow;
     logger.info(`Status change for ${machineCode}: ${prevStatus || "(none)"}→${nextStatus} at ${m.statusSince}`);
   }
   // Trust the authoritative episode-start timestamps from the PLC.
-  // ErrorSince / IdleSince are ISO timestamps indicating when the current
-  // episode started. This corrects a stale statusSince caused by the bridge
-  // missing a status-change message while it was offline or reconnecting.
-  if (nextStatus === "error" && data.ErrorSince) {
+  // ErrorSince / IdleSince indicate when the current episode started.
+  // This corrects a stale statusSince caused by the bridge missing a
+  // status-change message while it was offline or reconnecting.
+  // The PLC sends epoch-zero (~1969) as a "null" sentinel — ignore those.
+  if (nextStatus === "error" && isValidPlcTimestamp(data.ErrorSince)) {
     m.statusSince = data.ErrorSince;
-  } else if (nextStatus === "idle" && data.IdleSince) {
+  } else if (nextStatus === "idle" && isValidPlcTimestamp(data.IdleSince)) {
     m.statusSince = data.IdleSince;
   }
   if (!m.statusSince) {
-    m.statusSince = new Date().toISOString();
+    m.statusSince = plcNow;
   }
 
   // ── Clear active error codes when machine returns to running ──────────────
@@ -302,13 +318,13 @@ async function handleShiftMessage(payload) {
   if (nextStatus === "running") {
     // Close all open error_event rows for this machine
     if (m.openErrorEvents && Object.keys(m.openErrorEvents).length > 0) {
-      const now = new Date();
-      const crew = resolveCurrentCrew() || "Unassigned";
+      const plcEnd = new Date(plcNow);
+      const crew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
       for (const [errCode, eventId] of Object.entries(m.openErrorEvents)) {
         const { data: ev } = await supabase.from("error_events").select("started_at").eq("id", eventId).single();
-        const durationSecs = ev ? Math.round((now.getTime() - new Date(ev.started_at).getTime()) / 1000) : 0;
+        const durationSecs = ev ? Math.round((plcEnd.getTime() - new Date(ev.started_at).getTime()) / 1000) : 0;
         await supabase.from("error_events").update({
-          ended_at: now.toISOString(),
+          ended_at: plcEnd.toISOString(),
           duration_secs: durationSecs,
         }).eq("id", eventId);
         // Add to shift aggregation (keyed by crew name)
