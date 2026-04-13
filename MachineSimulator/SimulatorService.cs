@@ -221,7 +221,7 @@ namespace MachineSimulator
                 return;
             }
 
-            // Status == "run"
+            // Status == "running"
             var s = m.GetShift(m.ActShift);
             s.ProductionTime++;
 

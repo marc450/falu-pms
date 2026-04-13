@@ -409,7 +409,7 @@ function initMachine(uid) {
     name:             uid,         // numeric UID — what the PLC sends as "Machine"
     displayName,                   // human-readable name (for local logging only)
     type,
-    status:           "run",
+    status:           "running",
     activeShift:      shiftNumber,
     errorEndMin:      null,
     cleaningStartMin: assignCleaningStart(),
@@ -454,7 +454,7 @@ function simulateTick(machine, elapsedMin) {
   } else if (isIdle) {
     status = "idle";
   } else {
-    status = "run";
+    status = "running";
     // Only roll for a new error when freely running (not during idle)
     if (Math.random() < ERROR_PROB_TICK) {
       machine.errorEndMin = elapsedMin + pickErrorDuration();
@@ -468,7 +468,7 @@ function simulateTick(machine, elapsedMin) {
   else                         shift.productionTime += TICK_MIN;
 
   // ── Speed and production (running only) ──────────────────────────────
-  if (status === "run") {
+  if (status === "running") {
 
     // Speed tier management
     if (elapsedMin >= machine.tierLockedUntil) {
@@ -524,7 +524,7 @@ function simulateTick(machine, elapsedMin) {
 function publishCombinedShift(client, machine, shiftNum, save = false) {
   const shift = machine.shifts[shiftNum];
   if (!shift) return;
-  const isRunning = machine.status === "run";
+  const isRunning = machine.status === "running";
   const msg = {
     Machine:                machine.name,   // numeric UID
     Status:                 machine.status,

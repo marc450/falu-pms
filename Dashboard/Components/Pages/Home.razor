@@ -74,7 +74,7 @@
                             @{
                                 var st = (entry.MachineStatus?.Status ?? "offline").ToLower();
                                 var since = entry.StatusSince;
-                                var showTimer = st != "run" && since > DateTime.MinValue;
+                                var showTimer = st != "running" && since > DateTime.MinValue;
                             }
                             <span class="badge @GetStatusBadgeClass(entry.MachineStatus?.Status)">
                                 @(entry.MachineStatus?.Status ?? "offline")
@@ -294,7 +294,7 @@
     {
         return status?.ToLower() switch
         {
-            "run" => "bg-success",       // green
+            "running" => "bg-success",   // green
             "idle" => "bg-dark",         // black
             "error" => "bg-danger",      // red
             "offline" => "bg-secondary", // grey

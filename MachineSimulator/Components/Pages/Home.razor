@@ -93,8 +93,8 @@
                         <div class="d-flex align-items-center mb-2 gap-2">
                             <small class="text-muted" style="min-width:55px">Status:</small>
                             <div class="btn-group flex-fill">
-                                <button class="btn btn-sm @(machine.Status=="run"?"btn-success":"btn-outline-success")"
-                                        @onclick='() => Sim.SetStatus(machine,"run")'>
+                                <button class="btn btn-sm @(machine.Status=="running"?"btn-success":"btn-outline-success")"
+                                        @onclick='() => Sim.SetStatus(machine,"running")'>
                                     <i class="bi bi-play-fill"></i> Run
                                 </button>
                                 <button class="btn btn-sm @(machine.Status=="idle"?"btn-secondary":"btn-outline-secondary")"
@@ -265,15 +265,15 @@
 
     private string GetStatusBadge(string status) => status switch
     {
-        "run"   => "bg-success",
-        "idle"  => "bg-secondary",
-        "error" => "bg-danger",
-        _       => "bg-secondary"
+        "running" => "bg-success",
+        "idle"    => "bg-secondary",
+        "error"   => "bg-danger",
+        _         => "bg-secondary"
     };
 
     private string GetHeaderClass(string status) => status switch
     {
-        "run"   => "border-bottom border-success",
+        "running" => "border-bottom border-success",
         "idle"  => "border-bottom border-secondary",
         "error" => "border-bottom border-danger",
         _       => ""

@@ -299,7 +299,7 @@ async function handleShiftMessage(payload) {
   // The PLC sends Status/<type> Status:"Error" before sending Error/<type> codes.
   // When the machine recovers, it sends Status/<type> Status:"Running" — at that
   // point all error codes are resolved.
-  if (nextStatus === "running" || nextStatus === "run") {
+  if (nextStatus === "running") {
     // Close all open error_event rows for this machine
     if (m.openErrorEvents && Object.keys(m.openErrorEvents).length > 0) {
       const now = new Date();
@@ -387,7 +387,7 @@ async function handleShiftMessage(payload) {
       machine_id: machineId,
       machine_code: machineCode,
       shift_crew: crew,
-      status: (data.Status || "run").toLowerCase(),
+      status: (data.Status || "running").toLowerCase(),
       speed: data.Speed || 0,
       production_time:           data.ProductionTime          || 0,
       idle_time:                 data.IdleTime                || 0,  // seconds, from PLC

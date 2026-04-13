@@ -248,7 +248,7 @@ function ErrorBadgeCell({ status, m, now, errorLookup }: { status: ReturnType<ty
       >
         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
         {formatStatus(m.machineStatus?.Status)}
-        {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run" && m.machineStatus?.Status?.toLowerCase() !== "running") && (
+        {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "running") && (
           <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince, now)}</span>
         )}
       </span>
@@ -455,7 +455,7 @@ function CellSection({
   let scrapGoodSum = 0, scrapGoodCount = 0, scrapMedSum = 0, scrapMedCount = 0;
   for (const m of machines) {
     const s = m.machineStatus?.Status?.toLowerCase();
-    const isRunning = s === "run" || s === "running";
+    const isRunning = s === "running";
     const isOffline = s === "offline" || !s;
     if (isRunning) running++;
     // Uptime: use corrected efficiency (planned idle excluded from denominator)
@@ -723,7 +723,7 @@ function ParkSummaryTiles({
   let floorProjected = 0, floorTarget = 0, floorMediocreTarget = 0;
   for (const m of all) {
     const s = m.machineStatus?.Status?.toLowerCase();
-    const isRunning = s === "run" || s === "running";
+    const isRunning = s === "running";
     if (isRunning) running++;
     const corrEff = calcCorrectedEfficiency(m, plannedDowntimeMins);
     if (corrEff !== null) { effSum += corrEff; effCount++; }

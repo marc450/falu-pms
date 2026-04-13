@@ -28,7 +28,6 @@ export function getStatusColor(status?: string): {
   dot: string;
 } {
   switch (status?.toLowerCase()) {
-    case "run":
     case "running":
       return { bg: "bg-green-900/30", text: "text-green-400", dot: "bg-green-400" };
     case "idle":
@@ -45,7 +44,6 @@ export function getStatusColor(status?: string): {
  */
 export function formatStatus(status?: string): string {
   switch (status?.toLowerCase()) {
-    case "run":
     case "running":  return "Running";
     case "idle":     return "Idle";
     case "error":    return "Error";
