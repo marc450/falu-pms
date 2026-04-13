@@ -248,7 +248,7 @@ function ErrorBadgeCell({ status, m, now, errorLookup }: { status: ReturnType<ty
       >
         <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
         {formatStatus(m.machineStatus?.Status)}
-        {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run") && (
+        {m.statusSince && (m.machineStatus?.Status?.toLowerCase() !== "run" && m.machineStatus?.Status?.toLowerCase() !== "running") && (
           <span className="opacity-70 font-normal">{formatStateDuration(m.statusSince, now)}</span>
         )}
       </span>

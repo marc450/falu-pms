@@ -29,6 +29,7 @@ export function getStatusColor(status?: string): {
 } {
   switch (status?.toLowerCase()) {
     case "run":
+    case "running":
       return { bg: "bg-green-900/30", text: "text-green-400", dot: "bg-green-400" };
     case "idle":
       return { bg: "bg-slate-700/50", text: "text-slate-300", dot: "bg-slate-400" };
@@ -44,10 +45,11 @@ export function getStatusColor(status?: string): {
  */
 export function formatStatus(status?: string): string {
   switch (status?.toLowerCase()) {
-    case "run":    return "Running";
-    case "idle":   return "Idle";
-    case "error":  return "Error";
-    case "offline": return "Offline";
-    default:       return "Offline";
+    case "run":
+    case "running":  return "Running";
+    case "idle":     return "Idle";
+    case "error":    return "Error";
+    case "offline":  return "Offline";
+    default:         return "Offline";
   }
 }
