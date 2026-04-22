@@ -34,11 +34,20 @@ UPDATE machines
 --    Three FK tables do not cascade (hourly_analytics, daily_machine_summary,
 --    downtime_alerts), so we clear their rows first. shift_readings,
 --    error_events and error_shift_summary have ON DELETE CASCADE and will
---    clear automatically.
-DELETE FROM hourly_analytics       WHERE machine_id IN (SELECT id FROM machines WHERE machine_code = '+11665');
-DELETE FROM daily_machine_summary  WHERE machine_id IN (SELECT id FROM machines WHERE machine_code = '+11665');
-DELETE FROM downtime_alerts        WHERE machine_id IN (SELECT id FROM machines WHERE machine_code = '+11665');
-DELETE FROM machines WHERE machine_code = '+11665';
+--    clear automatically. Each table is checked with to_regclass so the
+--    migration works even if some later migrations have not been applied.
+DO $$
+DECLARE
+  ghost_id uuid;
+BEGIN
+  SELECT id INTO ghost_id FROM machines WHERE machine_code = '+11665';
+  IF ghost_id IS NOT NULL THEN
+    IF to_regclass('public.hourly_analytics')      IS NOT NULL THEN EXECUTE 'DELETE FROM hourly_analytics      WHERE machine_id = $1' USING ghost_id; END IF;
+    IF to_regclass('public.daily_machine_summary') IS NOT NULL THEN EXECUTE 'DELETE FROM daily_machine_summary WHERE machine_id = $1' USING ghost_id; END IF;
+    IF to_regclass('public.downtime_alerts')       IS NOT NULL THEN EXECUTE 'DELETE FROM downtime_alerts       WHERE machine_id = $1' USING ghost_id; END IF;
+    DELETE FROM machines WHERE id = ghost_id;
+  END IF;
+END $$;
 
 -- 4. Re-add the CHECK constraint with the canonical status set
 ALTER TABLE machines
