@@ -558,7 +558,7 @@ function MachineChip({
       onDragStart={isRenaming ? undefined : onDragStart}
       onDragEnd={isRenaming ? undefined : onDragEnd}
       onDragOver={isRenaming ? undefined : onChipDragOver}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium select-none transition-all ${
+      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium select-none transition-all max-w-[220px] ${
         isDragging
           ? "opacity-30 cursor-grabbing bg-gray-600 text-gray-400 border border-gray-500"
           : isRenaming
@@ -591,10 +591,10 @@ function MachineChip({
           </button>
         </div>
       ) : (
-        <div className="flex flex-col leading-tight">
-          <span className="text-white font-medium">{displayName}</span>
+        <div className="flex flex-col leading-tight min-w-0">
+          <span className="text-white font-medium truncate" title={displayName}>{displayName}</span>
           {hasCustomName && (
-            <span className="text-gray-500 text-xs font-normal">{code}</span>
+            <span className="text-gray-500 text-xs font-normal truncate">{code}</span>
           )}
         </div>
       )}
