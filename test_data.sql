@@ -218,12 +218,12 @@ BEGIN
 
           INSERT INTO shift_readings (
             machine_id, shift_number, recorded_at,
-            production_time, idle_time,
+            production_time_seconds, idle_time_seconds,
             cotton_tears, missing_sticks, faulty_pickups, other_errors,
             produced_swabs, packaged_swabs,
             produced_boxes, produced_boxes_layer_plus,
             discarded_swabs,
-            efficiency, reject_rate,
+            efficiency, scrap_rate,
             save_flag
           ) VALUES (
             m_id, s, rec_at,
@@ -240,12 +240,12 @@ BEGIN
 
         INSERT INTO saved_shift_logs (
           machine_id, machine_code, shift_number,
-          production_time, idle_time,
+          production_time_seconds, idle_time_seconds,
           cotton_tears, missing_sticks, faulty_pickups, other_errors,
           produced_swabs, packaged_swabs,
           produced_boxes, produced_boxes_layer_plus,
           discarded_swabs,
-          efficiency, reject_rate,
+          efficiency, scrap_rate,
           saved_at
         ) VALUES (
           m_id, COALESCE(machine_codes[m_idx], 'CB-XX'), s,

@@ -121,12 +121,15 @@ function ProductionContent() {
 
   // Derive bridge-tracked error minutes for the active shift (completed stints
   // plus the current ongoing stint if the machine is in error state).
+  // errorTimeSeconds comes from the bridge in seconds; convert to minutes to
+  // match the unit of currentStint (ms / 60000 = minutes).
   const activeShiftErrorMins = (() => {
     const st = (machine?.machineStatus?.Status || "").toLowerCase();
     const currentStint = machine?.statusSince
       ? Math.max(0, (Date.now() - machine.statusSince) / 60000)
       : 0;
-    return (machine?.errorTimeCalc ?? 0) + (st === "error" ? currentStint : 0);
+    const completedMins = (machine?.errorTimeSeconds ?? 0) / 60;
+    return completedMins + (st === "error" ? currentStint : 0);
   })();
 
   // Build a unified ShiftDataMessage for a given crew:
@@ -157,8 +160,8 @@ function ProductionContent() {
     if (!log) return undefined;
     return {
       Shift:                  0,
-      ProductionTime:         log.production_time,
-      IdleTime:               log.idle_time,
+      ProductionTime:         log.production_time_seconds,
+      IdleTime:               log.idle_time_seconds,
       ProducedSwabs:          log.produced_swabs,
       PackagedSwabs:          log.packaged_swabs,
       DiscardedSwabs:         log.discarded_swabs,
@@ -168,8 +171,8 @@ function ProductionContent() {
       MissingSticks:          log.missing_sticks,
       FoultyPickups:          log.faulty_pickups,
       OtherErrors:            log.other_errors,
-      Efficiency:             correctedEfficiency(log.production_time, log.idle_time),
-      Reject:                 log.reject_rate,
+      Efficiency:             correctedEfficiency(log.production_time_seconds, log.idle_time_seconds),
+      Reject:                 log.scrap_rate,
     };
   };
 

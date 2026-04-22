@@ -138,7 +138,7 @@ function getSubscribeTopics() {
 async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
-    .select("id, machine_code, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, status_since, idle_time_calc, error_time_calc, active_error_codes")
+    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, status_since, idle_time_seconds, error_time_seconds, active_error_codes")
     .eq("hidden", false)
     .order("machine_code");
 
@@ -159,17 +159,17 @@ async function loadRegisteredMachines() {
           Status: row.status || "offline",
           Speed: row.speed || 0,
           Shift: row.active_shift || 0,
-          ProducedSwabs: row.current_swaps || 0,
+          ProducedSwabs: row.current_swabs || 0,
           ProducedBoxes: row.current_boxes || 0,
           Efficiency: row.current_efficiency || 0,
-          Reject: row.current_reject || 0,
+          Reject: row.current_scrap_rate || 0,
         },
         lastSync: row.last_sync_status || row.last_sync_shift || null,
         // Restore the actual transition time so the status badge shows correctly.
         statusSince: row.status_since || new Date().toISOString(),
         // Restore idle/error time so the REST API exposes them before the first MQTT tick.
-        idleTimeCalc:  row.idle_time_calc  || 0,
-        errorTimeCalc: row.error_time_calc || 0,
+        idleTimeSeconds:  row.idle_time_seconds  || 0,
+        errorTimeSeconds: row.error_time_seconds || 0,
         // Restore active error codes so the dashboard continues showing them after restart.
         activeErrors: Array.isArray(row.active_error_codes) ? row.active_error_codes : [],
         // Timestamp of last downtime alert sent for this machine (null = never)
@@ -377,25 +377,25 @@ async function handleShiftMessage(payload) {
     error_message: null, // errors come via Error/<type>; active codes tracked in active_error_codes
     active_shift: data.Shift || 1,
     speed: data.Speed || 0,
-    current_swaps: data.ProducedSwabs || 0,
+    current_swabs: data.ProducedSwabs || 0,
     current_boxes: data.ProducedBoxes || 0,
     current_efficiency: data.Efficiency || 0,
-    current_reject: data.Reject || 0,
+    current_scrap_rate: data.Reject || 0,
     last_sync_status: now,
     hidden: false,
-    // PLC is the authoritative source for idle/error time (seconds, converted to minutes).
+    // PLC is the authoritative source for idle/error time (seconds).
     // These reset automatically when the PLC reports a shift change.
-    status_since:    m.statusSince || now,
-    idle_time_calc:  Math.round((data.IdleTime  || 0) / 60),
-    error_time_calc: Math.round((data.ErrorTime || 0) / 60),
+    status_since:       m.statusSince || now,
+    idle_time_seconds:  Math.round(data.IdleTime  || 0),
+    error_time_seconds: Math.round(data.ErrorTime || 0),
     // Persist active error codes so they survive a bridge restart.
     active_error_codes: m.activeErrors || [],
   };
 
-  // Mirror the derived minute values onto the in-memory object so the REST
+  // Mirror the PLC seconds values onto the in-memory object so the REST
   // API (/api/machines) exposes them and the dashboard can read them directly.
-  m.idleTimeCalc  = Math.round((data.IdleTime  || 0) / 60);
-  m.errorTimeCalc = Math.round((data.ErrorTime || 0) / 60);
+  m.idleTimeSeconds  = Math.round(data.IdleTime  || 0);
+  m.errorTimeSeconds = Math.round(data.ErrorTime || 0);
   await supabase
     .from("machines")
     .update(updatePayload)
@@ -415,9 +415,9 @@ async function handleShiftMessage(payload) {
       shift_crew: crew,
       status: (data.Status || "running").toLowerCase(),
       speed: data.Speed || 0,
-      production_time:           data.ProductionTime          || 0,
-      idle_time:                 data.IdleTime                || 0,  // seconds, from PLC
-      error_time:                data.ErrorTime               || 0,  // seconds, from PLC
+      production_time_seconds:   data.ProductionTime          || 0,  // seconds, from PLC
+      idle_time_seconds:         data.IdleTime                || 0,  // seconds, from PLC
+      error_time_seconds:        data.ErrorTime               || 0,  // seconds, from PLC
       cotton_tears:              data.CottonTears             || 0,
       missing_sticks:            data.MissingSticks           || 0,
       faulty_pickups:            data.FoultyPickups           || 0,  // PLC typo preserved
@@ -428,7 +428,7 @@ async function handleShiftMessage(payload) {
       produced_boxes_layer_plus: data.ProducedBoxesLayerPlus  || 0,
       discarded_swabs:           data.DisgardedSwabs          || 0,  // PLC typo preserved
       efficiency:                data.Efficiency              || 0,
-      reject_rate:               data.Reject                  || 0,
+      scrap_rate:                data.Reject                  || 0,
       save_flag:                 data.Save                    || false,
       raw_payload: data,
       plc_timestamp: data.Timestamp ? new Date(data.Timestamp).toISOString() : null,
@@ -472,9 +472,9 @@ async function handleShiftMessage(payload) {
       machine_id:               machineId,
       machine_code:             machineCode,
       shift_crew:               saveCrew,
-      production_time:          Math.round(data.ProductionTime  || 0),
-      idle_time:                Math.round(data.IdleTime        || 0),
-      error_time:               Math.round(data.ErrorTime        || 0),  // seconds, from PLC
+      production_time_seconds:  Math.round(data.ProductionTime  || 0),  // seconds, from PLC
+      idle_time_seconds:        Math.round(data.IdleTime        || 0),  // seconds, from PLC
+      error_time_seconds:       Math.round(data.ErrorTime       || 0),  // seconds, from PLC
       cotton_tears:             data.CottonTears               || 0,
       missing_sticks:           data.MissingSticks             || 0,
       faulty_pickups:           data.FoultyPickups             || 0,
@@ -485,7 +485,7 @@ async function handleShiftMessage(payload) {
       produced_boxes_layer_plus: data.ProducedBoxesLayerPlus   || 0,
       discarded_swabs:          data.DisgardedSwabs            || 0,  // PLC typo preserved
       efficiency:               data.Efficiency                || 0,
-      reject_rate:              data.Reject                    || 0,
+      scrap_rate:               data.Reject                    || 0,
     });
   }
 

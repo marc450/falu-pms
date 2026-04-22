@@ -42,7 +42,7 @@ type DashboardMachine = MachineData & {
   speedTarget?: number | null;
   /** User-defined display name (from machines.name). Falls back to machine_code. */
   displayName?: string;
-  // statusSince, idleTimeCalc, errorTimeCalc, activeErrors inherited from MachineData
+  // statusSince, idleTimeSeconds, errorTimeSeconds, activeErrors inherited from MachineData
 };
 
 function formatStateDuration(sinceMs: number, nowMs: number): string {
@@ -136,13 +136,14 @@ function calcCorrectedEfficiency(m: DashboardMachine, plannedDowntimeMinutes: nu
 }
 
 // The bridge accumulates idle/error time on every MQTT tick (every 5 s) and
-// saves the running totals directly to machines.idle_time_calc /
-// error_time_calc.  They are reset only when the PLC reports a shift change.
-// The frontend just reads the stored values — no need to add a current stint.
+// saves the running totals directly to machines.idle_time_seconds /
+// error_time_seconds.  They are reset only when the PLC reports a shift change.
+// DB stores seconds; we divide by 60 here to present minutes to the rest of
+// the dashboard (unchanged display semantics vs. the previous _calc columns).
 function calcIdleErrorTime(m: DashboardMachine, _now: number): { idleMins: number; errorMins: number } {
   return {
-    idleMins:  m.idleTimeCalc  ?? 0,
-    errorMins: m.errorTimeCalc ?? 0,
+    idleMins:  Math.round((m.idleTimeSeconds  ?? 0) / 60),
+    errorMins: Math.round((m.errorTimeSeconds ?? 0) / 60),
   };
 }
 
@@ -1029,9 +1030,9 @@ export default function Dashboard() {
         // to Supabase, so the timer survives page reloads and bridge restarts.
         const isoSince = (live as any).statusSince as string | undefined;
         const statusSince = isoSince ? new Date(isoSince).getTime() : Date.now();
-        const idleTimeCalc  = (live as any).idleTimeCalc  as number | undefined;
-        const errorTimeCalc = (live as any).errorTimeCalc as number | undefined;
-        const activeErrors  = (live as any).activeErrors  as number[] | undefined;
+        const idleTimeSeconds  = (live as any).idleTimeSeconds  as number | undefined;
+        const errorTimeSeconds = (live as any).errorTimeSeconds as number | undefined;
+        const activeErrors     = (live as any).activeErrors     as number[] | undefined;
 
         merged[code] = {
           ...live,
@@ -1047,9 +1048,9 @@ export default function Dashboard() {
           speedTarget:       merged[code]?.speedTarget ?? null,
           displayName:       displayNames[code] ?? code,
           statusSince,
-          idleTimeCalc:  idleTimeCalc  ?? 0,
-          errorTimeCalc: errorTimeCalc ?? 0,
-          activeErrors:  activeErrors  ?? [],
+          idleTimeSeconds:  idleTimeSeconds  ?? 0,
+          errorTimeSeconds: errorTimeSeconds ?? 0,
+          activeErrors:     activeErrors     ?? [],
         };
       }
       machinesRef.current = merged;

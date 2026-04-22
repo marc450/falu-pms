@@ -79,10 +79,10 @@ export interface MachineData {
   lastRequestShift?: string;
   /** Unix ms timestamp of the last status transition (from bridge). */
   statusSince?: number;
-  /** Idle time in minutes for current shift — PLC-provided, converted from seconds. */
-  idleTimeCalc?: number;
-  /** Error time in minutes for current shift — PLC-provided, converted from seconds. */
-  errorTimeCalc?: number;
+  /** Idle time in seconds for current shift — PLC-provided. Divide by 60 at display time. */
+  idleTimeSeconds?: number;
+  /** Error time in seconds for current shift — PLC-provided. Divide by 60 at display time. */
+  errorTimeSeconds?: number;
   /** Active PLC error codes for this machine (cleared when machine returns to Running). */
   activeErrors?: number[];
 }
@@ -121,10 +121,10 @@ export interface RegisteredMachine {
   error_message: string | null;
   active_shift: number | null;
   speed: number | null;
-  current_swaps: number | null;
+  current_swabs: number | null;
   current_boxes: number | null;
   current_efficiency: number | null;
-  current_reject: number | null;
+  current_scrap_rate: number | null;
   last_sync_status: string | null;
   last_sync_shift: string | null;
   cell_id: string | null;
@@ -144,7 +144,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "id, machine_code, name, packing_format, status, error_message, active_shift, speed, current_swaps, current_boxes, current_efficiency, current_reject, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
+      "id, machine_code, name, packing_format, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
     )
     .eq("hidden", false)
     .order("machine_code");
@@ -162,10 +162,10 @@ export interface MachineLiveData {
   error_message: string | null;
   active_shift: number | null;
   speed: number | null;
-  current_swaps: number | null;   // DB column is current_swaps (legacy typo)
+  current_swabs: number | null;
   current_boxes: number | null;
   current_efficiency: number | null;
-  current_reject: number | null;
+  current_scrap_rate: number | null;
   last_sync_status: string | null;
   last_sync_shift: number | null;
 }
@@ -176,7 +176,7 @@ export async function fetchMachineLiveData(): Promise<MachineLiveData[]> {
     .from("machines")
     .select(
       "id, machine_code, status, error_message, active_shift, speed, " +
-      "current_swaps, current_boxes, current_efficiency, current_reject, " +
+      "current_swabs, current_boxes, current_efficiency, current_scrap_rate, " +
       "last_sync_status, last_sync_shift"
     )
     .eq("hidden", false)
@@ -460,7 +460,7 @@ export interface DateRange {
 export interface FleetTrendRow {
   date: string;        // "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH" (hourly)
   avgUptime: number;   // avg efficiency % across all machines in bucket (0 for idle hours)
-  avgScrap: number;    // avg reject_rate % across all machines in bucket (0 for idle hours)
+  avgScrap: number;    // avg scrap_rate % across all machines in bucket (0 for idle hours)
   totalBoxes: number;  // sum of per-(machine_id, shift_crew) MAX produced_boxes
   totalSwabs: number;  // sum of per-(machine_id, shift_crew) MAX produced_swabs
   machineCount: number;// unique machines with readings in bucket
@@ -874,8 +874,8 @@ export async function saveShiftConfig(config: ShiftConfig): Promise<void> {
 
 export interface SavedShiftLog {
   shift_crew:               string | null;
-  production_time:          number;
-  idle_time:                number;
+  production_time_seconds:  number;
+  idle_time_seconds:        number;
   cotton_tears:             number;
   missing_sticks:           number;
   faulty_pickups:           number;
@@ -886,7 +886,7 @@ export interface SavedShiftLog {
   produced_boxes_layer_plus: number;
   discarded_swabs:          number;
   efficiency:               number;
-  reject_rate:              number;
+  scrap_rate:               number;
   saved_at:                 string;
 }
 
@@ -898,7 +898,7 @@ export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShi
   const sb = getSupabase();
   const { data, error } = await sb
     .from("saved_shift_logs")
-    .select("shift_crew, production_time, idle_time, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, reject_rate, saved_at")
+    .select("shift_crew, production_time_seconds, idle_time_seconds, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, scrap_rate, saved_at")
     .eq("machine_code", machineCode)
     .order("saved_at", { ascending: false })
     .limit(20); // grab recent rows then deduplicate by shift_crew in JS
@@ -1027,7 +1027,7 @@ export async function fetchMachineShiftSummary(range: DateRange, _slots: TimeSlo
 
   const logsResult = await sb
     .from("saved_shift_logs")
-    .select("machine_id, machine_code, shift_crew, production_time, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
+    .select("machine_id, machine_code, shift_crew, production_time_seconds, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
     .gte("saved_at", range.start.toISOString())
     .lte("saved_at", range.end.toISOString())
     .order("saved_at", { ascending: false });
@@ -1060,7 +1060,7 @@ export async function fetchMachineShiftSummary(range: DateRange, _slots: TimeSlo
     const b = map.get(key)!;
     b.swabs        += Number(row.produced_swabs)  || 0;
     b.boxes        += Number(row.produced_boxes)  || 0;
-    b.prodTimeSecs += Number(row.production_time) || 0;
+    b.prodTimeSecs += Number(row.production_time_seconds) || 0;
     b.discarded    += Number(row.discarded_swabs) || 0;
     const eff = Number(row.efficiency);
     if (eff > 0) { b.effSum += eff; b.effCount += 1; }
