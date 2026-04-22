@@ -223,7 +223,17 @@ async function restoreNotificationTimestamps() {
 // ============================================
 // MACHINE ID RESOLUTION
 // ============================================
+// Only numeric machine codes are valid. Anything else is either a malformed
+// MQTT payload or a wildcard character leaking in from a topic (e.g. '+'),
+// and must never be auto-registered as a new machine row.
+const VALID_MACHINE_CODE = /^\d{4,6}$/;
+
 async function getMachineId(machineCode) {
+  if (!machineCode || typeof machineCode !== "string" || !VALID_MACHINE_CODE.test(machineCode)) {
+    logger.warn(`Rejecting invalid machine_code: ${JSON.stringify(machineCode)}`);
+    return null;
+  }
+
   if (machineIdCache[machineCode]) return machineIdCache[machineCode];
 
   const { data, error } = await supabase
@@ -233,7 +243,7 @@ async function getMachineId(machineCode) {
     .single();
 
   if (error || !data) {
-    // Auto-register
+    // Auto-register (only reached for well-formed numeric codes)
     const { data: newMachine, error: insertErr } = await supabase
       .from("machines")
       .insert({ machine_code: machineCode, name: machineCode })
