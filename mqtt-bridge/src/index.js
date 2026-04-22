@@ -138,7 +138,7 @@ function getSubscribeTopics() {
 async function loadRegisteredMachines() {
   const { data, error } = await supabase
     .from("machines")
-    .select("id, machine_code, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, status_since, idle_time_seconds, error_time_seconds, active_error_codes")
+    .select("id, machine_code, status, error_message, plc_shift_slot, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, status_since, idle_time_seconds, error_time_seconds, active_error_codes")
     .eq("hidden", false)
     .order("machine_code");
 
@@ -158,7 +158,7 @@ async function loadRegisteredMachines() {
           Machine: code,
           Status: row.status || "offline",
           Speed: row.speed || 0,
-          Shift: row.active_shift || 0,
+          Shift: row.plc_shift_slot || 0,
           ProducedSwabs: row.current_swabs || 0,
           ProducedBoxes: row.current_boxes || 0,
           Efficiency: row.current_efficiency || 0,
@@ -375,7 +375,7 @@ async function handleShiftMessage(payload) {
   const updatePayload = {
     status: nextStatus,
     error_message: null, // errors come via Error/<type>; active codes tracked in active_error_codes
-    active_shift: data.Shift || 1,
+    plc_shift_slot: data.Shift || 1,
     speed: data.Speed || 0,
     current_swabs: data.ProducedSwabs || 0,
     current_boxes: data.ProducedBoxes || 0,

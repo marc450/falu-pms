@@ -119,7 +119,7 @@ export interface RegisteredMachine {
   packing_format: PackingFormat | null;
   status: string | null;
   error_message: string | null;
-  active_shift: number | null;
+  plc_shift_slot: number | null;
   speed: number | null;
   current_swabs: number | null;
   current_boxes: number | null;
@@ -144,7 +144,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "id, machine_code, name, packing_format, status, error_message, active_shift, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
+      "id, machine_code, name, packing_format, status, error_message, plc_shift_slot, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
     )
     .eq("hidden", false)
     .order("machine_code");
@@ -160,7 +160,7 @@ export interface MachineLiveData {
   machine_code: string;
   status: string | null;
   error_message: string | null;
-  active_shift: number | null;
+  plc_shift_slot: number | null;
   speed: number | null;
   current_swabs: number | null;
   current_boxes: number | null;
@@ -175,7 +175,7 @@ export async function fetchMachineLiveData(): Promise<MachineLiveData[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "id, machine_code, status, error_message, active_shift, speed, " +
+      "id, machine_code, status, error_message, plc_shift_slot, speed, " +
       "current_swabs, current_boxes, current_efficiency, current_scrap_rate, " +
       "last_sync_status, last_sync_shift"
     )
