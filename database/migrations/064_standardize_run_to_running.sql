@@ -31,6 +31,13 @@ UPDATE machines
  WHERE status = 'run';
 
 -- 3. Delete the ghost row created by the MQTT wildcard '+'
+--    Three FK tables do not cascade (hourly_analytics, daily_machine_summary,
+--    downtime_alerts), so we clear their rows first. shift_readings,
+--    error_events and error_shift_summary have ON DELETE CASCADE and will
+--    clear automatically.
+DELETE FROM hourly_analytics       WHERE machine_id IN (SELECT id FROM machines WHERE machine_code = '+11665');
+DELETE FROM daily_machine_summary  WHERE machine_id IN (SELECT id FROM machines WHERE machine_code = '+11665');
+DELETE FROM downtime_alerts        WHERE machine_id IN (SELECT id FROM machines WHERE machine_code = '+11665');
 DELETE FROM machines WHERE machine_code = '+11665';
 
 -- 4. Re-add the CHECK constraint with the canonical status set
