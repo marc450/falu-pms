@@ -932,13 +932,11 @@ function ShiftAndBUProgress({
 export default function Dashboard() {
   const [machines, setMachines] = useState<Record<string, DashboardMachine>>({});
   const [cells, setCells] = useState<ProductionCell[]>([]);
-  const [mqttConnected, setMqttConnected] = useState(false);
   const [currentShift, setCurrentShift] = useState<number>(0);
   const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
   const [sortAsc, setSortAsc] = useState(true);
   const [currentTime, setCurrentTime] = useState(new Date());
   const [dbError, setDbError] = useState<string | null>(null);
-  const [initialLoading, setInitialLoading] = useState(true);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [shiftConfig, setShiftConfig] = useState<ShiftConfig>(DEFAULT_SHIFT_CONFIG);
   const [todayTeams, setTodayTeams] = useState<(string | null)[]>([]);
@@ -1006,8 +1004,6 @@ export default function Dashboard() {
       const msg = err instanceof Error ? err.message : String(err);
       console.error("Failed to fetch live machine data:", msg);
       setDbError(msg);
-    } finally {
-      setInitialLoading(false);
     }
 
     const config       = machineConfigRef.current;
@@ -1026,7 +1022,6 @@ export default function Dashboard() {
     try {
       const state = await fetchMachines();
       bridgeFailCount.current = 0;
-      setMqttConnected(state.mqttConnected);
       setCurrentShift(state.currentShiftNumber || 0);
       for (const [code, live] of Object.entries(state.machines)) {
         // Read statusSince from bridge (ISO string → unix ms).
@@ -1064,7 +1059,6 @@ export default function Dashboard() {
       // Only show offline after 3 consecutive failed fetches (~6 s).
       // This prevents brief network hiccups from flashing the dashboard.
       if (bridgeFailCount.current >= 3) {
-        setMqttConnected(false);
         machinesRef.current = merged;
         setMachines(merged);
       }
@@ -1163,17 +1157,6 @@ export default function Dashboard() {
             <i className="bi bi-calendar3 mr-1"></i>
             {currentTime.toLocaleString("de-DE")}
           </span>
-          {initialLoading ? (
-            <span className="bg-yellow-600/20 text-yellow-400 text-xs px-3 py-1.5 rounded-full flex items-center gap-1">
-              <span className="inline-block w-2 h-2 bg-yellow-400 rounded-full animate-pulse"></span>
-              Loading...
-            </span>
-          ) : (
-            <span className={`text-xs px-3 py-1.5 rounded-full flex items-center gap-1 ${mqttConnected ? "bg-green-900/30 text-green-400" : "bg-red-900/30 text-red-400"}`}>
-              <i className={`bi bi-${mqttConnected ? "wifi" : "wifi-off"}`}></i>
-              {machineCount} Machines{!mqttConnected && <span className="ml-1">(Bridge offline)</span>}
-            </span>
-          )}
         </div>
       </div>
 
