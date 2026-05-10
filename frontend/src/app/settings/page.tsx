@@ -281,7 +281,7 @@ function MachinesTab() {
         <div key={m.machine_code} className="flex items-center">
           {/* Blue insertion line: appears to the left of the chip when dragging over it */}
           {dropTarget?.cellId === cellId && dropTarget?.beforeCode === m.machine_code && (
-            <div className="w-0.5 h-8 bg-cyan-400 rounded-full mr-1 shrink-0" />
+            <div className="w-0.5 h-14 bg-cyan-400 rounded-full mr-1 shrink-0" />
           )}
           <MachineChip
             code={m.machine_code}
@@ -310,7 +310,7 @@ function MachinesTab() {
       {/* Append-to-end indicator: appears after last chip */}
       {dropTarget?.cellId === cellId && dropTarget?.beforeCode === null &&
        dragging && !chipList.find((m) => m.machine_code === dragging) && (
-        <div className="w-0.5 h-8 bg-cyan-400 rounded-full ml-1 shrink-0" />
+        <div className="w-0.5 h-14 bg-cyan-400 rounded-full ml-1 shrink-0" />
       )}
     </>
   );
@@ -558,7 +558,7 @@ function MachineChip({
       onDragStart={isRenaming ? undefined : onDragStart}
       onDragEnd={isRenaming ? undefined : onDragEnd}
       onDragOver={isRenaming ? undefined : onChipDragOver}
-      className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium select-none transition-all w-[260px] ${
+      className={`flex flex-col gap-1.5 px-3 py-2 rounded-md text-sm font-medium select-none transition-all w-[220px] ${
         isDragging
           ? "opacity-30 cursor-grabbing bg-gray-600 text-gray-400 border border-gray-500"
           : isRenaming
@@ -566,77 +566,79 @@ function MachineChip({
           : "bg-gray-700 text-white border border-gray-600 cursor-grab hover:border-cyan-500 hover:bg-gray-600 active:cursor-grabbing"
       }`}
     >
-      {!isRenaming && <i className="bi bi-grip-vertical text-gray-400 text-xs"></i>}
-      <i className="bi bi-cpu text-cyan-400 text-xs"></i>
+      {/* Top row: drag handle + cpu icon + name (full width) + rename pencil */}
+      <div className="flex items-center gap-1.5 min-w-0">
+        {!isRenaming && <i className="bi bi-grip-vertical text-gray-400 text-xs shrink-0"></i>}
+        <i className="bi bi-cpu text-cyan-400 text-xs shrink-0"></i>
 
-      {/* Name area — inline edit when renaming */}
-      {isRenaming ? (
-        <div className="flex items-center gap-1" onPointerDown={(e) => e.stopPropagation()}>
-          <input
-            ref={renameInputRef}
-            value={renameValue ?? ""}
-            onChange={(e) => onRenameChange?.(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") onRenameConfirm?.();
-              if (e.key === "Escape") onRenameCancel?.();
-            }}
-            className="w-24 text-xs bg-gray-800 border border-cyan-500 rounded px-1.5 py-0.5 text-white outline-none"
-            placeholder={code}
-          />
-          <button onClick={onRenameConfirm} className="text-green-400 hover:text-green-300 transition-colors" title="Save name">
-            <i className="bi bi-check-lg text-xs"></i>
-          </button>
-          <button onClick={onRenameCancel} className="text-gray-500 hover:text-gray-300 transition-colors" title="Cancel">
-            <i className="bi bi-x-lg text-xs"></i>
-          </button>
-        </div>
-      ) : (
-        <div className="flex flex-col leading-tight min-w-0 flex-1">
-          <span className="text-white font-medium truncate" title={displayName}>{displayName}</span>
-          {hasCustomName && (
-            <span className="text-gray-500 text-xs font-normal truncate">{code}</span>
+        {isRenaming ? (
+          <div className="flex items-center gap-1 flex-1 min-w-0" onPointerDown={(e) => e.stopPropagation()}>
+            <input
+              ref={renameInputRef}
+              value={renameValue ?? ""}
+              onChange={(e) => onRenameChange?.(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") onRenameConfirm?.();
+                if (e.key === "Escape") onRenameCancel?.();
+              }}
+              className="flex-1 min-w-0 text-xs bg-gray-800 border border-cyan-500 rounded px-1.5 py-0.5 text-white outline-none"
+              placeholder={code}
+            />
+            <button onClick={onRenameConfirm} className="text-green-400 hover:text-green-300 transition-colors shrink-0" title="Save name">
+              <i className="bi bi-check-lg text-xs"></i>
+            </button>
+            <button onClick={onRenameCancel} className="text-gray-500 hover:text-gray-300 transition-colors shrink-0" title="Cancel">
+              <i className="bi bi-x-lg text-xs"></i>
+            </button>
+          </div>
+        ) : (
+          <>
+            <div className="flex flex-col leading-tight min-w-0 flex-1">
+              <span className="text-white font-medium truncate" title={displayName}>{displayName}</span>
+              {hasCustomName && (
+                <span className="text-gray-500 text-xs font-normal truncate">{code}</span>
+              )}
+            </div>
+            {onRenameStart && (
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onRenameStart(); }}
+                className="text-gray-500 hover:text-cyan-400 transition-colors shrink-0"
+                title="Rename machine"
+              >
+                <i className="bi bi-pencil text-xs"></i>
+              </button>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Bottom row: packing format dropdown + delete */}
+      {!isRenaming && (
+        <div className="flex items-center gap-1.5">
+          <select
+            value={packingFormat ?? ""}
+            onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
+            onPointerDown={(e) => e.stopPropagation()}
+            className="flex-1 min-w-0 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
+            title="Packing format"
+          >
+            <option value="">— format</option>
+            {(Object.entries(PACKING_FORMATS) as [PackingFormat, string][]).map(([key, label]) => (
+              <option key={key} value={key}>{label}</option>
+            ))}
+          </select>
+          {onDelete && (
+            <button
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => { e.stopPropagation(); onDelete(); }}
+              className="text-gray-500 hover:text-red-400 transition-colors shrink-0"
+              title="Remove machine"
+            >
+              <i className="bi bi-x-lg text-xs"></i>
+            </button>
           )}
         </div>
-      )}
-
-      {/* Rename button (pencil) */}
-      {!isRenaming && onRenameStart && (
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onRenameStart(); }}
-          className="text-gray-500 hover:text-cyan-400 transition-colors"
-          title="Rename machine"
-        >
-          <i className="bi bi-pencil text-xs"></i>
-        </button>
-      )}
-
-      {/* Packing format selector — stopPropagation prevents drag starting on click */}
-      {!isRenaming && (
-        <select
-          value={packingFormat ?? ""}
-          onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
-          onPointerDown={(e) => e.stopPropagation()}
-          className="ml-1 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
-          title="Packing format"
-        >
-          <option value="">— format</option>
-          {(Object.entries(PACKING_FORMATS) as [PackingFormat, string][]).map(([key, label]) => (
-            <option key={key} value={key}>{label}</option>
-          ))}
-        </select>
-      )}
-
-      {/* Delete button */}
-      {!isRenaming && onDelete && (
-        <button
-          onPointerDown={(e) => e.stopPropagation()}
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
-          className="ml-1 text-gray-500 hover:text-red-400 transition-colors"
-          title="Remove machine"
-        >
-          <i className="bi bi-x-lg text-xs"></i>
-        </button>
       )}
     </div>
   );
