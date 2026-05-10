@@ -566,10 +566,9 @@ function MachineChip({
           : "bg-gray-700 text-white border border-gray-600 cursor-grab hover:border-cyan-500 hover:bg-gray-600 active:cursor-grabbing"
       }`}
     >
-      {/* Top row: drag handle + cpu icon + name (full width) + rename pencil */}
-      <div className="flex items-center gap-1.5 min-w-0">
-        {!isRenaming && <i className="bi bi-grip-vertical text-gray-400 text-xs shrink-0"></i>}
-        <i className="bi bi-cpu text-cyan-400 text-xs shrink-0"></i>
+      {/* Top row: cpu icon + name (full width) + rename pencil */}
+      <div className="flex items-center gap-2 min-w-0">
+        <i className="bi bi-cpu text-cyan-400 text-sm shrink-0"></i>
 
         {isRenaming ? (
           <div className="flex items-center gap-1 flex-1 min-w-0" onPointerDown={(e) => e.stopPropagation()}>
@@ -615,7 +614,7 @@ function MachineChip({
 
       {/* Bottom row: packing format dropdown + delete */}
       {!isRenaming && (
-        <div className="flex items-center gap-1.5">
+        <div className="flex items-center gap-2">
           <select
             value={packingFormat ?? ""}
             onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
