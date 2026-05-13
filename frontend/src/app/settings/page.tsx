@@ -295,6 +295,7 @@ function MachinesTab() {
             onDragStart={() => setDragging(m.machine_code)}
             onDragEnd={() => { setDragging(null); setDropTarget(null); }}
             onChipDragOver={(e) => {
+              if (cellId === null) return; // unassigned pool is not a drop target
               e.preventDefault();
               e.stopPropagation();
               setDropTarget({ cellId, beforeCode: m.machine_code });
@@ -402,24 +403,11 @@ function MachinesTab() {
         </div>
       )}
 
-      {/* Unassigned pool — always rendered, smoothly expands during a drag or when unassigned machines exist. */}
-      <div
-        className={`overflow-hidden transition-[max-height,opacity,margin-top] duration-300 ease-out ${
-          (unassigned.length > 0 || dragging !== null)
-            ? "max-h-[800px] opacity-100"
-            : "max-h-0 opacity-0 !mt-0"
-        }`}
-      >
-        <div
-          className={`rounded-lg border overflow-hidden transition-colors ${
-            dropTarget?.cellId === null ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
-          }`}
-          onDragOver={(e) => { e.preventDefault(); setDropTarget({ cellId: null, beforeCode: null }); }}
-          onDragLeave={(e) => {
-            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
-          }}
-          onDrop={(e) => handleDrop(e, null, dropTarget?.beforeCode ?? null)}
-        >
+      {/* Unassigned pool — only shown when there are machines awaiting assignment.
+          Not a drop target: once a machine is placed in a cell it stays in a cell.
+          The pool also receives machines whose cell was deleted. */}
+      {unassigned.length > 0 && (
+        <div className="rounded-lg border border-gray-700/50 bg-gray-800/30 overflow-hidden">
           <div className="flex items-center justify-between px-4 py-3 bg-gray-800/60 border-b border-gray-700/50">
             <h4 className="text-gray-400 font-semibold text-sm flex items-center gap-2">
               <i className="bi bi-inbox text-gray-500"></i>
@@ -428,17 +416,15 @@ function MachinesTab() {
                 {unassigned.length} machine{unassigned.length !== 1 ? "s" : ""}
               </span>
             </h4>
+            <span className="text-gray-500 text-xs">
+              Drag into a cell to assign
+            </span>
           </div>
-          <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-center">
-            {unassigned.length === 0 && (
-              <div className="flex items-center justify-center w-full text-gray-700 text-xs select-none">
-                Drop here to unassign
-              </div>
-            )}
+          <div className="p-3 flex flex-wrap gap-2 items-center">
             {renderChips(unassigned, null)}
           </div>
         </div>
-      </div>
+      )}
 
       {/* Production cells */}
       {cells.length === 0 && !addingCell && (
