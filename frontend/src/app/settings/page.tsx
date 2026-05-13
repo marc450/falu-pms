@@ -404,40 +404,38 @@ function MachinesTab() {
 
       {/* Unassigned pool — always rendered, smoothly expands during a drag or when unassigned machines exist. */}
       <div
-        className={`grid transition-[grid-template-rows,opacity,margin-top] duration-300 ease-out ${
+        className={`overflow-hidden transition-[max-height,opacity,margin-top] duration-300 ease-out ${
           (unassigned.length > 0 || dragging !== null)
-            ? "grid-rows-[1fr] opacity-100"
-            : "grid-rows-[0fr] opacity-0 !mt-0"
+            ? "max-h-[800px] opacity-100"
+            : "max-h-0 opacity-0 !mt-0"
         }`}
       >
-        <div className="overflow-hidden">
-          <div
-            className={`rounded-lg border overflow-hidden transition-colors ${
-              dropTarget?.cellId === null ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
-            }`}
-            onDragOver={(e) => { e.preventDefault(); setDropTarget({ cellId: null, beforeCode: null }); }}
-            onDragLeave={(e) => {
-              if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
-            }}
-            onDrop={(e) => handleDrop(e, null, dropTarget?.beforeCode ?? null)}
-          >
-            <div className="flex items-center justify-between px-4 py-3 bg-gray-800/60 border-b border-gray-700/50">
-              <h4 className="text-gray-400 font-semibold text-sm flex items-center gap-2">
-                <i className="bi bi-inbox text-gray-500"></i>
-                Unassigned Machines
-                <span className="text-gray-600 font-normal text-xs">
-                  {unassigned.length} machine{unassigned.length !== 1 ? "s" : ""}
-                </span>
-              </h4>
-            </div>
-            <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-center">
-              {unassigned.length === 0 && (
-                <div className="flex items-center justify-center w-full text-gray-700 text-xs select-none">
-                  Drop here to unassign
-                </div>
-              )}
-              {renderChips(unassigned, null)}
-            </div>
+        <div
+          className={`rounded-lg border overflow-hidden transition-colors ${
+            dropTarget?.cellId === null ? "border-gray-500 bg-gray-700/20" : "border-gray-700/50 bg-gray-800/30"
+          }`}
+          onDragOver={(e) => { e.preventDefault(); setDropTarget({ cellId: null, beforeCode: null }); }}
+          onDragLeave={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget as Node)) setDropTarget(null);
+          }}
+          onDrop={(e) => handleDrop(e, null, dropTarget?.beforeCode ?? null)}
+        >
+          <div className="flex items-center justify-between px-4 py-3 bg-gray-800/60 border-b border-gray-700/50">
+            <h4 className="text-gray-400 font-semibold text-sm flex items-center gap-2">
+              <i className="bi bi-inbox text-gray-500"></i>
+              Unassigned Machines
+              <span className="text-gray-600 font-normal text-xs">
+                {unassigned.length} machine{unassigned.length !== 1 ? "s" : ""}
+              </span>
+            </h4>
+          </div>
+          <div className="p-3 min-h-[72px] flex flex-wrap gap-2 items-center">
+            {unassigned.length === 0 && (
+              <div className="flex items-center justify-center w-full text-gray-700 text-xs select-none">
+                Drop here to unassign
+              </div>
+            )}
+            {renderChips(unassigned, null)}
           </div>
         </div>
       </div>
