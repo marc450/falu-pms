@@ -643,42 +643,61 @@ function CellSection({
               </td>
               {/* Last Sync col → collapse chevron */}
               <td className="px-4 py-3 text-right">
-                <i className={`bi bi-chevron-${open ? "up" : "down"} text-gray-400 text-xs`}></i>
+                <i className={`bi bi-chevron-down inline-block text-gray-400 text-xs transition-transform duration-300 ease-out ${open ? "rotate-180" : ""}`}></i>
               </td>
             </tr>
 
-            {/* ── Sortable column headers ── */}
-            {open && (
-              <tr className="bg-gray-800/70 border-b border-gray-700/50">
-                {colDefs.map((cd) => (
-                  <th
-                    key={cd.col}
-                    onClick={(e) => { e.stopPropagation(); handleSort(cd.col); }}
-                    className={`px-4 py-2 text-left text-xs font-medium cursor-pointer select-none transition-colors
-                      hover:text-cyan-400 hover:bg-cyan-900/10
-                      ${sortCol === cd.col ? "text-white" : "text-gray-500"}`}
-                  >
-                    {cd.label}{sortCol === cd.col ? (sortAsc ? " ▲" : " ▼") : ""}
-                  </th>
-                ))}
-              </tr>
-            )}
           </thead>
 
-          {open && (
-            <tbody className="divide-y divide-gray-700/50">
-              {sortedMachines.map((m) => (
-                <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} plannedDowntimeMinutes={plannedDowntimeMins} shiftStartedAt={shiftStartedAt} now={now} errorLookup={errorLookup} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
-              ))}
-              {machines.length === 0 && (
-                <tr>
-                  <td colSpan={9} className="px-4 py-6 text-center text-gray-600 text-xs">
-                    No machines in this cell
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          )}
+          {/* ── Expandable section: always mounted, animates open/closed ── */}
+          <tbody>
+            <tr>
+              <td colSpan={colDefs.length} className="p-0">
+                <div
+                  className={`grid transition-[grid-template-rows] duration-300 ease-out ${open ? "grid-rows-[1fr]" : "grid-rows-[0fr]"}`}
+                  aria-hidden={!open}
+                >
+                  <div className="overflow-hidden">
+                    <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+                      <colgroup>
+                        {colDefs.map((cd) => (
+                          <col key={cd.col} style={{ width: `${cd.pct}%` }} />
+                        ))}
+                      </colgroup>
+                      <thead>
+                        {/* Sortable column headers */}
+                        <tr className="bg-gray-800/70 border-b border-gray-700/50">
+                          {colDefs.map((cd) => (
+                            <th
+                              key={cd.col}
+                              onClick={(e) => { e.stopPropagation(); handleSort(cd.col); }}
+                              className={`px-4 py-2 text-left text-xs font-medium cursor-pointer select-none transition-colors
+                                hover:text-cyan-400 hover:bg-cyan-900/10
+                                ${sortCol === cd.col ? "text-white" : "text-gray-500"}`}
+                            >
+                              {cd.label}{sortCol === cd.col ? (sortAsc ? " ▲" : " ▼") : ""}
+                            </th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-700/50">
+                        {sortedMachines.map((m) => (
+                          <MachineRow key={m.machine} m={m} shiftLengthMinutes={shiftLengthMinutes} plannedDowntimeMinutes={plannedDowntimeMins} shiftStartedAt={shiftStartedAt} now={now} errorLookup={errorLookup} onClick={() => onMachineClick(m.machine, m.packingFormat)} />
+                        ))}
+                        {machines.length === 0 && (
+                          <tr>
+                            <td colSpan={colDefs.length} className="px-4 py-6 text-center text-gray-600 text-xs">
+                              No machines in this cell
+                            </td>
+                          </tr>
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </td>
+            </tr>
+          </tbody>
         </table>
       </div>
     </div>
