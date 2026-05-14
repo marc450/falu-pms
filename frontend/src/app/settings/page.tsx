@@ -1166,6 +1166,7 @@ function ShiftsTab() {
   const [monthDate, setMonthDate] = useState<Date>(() => new Date()); // tracks current displayed month
   const [loading, setLoading] = useState(true);
   const [newTeamName, setNewTeamName] = useState("");
+  const [teamError, setTeamError] = useState<string | null>(null);
 
   // Build calendar grid dates for the displayed month
   const year = monthDate.getFullYear();
@@ -1192,13 +1193,17 @@ function ShiftsTab() {
   // Live preview of generated slots (not yet saved)
   const previewSlots       = slotsFromDuration(draftDurationHours, draftFirstStart);
 
-  // Load config + assignments (only show full-page spinner on first load)
+  // Load config once on mount. We deliberately do NOT refetch config on month
+  // navigation: doing so would clobber unsaved local edits (e.g. a just-added
+  // team whose save is still in flight) with a stale DB snapshot.
   const initialLoad = useRef(true);
   useEffect(() => {
-    if (initialLoad.current) setLoading(true);
+    let alive = true;
+    setLoading(true);
     fetchShiftConfig()
       .then(cfg => fetchShiftAssignments(fromStr, toStr, cfg.teams).then(rows => ({ cfg, rows })))
       .then(({ cfg, rows }) => {
+        if (!alive) return;
         setConfig(cfg);
         setDraftDurationHours(cfg.shiftDurationHours);
         setDraftFirstStart(cfg.firstShiftStartHour);
@@ -1212,18 +1217,44 @@ function ShiftsTab() {
         setAssignments(map);
       })
       .catch(console.error)
-      .finally(() => { setLoading(false); initialLoad.current = false; });
-  }, [fromStr, toStr]);
+      .finally(() => { if (alive) { setLoading(false); initialLoad.current = false; } });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- initial load only; month-nav refetch handled in separate effect below
+  }, []);
+
+  // Refetch assignments when the displayed month changes. Config is intentionally
+  // NOT refetched here to avoid clobbering local edits.
+  useEffect(() => {
+    if (initialLoad.current) return; // initial load is handled in the mount effect above
+    let alive = true;
+    fetchShiftAssignments(fromStr, toStr, config.teams)
+      .then(rows => {
+        if (!alive) return;
+        const map: Record<string, ShiftAssignment> = {};
+        for (const r of rows) map[r.shift_date] = r;
+        setAssignments(map);
+      })
+      .catch(console.error);
+    return () => { alive = false; };
+  }, [fromStr, toStr, config.teams]);
 
   // Month navigation
   const prevMonth = () => setMonthDate(new Date(year, month - 1, 1));
   const nextMonth = () => setMonthDate(new Date(year, month + 1, 1));
   const goToday = () => setMonthDate(new Date());
 
-  // Persist helper for team changes (these still auto-save, only slot structure requires explicit save)
-  const persistConfig = (updated: ShiftConfig) => {
+  // Optimistic local update; revert and surface the error if the save fails so
+  // the UI never drifts silently from what's actually persisted.
+  const persistConfig = async (updated: ShiftConfig) => {
+    const prev = config;
     setConfig(updated);
-    saveShiftConfig(updated).catch(console.error);
+    setTeamError(null);
+    try {
+      await saveShiftConfig(updated);
+    } catch (e) {
+      setConfig(prev);
+      setTeamError(`Failed to save team change: ${e instanceof Error ? e.message : "unknown error"}. Your change was reverted.`);
+    }
   };
 
   // ── Team management ───────────────────────────────────────
@@ -1294,8 +1325,11 @@ function ShiftsTab() {
     const slots = slotsFromDuration(draftDurationHours, draftFirstStart);
     setSaving(true);
     try {
+      // Re-fetch the latest config so we never accidentally persist stale
+      // non-structure fields (notably `teams`) on top of newer DB state.
+      const latest = await fetchShiftConfig();
       const updated: ShiftConfig = {
-        ...config,
+        ...latest,
         shiftDurationHours: draftDurationHours,
         firstShiftStartHour: draftFirstStart,
         slots,
@@ -1619,6 +1653,12 @@ function ShiftsTab() {
               Add
             </button>
           </div>
+          {teamError && (
+            <div className="mt-3 px-3 py-2 bg-red-900/40 border border-red-700/50 rounded text-sm text-red-300 flex items-start gap-2">
+              <i className="bi bi-exclamation-triangle-fill mt-0.5 shrink-0"></i>
+              <span>{teamError}</span>
+            </div>
+          )}
         </div>
       </div>
 
