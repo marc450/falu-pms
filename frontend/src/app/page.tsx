@@ -1147,12 +1147,34 @@ export default function Dashboard() {
     thresholds.bu.shiftLengthMinutes - (thresholds.bu.plannedDowntimeMinutes ?? 0)
   );
 
+  // Whole fleet is on a scheduled break when current elapsed minutes fall inside
+  // any of the simulator's break windows. Must mirror BREAKS in mqtt-bridge/src/simulator.js.
+  const SCHEDULED_BREAKS = [
+    { startMin: 180, durationMin: 15 },
+    { startMin: 360, durationMin: 60 },
+    { startMin: 540, durationMin: 15 },
+  ];
+  const elapsedShiftMin = shiftStartedAt > 0
+    ? (currentTime.getTime() - shiftStartedAt) / 60000
+    : -1;
+  const parkOnBreak = elapsedShiftMin >= 0 && SCHEDULED_BREAKS.some(
+    b => elapsedShiftMin >= b.startMin && elapsedShiftMin < b.startMin + b.durationMin
+  );
+
 
   return (
     <div>
       {/* Header */}
       <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-bold text-white">Machine Park Live Status</h2>
+        <div className="flex items-center gap-3">
+          <h2 className="text-xl font-bold text-white">Machine Park Live Status</h2>
+          {parkOnBreak && (
+            <span className="bg-amber-500/20 border border-amber-500/40 text-amber-300 text-xs px-3 py-1.5 rounded-full font-medium">
+              <i className="bi bi-cup-hot mr-1"></i>
+              Park on Break
+            </span>
+          )}
+        </div>
         <div className="flex gap-2">
           <span className="bg-gray-700 text-gray-300 text-xs px-3 py-1.5 rounded-full">
             <i className="bi bi-calendar3 mr-1"></i>

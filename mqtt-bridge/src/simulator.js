@@ -33,21 +33,23 @@ async function saveState() {
   if (!supabase) return;
   const { shiftStartMs } = getShiftInfo();
   const rows = Object.values(machines).map(m => ({
-    machine_name:       m.name,
-    active_shift:       m.activeShift,
-    shift_started_at:   shiftStartMs,
-    status:             m.status,
-    error_end_min:      m.errorEndMin,
-    error_start_time:   m.errorStartTime || null,
-    idle_start_time:    m.idleStartTime  || null,
-    speed_tier_idx:     m.speedTierIdx,
-    base_speed:         m.baseSpeed,
-    tier_locked_until:  m.tierLockedUntil,
-    cleaning_start_min: m.cleaningStartMin,
-    shift_1_data:       m.shifts[1],
-    shift_2_data:       m.shifts[2],
-    shift_3_data:       m.shifts[3],
-    updated_at:         new Date().toISOString(),
+    machine_name:           m.name,
+    active_shift:           m.activeShift,
+    shift_started_at:       shiftStartMs,
+    status:                 m.status,
+    error_end_min:          m.errorEndMin,
+    error_start_time:       m.errorStartTime || null,
+    idle_start_time:        m.idleStartTime  || null,
+    cleaning_start_min:     m.cleaningStartMin,
+    // Per-shift random draws (so a restart mid-shift keeps the same "personality" for the shift)
+    shift_p:                m.shiftP,
+    shift_baseline_scrap:   m.shiftBaselineScrap,
+    bad_batch:              m.badBatch ?? null,
+    last_error_end_min:     m.lastErrorEndMin,
+    shift_1_data:           m.shifts[1],
+    shift_2_data:           m.shifts[2],
+    shift_3_data:           m.shifts[3],
+    updated_at:             new Date().toISOString(),
   }));
   const { error } = await supabase
     .from("simulator_state")
@@ -87,10 +89,12 @@ async function loadState() {
     m.errorEndMin        = row.error_end_min;
     m.errorStartTime     = row.error_start_time || null;
     m.idleStartTime      = row.idle_start_time  || null;
-    m.speedTierIdx       = row.speed_tier_idx;
-    m.baseSpeed          = row.base_speed;
-    m.tierLockedUntil    = row.tier_locked_until;
     m.cleaningStartMin   = row.cleaning_start_min;
+    // Restore per-shift draws; fall back to a fresh roll if the row pre-dates the migration.
+    m.shiftP             = row.shift_p             ?? drawShiftP();
+    m.shiftBaselineScrap = row.shift_baseline_scrap ?? drawShiftBaselineScrap();
+    m.badBatch           = row.bad_batch           ?? null;
+    m.lastErrorEndMin    = row.last_error_end_min  ?? null;
     m.shifts[1]          = row.shift_1_data || createShiftData();
     m.shifts[2]          = row.shift_2_data || createShiftData();
     m.shifts[3]          = row.shift_3_data || createShiftData();
@@ -196,25 +200,111 @@ const ERROR_DURATIONS = [
 // ============================================
 // SPEED CONFIG
 // ============================================
-const SPEED_CONFIG = {
-  CB: {
-    tiers: [
-      { cumProb: 0.90, min: 2689, max: 2850 },
-      { cumProb: 0.95, min: 2300, max: 2688 },
-      { cumProb: 1.00, min: 1800, max: 2299 },
-    ],
-  },
-  CT: {
-    tiers: [
-      { cumProb: 0.90, min: 2389, max: 2650 },
-      { cumProb: 0.95, min: 2300, max: 2388 },
-      { cumProb: 1.00, min: 1500, max: 2299 },
-    ],
-  },
+// Per-tick speed = speed_target (from DB) × shift_P × personality × crew + ±SPEED_VARIATION.
+// shift_P is drawn once per shift per machine (see SHIFT_P_* config below) and is the
+// dominant lever for "how well this shift performs". The hard floor/ceiling on output
+// comes from clamping the product of P × personality × crew, not from speed tiers.
+const SPEED_VARIATION = 150;  // ±pcs/min tick-level noise (natural-looking)
+
+// Fallback speed targets when machines.speed_target is unset (per machine type).
+const SPEED_TARGET_FALLBACK = { CB: 2800, CT: 2600 };
+
+// ============================================
+// MACHINE PERSONALITY
+// ============================================
+// Deterministic per-UID: hash → bucket. Stable across restarts without a DB column.
+const PERSONALITY = {
+  star:        { bucket: "star",        speedMod: 1.03, errorMod: 0.25, scrapBump: -0.005 },
+  normal:      { bucket: "normal",      speedMod: 1.00, errorMod: 1.00, scrapBump:  0.000 },
+  problematic: { bucket: "problematic", speedMod: 0.92, errorMod: 2.00, scrapBump:  0.015 },
 };
 
-const SPEED_VARIATION = 150;  // ±pcs/min applied each tick within tier bounds
-const TIER_LOCK_MIN   = 45;   // minutes a machine stays in the same speed tier
+function personalityFor(uid) {
+  // Cheap deterministic hash → [0,1)
+  let h = 0;
+  for (let i = 0; i < uid.length; i++) h = ((h << 5) - h + uid.charCodeAt(i)) | 0;
+  const r = (Math.abs(h) % 10000) / 10000;
+  if (r < 0.15) return PERSONALITY.star;
+  if (r < 0.85) return PERSONALITY.normal;
+  return PERSONALITY.problematic;
+}
+
+// ============================================
+// CREW MODIFIERS
+// ============================================
+// Looked up by exact crew name from shift_assignments. Anything else → DEFAULT_CREW_MOD.
+const CREW_MODS = {
+  "SHIFT A": { speedMod: 1.04, errorDurationMod: 0.70, scrapMod: -0.003 },
+  "SHIFT B": { speedMod: 1.00, errorDurationMod: 1.00, scrapMod:  0.000 },
+  "SHIFT C": { speedMod: 0.98, errorDurationMod: 1.10, scrapMod:  0.000 },
+  "SHIFT D": { speedMod: 0.94, errorDurationMod: 1.40, scrapMod:  0.005 },
+};
+const DEFAULT_CREW_MOD = { speedMod: 1.0, errorDurationMod: 1.0, scrapMod: 0 };
+
+// ============================================
+// SHIFT PERFORMANCE MULTIPLIER (P)
+// ============================================
+// Drawn once per shift per machine. Drives whether the shift hits target.
+// 90% of shifts land in [1.00, 1.10]; 10% underperform in [0.70, 1.00).
+// After multiplying by personality × crew, the final value is clamped to [P_FLOOR, P_CEIL].
+const P_UNDERPERFORM_PROB = 0.10;
+const P_HIT_MIN  = 1.00;
+const P_HIT_MAX  = 1.10;
+const P_MISS_MIN = 0.70;
+const P_MISS_MAX = 1.00;
+const P_FLOOR    = 0.70;
+const P_CEIL     = 1.10;
+
+function drawShiftP() {
+  return Math.random() < P_UNDERPERFORM_PROB
+    ? P_MISS_MIN + Math.random() * (P_MISS_MAX - P_MISS_MIN)   // [0.70, 1.00)
+    : P_HIT_MIN  + Math.random() * (P_HIT_MAX  - P_HIT_MIN);    // [1.00, 1.10]
+}
+
+// ============================================
+// SCRAP RATE
+// ============================================
+// Layered model: per-shift baseline + per-tick noise + occasional bad-batch event.
+// Hard ceiling enforced so the dashboard chart never shows above 4%.
+const SCRAP_BASELINE_MIN    = 0.005;  // 0.5%
+const SCRAP_BASELINE_MAX    = 0.025;  // 2.5%
+const SCRAP_TICK_VARIANCE   = 0.004;  // ±0.4pp per tick
+const SCRAP_CEILING         = 0.040;  // 4% hard cap
+const BAD_BATCH_PROB        = 0.08;   // 8% of shifts have a bad batch event
+const BAD_BATCH_DUR_MIN     = 30;     // minutes
+const BAD_BATCH_DUR_MAX     = 90;
+const BAD_BATCH_ADDER_MIN   = 0.010;  // +1.0pp
+const BAD_BATCH_ADDER_MAX   = 0.015;  // +1.5pp
+
+function drawShiftBaselineScrap() {
+  // Triangular-ish: avg of two uniforms peaks at the midpoint (1.5%)
+  return SCRAP_BASELINE_MIN +
+    (Math.random() + Math.random()) / 2 *
+    (SCRAP_BASELINE_MAX - SCRAP_BASELINE_MIN);
+}
+
+function maybeScheduleBadBatch() {
+  if (Math.random() >= BAD_BATCH_PROB) return null;
+  const dur = BAD_BATCH_DUR_MIN + Math.random() * (BAD_BATCH_DUR_MAX - BAD_BATCH_DUR_MIN);
+  const start = Math.random() * Math.max(1, SHIFT_MIN - dur);
+  const adder = BAD_BATCH_ADDER_MIN + Math.random() * (BAD_BATCH_ADDER_MAX - BAD_BATCH_ADDER_MIN);
+  return { startMin: start, endMin: start + dur, adder };
+}
+
+// ============================================
+// CASCADING ERRORS
+// ============================================
+// After an error resolves, the same machine is more error-prone for the next
+// CASCADE_WINDOW_MIN minutes. Multiplier decays linearly from CASCADE_PEAK to 1.
+const CASCADE_WINDOW_MIN = 15;
+const CASCADE_PEAK       = 3;
+
+function cascadeMultiplier(machine, elapsedMin) {
+  if (machine.lastErrorEndMin === null || machine.lastErrorEndMin === undefined) return 1;
+  const dt = elapsedMin - machine.lastErrorEndMin;
+  if (dt < 0 || dt >= CASCADE_WINDOW_MIN) return 1;
+  return 1 + (CASCADE_PEAK - 1) * (1 - dt / CASCADE_WINDOW_MIN);
+}
 
 // ============================================
 // ERROR CODE CONFIG
@@ -301,6 +391,88 @@ function pickErrorCodes() {
 }
 
 // ============================================
+// MACHINE TARGETS (loaded from DB)
+// ============================================
+let MACHINE_TARGETS = {};  // numeric UID → speed_target
+
+async function loadMachineTargetsFromDB() {
+  if (!supabase) return;
+  const { data, error } = await supabase
+    .from("machines")
+    .select("machine_code, speed_target");
+  if (error) {
+    console.warn("[CONFIG] Failed to load machine targets:", error.message);
+    return;
+  }
+  MACHINE_TARGETS = {};
+  for (const row of data || []) {
+    if (row.speed_target) MACHINE_TARGETS[row.machine_code] = row.speed_target;
+  }
+  console.log(`[CONFIG] Loaded speed targets for ${Object.keys(MACHINE_TARGETS).length} machines`);
+}
+
+function targetFor(uid, type) {
+  return MACHINE_TARGETS[uid] || SPEED_TARGET_FALLBACK[type] || 2600;
+}
+
+// ============================================
+// SHIFT ASSIGNMENTS (for crew resolution)
+// ============================================
+let shiftAssignmentsCache = {};  // "YYYY-MM-DD" → ["SHIFT A", "SHIFT B", ...]
+
+async function loadShiftAssignmentsFromDB() {
+  if (!supabase) return;
+  const today = new Date();
+  const from = new Date(today); from.setDate(today.getDate() - 2);
+  const to   = new Date(today); to.setDate(today.getDate() + 1);
+  const { data, error } = await supabase
+    .from("shift_assignments")
+    .select("shift_date, slot_teams, day_team, night_team")
+    .gte("shift_date", from.toISOString().slice(0, 10))
+    .lte("shift_date", to.toISOString().slice(0, 10));
+  if (error) {
+    console.warn("[CONFIG] Failed to load shift assignments:", error.message);
+    return;
+  }
+  shiftAssignmentsCache = {};
+  for (const row of data || []) {
+    const teams = Array.isArray(row.slot_teams) && row.slot_teams.length > 0
+      ? row.slot_teams
+      : [row.day_team || null, row.night_team || null];
+    shiftAssignmentsCache[row.shift_date] = teams;
+  }
+  console.log(`[CONFIG] Cached shift assignments for ${Object.keys(shiftAssignmentsCache).length} days`);
+}
+
+// Resolve the crew currently on duty in factory-local time. Mirrors the bridge's
+// resolveCurrentCrew so we apply the same crew name the bridge will write to the row.
+function resolveCurrentCrew() {
+  const now = new Date();
+  const fmt = new Intl.DateTimeFormat("en-US", {
+    timeZone: FACTORY_TIMEZONE,
+    year: "numeric", month: "2-digit", day: "2-digit",
+    hour: "2-digit", minute: "2-digit", hour12: false,
+  });
+  const parts = {};
+  for (const { type, value } of fmt.formatToParts(now)) parts[type] = parseInt(value, 10);
+
+  const localHour = parts.hour + parts.minute / 60;
+  const slotIdx   = Math.floor(((localHour - FIRST_SHIFT_START_HOUR + 24) % 24) / SHIFT_DURATION_HOURS);
+
+  let y = parts.year, mo = parts.month, d = parts.day;
+  if (localHour < FIRST_SHIFT_START_HOUR) {
+    const yesterday = new Date(y, mo - 1, d - 1);
+    y = yesterday.getFullYear(); mo = yesterday.getMonth() + 1; d = yesterday.getDate();
+  }
+  const dateStr = `${y}-${String(mo).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  return shiftAssignmentsCache[dateStr]?.[slotIdx] ?? null;
+}
+
+function crewModFor(crewName) {
+  return CREW_MODS[crewName] || DEFAULT_CREW_MOD;
+}
+
+// ============================================
 // HELPERS
 // ============================================
 function getShiftInfo() {
@@ -336,21 +508,6 @@ function getShiftInfo() {
 
 function inBreakAt(elapsedMin) {
   return BREAKS.some(b => elapsedMin >= b.startMin && elapsedMin < b.startMin + b.durationMin);
-}
-
-function pickTierIdx(type) {
-  const r = Math.random();
-  return SPEED_CONFIG[type].tiers.findIndex(t => r < t.cumProb);
-}
-
-function speedInTier(type, idx) {
-  const t = SPEED_CONFIG[type].tiers[idx];
-  return t.min + Math.floor(Math.random() * (t.max - t.min + 1));
-}
-
-function clampToTier(speed, type, idx) {
-  const t = SPEED_CONFIG[type].tiers[idx];
-  return Math.max(t.min, Math.min(t.max, speed));
 }
 
 function pickErrorDuration() {
@@ -400,31 +557,31 @@ function createShiftData() {
 // MACHINE INIT
 // ============================================
 function initMachine(uid) {
-  // Determine machine type from display name in the UID map
   const displayName = MACHINE_UID_MAP[uid] || uid;
   const type        = displayName.startsWith("CB") ? "CB" : "CT";
-  const { shiftNumber, elapsedMinutes } = getShiftInfo();
-  const tierIdx = pickTierIdx(type);
+  const personality = personalityFor(uid);
+  const { shiftNumber } = getShiftInfo();
   return {
-    name:             uid,         // numeric UID — what the PLC sends as "Machine"
-    displayName,                   // human-readable name (for local logging only)
+    name:             uid,
+    displayName,
     type,
+    personality,
     status:           "running",
     activeShift:      shiftNumber,
     errorEndMin:      null,
     cleaningStartMin: assignCleaningStart(),
-    speedTierIdx:     tierIdx,
-    baseSpeed:        speedInTier(type, tierIdx),
     currentSpeed:     0,
-    tierLockedUntil:  elapsedMinutes + TIER_LOCK_MIN,
     efficiency:       0,
     reject:           0,
-    // Active error codes — set on transition into error, cleared on transition out.
     activeErrorCodes: null,
-    // Authoritative timestamps for the current status episode, published with
-    // every MQTT tick so the bridge can correct statusSince even after a reconnect.
-    errorStartTime: null,
-    idleStartTime:  null,
+    errorStartTime:   null,
+    idleStartTime:    null,
+    // Per-shift random draws — re-rolled at every shift transition.
+    shiftP:             drawShiftP(),
+    shiftBaselineScrap: drawShiftBaselineScrap(),
+    badBatch:           maybeScheduleBadBatch(),
+    // Cascading-error window: tracks when the most recent error ended.
+    lastErrorEndMin:    null,
     shifts: {
       1: createShiftData(),
       2: createShiftData(),
@@ -438,29 +595,39 @@ function initMachine(uid) {
 // ============================================
 function simulateTick(machine, elapsedMin) {
   const shift = machine.shifts[machine.activeShift];
+  const crew  = crewModFor(resolveCurrentCrew());
+  const pers  = machine.personality;
 
   // ── Determine state ──────────────────────────────────────────────────
   const inBreak    = inBreakAt(elapsedMin);
   const inCleaning = elapsedMin >= machine.cleaningStartMin &&
                      elapsedMin <  machine.cleaningStartMin + 30;
-  const isIdle     = inBreak || inCleaning;
-  const inError    = machine.errorEndMin !== null && elapsedMin < machine.errorEndMin;
+  const wasInError = machine.errorEndMin !== null && elapsedMin < machine.errorEndMin;
 
   let status;
-  if (inError) {
-    // Error takes priority over idle.
-    // Idle period counts down in parallel but machine shows as error.
+  if (wasInError) {
     status = "error";
-  } else if (isIdle) {
+  } else if (inBreak || inCleaning) {
     status = "idle";
   } else {
     status = "running";
-    // Only roll for a new error when freely running (not during idle)
-    if (Math.random() < ERROR_PROB_TICK) {
-      machine.errorEndMin = elapsedMin + pickErrorDuration();
+    // Roll for a new error. Probability is modulated by personality and by the
+    // cascading-window multiplier (more likely shortly after a recent error).
+    const effProb = ERROR_PROB_TICK * pers.errorMod * cascadeMultiplier(machine, elapsedMin);
+    if (Math.random() < effProb) {
+      const baseDuration = pickErrorDuration();
+      const duration     = Math.max(1, Math.round(baseDuration * crew.errorDurationMod));
+      machine.errorEndMin = elapsedMin + duration;
     }
   }
   machine.status = status;
+
+  // Capture the moment an error has just resolved this tick — needed so the
+  // cascading window starts at the right elapsedMin for the next roll.
+  if (machine.errorEndMin !== null && elapsedMin >= machine.errorEndMin) {
+    machine.lastErrorEndMin = machine.errorEndMin;
+    machine.errorEndMin = null;
+  }
 
   // ── Time accounting ──────────────────────────────────────────────────
   if      (status === "error") shift.errorTime      += TICK_MIN;
@@ -469,28 +636,36 @@ function simulateTick(machine, elapsedMin) {
 
   // ── Speed and production (running only) ──────────────────────────────
   if (status === "running") {
-
-    // Speed tier management
-    if (elapsedMin >= machine.tierLockedUntil) {
-      machine.speedTierIdx   = pickTierIdx(machine.type);
-      machine.baseSpeed      = speedInTier(machine.type, machine.speedTierIdx);
-      machine.tierLockedUntil = elapsedMin + TIER_LOCK_MIN;
-    }
-    const raw = machine.baseSpeed +
-                Math.floor(Math.random() * (2 * SPEED_VARIATION + 1)) - SPEED_VARIATION;
-    machine.currentSpeed = clampToTier(raw, machine.type, machine.speedTierIdx);
+    // Base speed = target × shift_P × personality × crew, clamped to [P_FLOOR, P_CEIL]
+    // multiplier band on the target so the dashboard's per-shift output respects
+    // the −30%/+10% bounds regardless of crew/personality combinations.
+    const target  = targetFor(machine.name, machine.type);
+    const rawMult = machine.shiftP * pers.speedMod * crew.speedMod;
+    const mult    = Math.max(P_FLOOR, Math.min(P_CEIL, rawMult));
+    const noise   = Math.floor(Math.random() * (2 * SPEED_VARIATION + 1)) - SPEED_VARIATION;
+    machine.currentSpeed = Math.max(0, Math.round(target * mult + noise));
 
     // Swab production
     const swabsThisTick = Math.floor(machine.currentSpeed / 60 * (TICK_MS / 1000));
-    const discarded     = Math.floor(swabsThisTick * (0.03 + Math.random() * 0.02));
-    const packaged      = swabsThisTick - discarded;
+
+    // Layered scrap rate: shift baseline + tick noise + bad batch + personality + crew.
+    // Clamped to [0, SCRAP_CEILING] so the chart never shows above 4%.
+    const inBadBatch = machine.badBatch &&
+                       elapsedMin >= machine.badBatch.startMin &&
+                       elapsedMin <  machine.badBatch.endMin;
+    const tickNoise  = (Math.random() * 2 - 1) * SCRAP_TICK_VARIANCE;
+    let scrapRate    = machine.shiftBaselineScrap + tickNoise + pers.scrapBump + crew.scrapMod;
+    if (inBadBatch) scrapRate += machine.badBatch.adder;
+    scrapRate = Math.max(0, Math.min(SCRAP_CEILING, scrapRate));
+
+    const discarded = Math.floor(swabsThisTick * scrapRate);
+    const packaged  = swabsThisTick - discarded;
 
     shift.producedSwabs  += swabsThisTick;
     shift.discardedSwabs += discarded;
     shift.packagedSwabs  += packaged;
 
     // Box counting with Layer+ logic
-    // Layer+ box requires 541 swabs (500 standard + 41 extra layer)
     shift.swabsInCurrentBox += packaged;
     while (true) {
       const threshold = shift.nextBoxIsLayerPlus ? 541 : 500;
@@ -502,11 +677,13 @@ function simulateTick(machine, elapsedMin) {
       } else break;
     }
 
-    // Random minor error counters (equipment events, not machine-down errors)
-    if (Math.random() < 0.03) shift.cottonTears++;
-    if (Math.random() < 0.02) shift.missingSticks++;
-    if (Math.random() < 0.01) shift.faultyPickups++;
-    if (Math.random() < 0.01) shift.otherErrors++;
+    // Per-tick minor equipment-event counters. Tied to scrap so a bad batch
+    // also reads as more cotton tears on the cell-level breakdown.
+    const minorScale = 1 + (scrapRate - machine.shiftBaselineScrap) * 20;
+    if (Math.random() < 0.03 * minorScale) shift.cottonTears++;
+    if (Math.random() < 0.02)             shift.missingSticks++;
+    if (Math.random() < 0.01)             shift.faultyPickups++;
+    if (Math.random() < 0.01)             shift.otherErrors++;
   }
 
   // ── Efficiency & reject ──────────────────────────────────────────────
@@ -585,9 +762,11 @@ let simulationStarted = false;
 client.on("connect", async () => {
   console.log("Connected to MQTT broker");
 
-  // Load shift config + timezone + error codes from DB before starting simulation
+  // Load shift config + timezone + error codes + machine targets + assignments
   await loadShiftConfigFromDB();
   await loadErrorCodesFromDB();
+  await loadMachineTargetsFromDB();
+  await loadShiftAssignmentsFromDB();
 
   MACHINE_NAMES.forEach(name => { if (!machines[name]) machines[name] = initMachine(name); });
 
@@ -618,11 +797,13 @@ client.on("connect", async () => {
         machine.activeShift         = shiftNumber;
         machine.cleaningStartMin    = assignCleaningStart();
         machine.errorEndMin         = null;
-        machine.speedTierIdx        = pickTierIdx(machine.type);
-        machine.baseSpeed           = speedInTier(machine.type, machine.speedTierIdx);
-        machine.tierLockedUntil     = elapsedMinutes + TIER_LOCK_MIN;
+        machine.lastErrorEndMin     = null;
+        // Re-roll per-shift random draws so each shift has its own "feel".
+        machine.shiftP              = drawShiftP();
+        machine.shiftBaselineScrap  = drawShiftBaselineScrap();
+        machine.badBatch            = maybeScheduleBadBatch();
 
-        console.log(`[SHIFT START] ${machine.name} now on Shift ${machine.activeShift}`);
+        console.log(`[SHIFT START] ${machine.name} now on Shift ${machine.activeShift} (P=${machine.shiftP.toFixed(3)}, baselineScrap=${(machine.shiftBaselineScrap*100).toFixed(2)}%${machine.badBatch ? `, badBatch@${Math.round(machine.badBatch.startMin)}min` : ""})`);
       }
 
       // ── Tick & publish combined message ────────────────────────────────
