@@ -316,7 +316,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
       </aside>
 
       {/* Main content */}
-      <main className="flex-1 overflow-auto">
+      <main className="flex-1 overflow-auto [scrollbar-gutter:stable]">
         <div className="p-6">{children}</div>
       </main>
 
