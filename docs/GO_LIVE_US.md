@@ -324,6 +324,55 @@ SELECT cron.schedule(
 
 ---
 
+## Engineering Hardening Before Corporate Rollout
+
+The items below are platform-level — they apply to any factory deployment, not just the US Cotton site. Most are inexpensive to add now and become very expensive to retrofit once a corporate customer is live.
+
+### Tier 1 — block on these before a corporate signs
+
+| Area | Why it matters | What "done" looks like |
+|---|---|---|
+| Error monitoring on every runtime (Next app + mqtt-bridge) | Today a crash or silent exception reaches us only when a user calls. Sentry (or equivalent) surfaces the stack trace within seconds. This is distinct from the uptime checks above — that catches "the process is down", this catches "the process is up but throwing for one user". | Sentry DSN configured in both apps, source maps uploaded on each deploy, alert rules going to a real channel (email or Slack). |
+| Automated tests for KPI math | 75 migrations plus known quirks (run_hours stored as minutes, bu_normalized depending on it) means one careless refactor ships wrong numbers to a paying customer. Coverage doesn't need to be broad, just precise around the math. | Vitest set up. ~15 tests covering `calcBuRunRate`, `calcCorrectedEfficiency`, scrap-rate weighting, idle/error attribution. CI runs them on every PR. |
+| RLS narrative or RLS hardening | Every policy today is `USING (true)`. With per-project isolation that's defensible, but corporate IT will read the schema and ask. | Either tighten policies to meaningful predicates, or write a one-page security architecture note explaining physical isolation, key handling, and threat model. |
+| Staging environment | Every push to main deploys to production. The first regression in front of a paying customer hurts. | A staging frontend (e.g. `staging-pms.app`) pointing at a separate staging Supabase project. Deploys on push to a `staging` branch. |
+| Migration runner | 75 SQL files applied by hand. Three customer projects equals guaranteed drift within a quarter. | A script that applies `database/migrations/*.sql` to a target Supabase project in order, idempotently, tracking applied migrations in a `schema_migrations` table. |
+
+### Tier 2 — first three months after first corporate customer
+
+| Area | Why it matters |
+|---|---|
+| Verified backup and recovery procedure | Supabase Pro takes daily backups. Has anyone restored one? Document the RTO/RPO we commit to and rehearse it. |
+| Audit trail | Who changed the KPI thresholds yesterday? Who removed user X? Add an `audit_log` table populated for high-stakes mutations (threshold changes, role changes, machine removals). |
+| MQTT over TLS plus per-machine credentials | Plant network to bridge to Supabase should be end-to-end encrypted. Each PLC ideally has its own broker credentials so a single compromised Pi can be rotated without redeploying. |
+| CI checks before deploy | Right now `git push main` deploys. Typecheck, lint, and (once they exist) tests should run and fail the build before any artifact uploads. |
+| Repo housekeeping | The `Dashboard/` folder is a stack of `README_*.md` notes-to-self. To a corporate reviewer it reads as sloppy. Move under `docs/` with real titles, or delete. |
+
+### Tier 3 — defer until a customer asks
+
+| Area | Why we wait |
+|---|---|
+| SSO / SAML | Real ask eventually, but expensive. Build when a paying customer requires it. Supabase supports SAML on Team tier. |
+| Multi-tenancy in one project | Already decided against. Don't revisit without a specific commercial reason. |
+| Status page and SLA wording | Build when we sign an SLA, not before. |
+| Privacy policy, ToS, DPA | Start with a template; have a lawyer review the GDPR DPA wording before the first signed corporate contract. |
+
+### Recommended sequencing
+
+Roughly two weeks of focused work to clear Tier 1:
+
+1. Sentry on both apps. Half a day each.
+2. Staging environment. One day. New Supabase project, new Pages deploy on a branch, env separation.
+3. KPI test suite. Two to three days. Fixtures plus ~15 tests around the math.
+4. Migration runner. One day. Wraps `psql` (or `supabase db push`) with applied-migrations tracking per project.
+5. CI: typecheck plus lint plus tests on PRs to main. Half a day.
+6. Audit log table plus wrapper for the five highest-stakes mutations. One day.
+7. Clean up `Dashboard/` and write a real top-level README. Half a day.
+
+Sentry is the cheapest win and the absence that will hurt most in week one of a live customer — start there.
+
+---
+
 ## One-Command Migration Template
 
 When ready, create `database/migrations/016_us_eastern_timezone.sql` with:
