@@ -106,7 +106,7 @@ async function loadState() {
 // ============================================
 const BROKER_HOST      = process.env.MQTT_HOST      || "e21df7393cc24e69b198158d3af2b3d6.s1.eu.hivemq.cloud";
 const BROKER_PORT      = parseInt(process.env.MQTT_PORT || "8883");
-const BROKER_USER      = process.env.MQTT_USERNAME   || "USCotton";
+const BROKER_USER      = process.env.MQTT_USERNAME   || "mqtt-user";
 const BROKER_PASS      = process.env.MQTT_PASSWORD   || "Admin123";
 const IS_LOCAL         = process.env.MQTT_IS_LOCAL   === "true";
 const TICK_MS          = parseInt(process.env.SIM_FREQUENCY_MS || "5000");

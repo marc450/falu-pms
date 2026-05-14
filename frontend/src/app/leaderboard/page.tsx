@@ -411,12 +411,8 @@ export default function LeaderboardPage() {
           TOP BAR: Clock + Current Crew
           ═══════════════════════════════════════════════════════════════════ */}
       <div className="flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <i className="bi bi-building text-blue-400 text-3xl"></i>
-          <div>
-            <h1 className="text-3xl font-black text-white tracking-tight">U.S. COTTON</h1>
-            <p className="text-lg text-gray-500">Production Leaderboard</p>
-          </div>
+        <div>
+          <h1 className="text-3xl font-black text-white tracking-tight">Production Leaderboard</h1>
         </div>
         <div className="flex items-center gap-8">
           {currentCrew && (

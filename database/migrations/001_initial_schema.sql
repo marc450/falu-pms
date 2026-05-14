@@ -123,7 +123,7 @@ INSERT INTO app_settings (key, value) VALUES
 ('broker', '{
     "host": "e21df7393cc24e69b198158d3af2b3d6.s1.eu.hivemq.cloud",
     "port": 8883,
-    "username": "USCotton",
+    "username": "mqtt-user",
     "password": "Admin123",
     "isLocal": false
 }'::jsonb),
