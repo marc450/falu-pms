@@ -546,8 +546,8 @@ function CellSection({
             >
               {/* Machine col → cell name */}
               <td className="px-4 py-3 whitespace-nowrap">
-                <div className={!open ? "flex flex-col gap-0.5" : "flex items-center gap-2"}>
-                  {!open && <span className="text-[10px] invisible">·</span>}
+                <div className="flex flex-col gap-0.5">
+                  <span className="text-[10px] invisible">·</span>
                   <div className="flex items-center gap-2">
                     <i className={`bi ${icon} ${color}`}></i>
                     <span className="text-white font-semibold text-sm">{title}</span>
@@ -557,7 +557,7 @@ function CellSection({
               {/* Status col → running count, traffic-light colored */}
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
-                  {!open && <span className="text-[10px] text-gray-500">{colDefs[1].label}</span>}
+                  <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[1].label}</span>
                   <span className={`text-xs font-semibold ${
                     machines.length === 0 ? "text-gray-500"
                     : running === machines.length ? "text-green-400"
@@ -572,7 +572,7 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap">
                 {avgEff !== null && (
                   <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[2].label}</span>}
+                    <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[2].label}</span>
                     <span className={`text-sm font-semibold ${ec.text}`}>{fmtPct(avgEff, 1)}</span>
                   </div>
                 )}
@@ -581,7 +581,7 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap">
                 {avgScrap !== null && (
                   <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[3].label}</span>}
+                    <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[3].label}</span>
                     <span className={`text-sm font-semibold ${sc.text}`}>{fmtPct(avgScrap, 1)}</span>
                   </div>
                 )}
@@ -590,7 +590,7 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap">
                 {cellTotalBUs > 0 && (
                   <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[4].label}</span>}
+                    <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[4].label}</span>
                     <span className="text-sm font-semibold text-white">
                       {Math.round(cellTotalBUs).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-50">BUs</span>
@@ -602,7 +602,7 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap">
                 {cellTarget > 0 ? (
                   <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[5].label}</span>}
+                    <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[5].label}</span>
                     <span className={`text-sm font-semibold ${buCc.text}`}>
                       {Math.round(cellProjected).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-60">BUs</span>
@@ -615,7 +615,7 @@ function CellSection({
               <td className="px-4 py-3 whitespace-nowrap">
                 {nonOfflineCount > 0 && (
                   <div className="flex flex-col gap-0.5">
-                    {!open && <span className="text-[10px] text-gray-500">{colDefs[6].label}</span>}
+                    <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[6].label}</span>
                     <span className={`text-sm font-semibold ${avgSpeed !== null ? spCc.text : "text-gray-400"}`}>
                       {Math.round(avgSpeed ?? 0).toLocaleString()}{" "}
                       <span className="text-xs font-normal opacity-60">pcs/min</span>
@@ -626,7 +626,7 @@ function CellSection({
               {/* Idle Time col */}
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
-                  {!open && <span className="text-[10px] text-gray-500">{colDefs[7].label}</span>}
+                  <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[7].label}</span>
                   <span className={`text-sm font-semibold ${Math.round(cellTotalIdleTime) > 0 ? "text-white" : "text-gray-600"}`}>
                     {Math.round(cellTotalIdleTime) > 0 ? fmtDuration(cellTotalIdleTime) : "\u2013"}
                   </span>
@@ -635,7 +635,7 @@ function CellSection({
               {/* Error Time col */}
               <td className="px-4 py-3 whitespace-nowrap">
                 <div className="flex flex-col gap-0.5">
-                  {!open && <span className="text-[10px] text-gray-500">{colDefs[8].label}</span>}
+                  <span className={`text-[10px] ${open ? "invisible" : "text-gray-500"}`}>{colDefs[8].label}</span>
                   <span className={`text-sm font-semibold ${Math.round(cellTotalErrorTime) > 0 ? "text-white" : "text-gray-600"}`}>
                     {Math.round(cellTotalErrorTime) > 0 ? fmtDuration(cellTotalErrorTime) : "\u2013"}
                   </span>
