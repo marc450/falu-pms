@@ -558,10 +558,8 @@ function MachineChip({
           : "bg-gray-700 text-white border border-gray-600 cursor-grab hover:border-cyan-500 hover:bg-gray-600 active:cursor-grabbing"
       }`}
     >
-      {/* Top row: cpu icon + name (full width) + rename pencil */}
+      {/* Top row: name (full width) + rename pencil */}
       <div className="flex items-center gap-2 min-w-0">
-        <i className="bi bi-cpu text-cyan-400 text-sm shrink-0"></i>
-
         {isRenaming ? (
           <div className="flex items-center gap-1 flex-1 min-w-0" onPointerDown={(e) => e.stopPropagation()}>
             <input
