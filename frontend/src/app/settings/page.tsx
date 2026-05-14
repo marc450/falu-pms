@@ -550,7 +550,7 @@ function MachineChip({
       onDragStart={isRenaming ? undefined : onDragStart}
       onDragEnd={isRenaming ? undefined : onDragEnd}
       onDragOver={isRenaming ? undefined : onChipDragOver}
-      className={`flex flex-col gap-1.5 px-3 py-2 rounded-md text-sm font-medium select-none transition-all w-[220px] ${
+      className={`flex items-stretch gap-1.5 pl-1 pr-3 py-2 rounded-md text-sm font-medium select-none transition-all w-[220px] ${
         isDragging
           ? "opacity-30 cursor-grabbing bg-gray-600 text-gray-400 border border-gray-500"
           : isRenaming
@@ -558,6 +558,12 @@ function MachineChip({
           : "bg-gray-700 text-white border border-gray-600 cursor-grab hover:border-cyan-500 hover:bg-gray-600 active:cursor-grabbing"
       }`}
     >
+      {/* Grab handle */}
+      <div className="flex items-center text-gray-500 shrink-0" aria-hidden="true">
+        <i className="bi bi-grip-vertical text-base"></i>
+      </div>
+
+      <div className="flex flex-col gap-1.5 flex-1 min-w-0">
       {/* Top row: name (full width) + rename pencil */}
       <div className="flex items-center gap-2 min-w-0">
         {isRenaming ? (
@@ -629,6 +635,7 @@ function MachineChip({
           )}
         </div>
       )}
+      </div>
     </div>
   );
 }
