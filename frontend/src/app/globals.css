@@ -2,6 +2,7 @@
 
 html, body {
   scrollbar-gutter: stable;
+  overflow-y: scroll;
 }
 
 body {
