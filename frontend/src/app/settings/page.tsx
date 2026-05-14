@@ -559,8 +559,8 @@ function MachineChip({
       }`}
     >
       {/* Grab handle */}
-      <div className="flex items-center text-gray-500 shrink-0" aria-hidden="true">
-        <i className="bi bi-grip-vertical text-base"></i>
+      <div className="flex items-center text-gray-400 shrink-0" aria-hidden="true">
+        <i className="bi bi-grip-vertical text-lg leading-none"></i>
       </div>
 
       <div className="flex flex-col gap-1.5 flex-1 min-w-0">
