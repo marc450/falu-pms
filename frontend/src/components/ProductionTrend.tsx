@@ -433,6 +433,7 @@ interface ErrorBracketLayerProps {
 
 function ErrorBracketLayer(props: ErrorBracketLayerProps) {
   const { events, errorLookup, firstBucketTime, lastBucketTime, stripTopY, offset } = props;
+  const propKeys = Object.keys(props as Record<string, unknown>).join(",");
 
   // Debug marker: always render a magenta dot at the strip's top-left so we can
   // confirm Customized is firing and where it draws relative to the chart.
@@ -444,6 +445,12 @@ function ErrorBracketLayer(props: ErrorBracketLayerProps) {
         fill="#e879f9" fontSize={10} fontFamily="ui-monospace, monospace"
       >
         cust offL={offset?.left ?? "?"} offW={offset?.width ?? "?"} ev={events.length}
+      </text>
+      <text
+        x={4} y={stripTopY + 18}
+        fill="#e879f9" fontSize={9} fontFamily="ui-monospace, monospace"
+      >
+        keys: {propKeys}
       </text>
     </g>
   );
@@ -977,16 +984,15 @@ export function ProductionTrendSection({
               )}
               {showErrorStrip && (
                 <Customized
-                  component={(props: object) => (
+                  component={
                     <ErrorBracketLayer
                       events={errorEvents}
                       errorLookup={errorLookup}
                       firstBucketTime={firstBucketTime}
                       lastBucketTime={lastBucketTime}
                       stripTopY={220 + ERROR_STRIP_PADDING}
-                      offset={(props as { offset?: ErrorBracketLayerProps["offset"] }).offset}
                     />
-                  )}
+                  }
                 />
               )}
             </LineChart>
