@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceArea, usePlotArea,
@@ -429,6 +430,19 @@ interface ErrorBracketLayerProps {
   stripTopY: number;
 }
 
+function fmtTimeHM(ms: number): string {
+  return format(new Date(ms), "HH:mm:ss");
+}
+function fmtDuration(seconds: number): string {
+  if (seconds < 60) return `${seconds}s`;
+  const m = Math.floor(seconds / 60);
+  const s = seconds % 60;
+  if (m < 60) return s > 0 ? `${m}m ${s}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const mm = m % 60;
+  return mm > 0 ? `${h}h ${mm}m` : `${h}h`;
+}
+
 // Rendered as a direct child of the recharts LineChart. usePlotArea() returns
 // the plot area in chart-SVG coordinates, which gives us a stable horizontal
 // frame to align the bracket strip with the chart's x-axis without depending
@@ -436,6 +450,8 @@ interface ErrorBracketLayerProps {
 function ErrorBracketLayer(props: ErrorBracketLayerProps) {
   const { events, errorLookup, firstBucketTime, lastBucketTime, stripTopY } = props;
   const plotArea = usePlotArea();
+  const [hover, setHover] = useState<{ ev: ErrorEvent; x: number; y: number } | null>(null);
+
   if (!plotArea) return null;
 
   const { items } = packErrorLanes(
@@ -444,60 +460,131 @@ function ErrorBracketLayer(props: ErrorBracketLayerProps) {
   );
   if (items.length === 0) return null;
 
+  const onEnter = (ev: ErrorEvent) => (e: React.MouseEvent<SVGGElement>) => {
+    const rect = (e.currentTarget as SVGGraphicsElement).getBoundingClientRect();
+    setHover({ ev, x: rect.left, y: rect.bottom + 4 });
+  };
+  const onLeave = () => setHover(null);
+
+  const hoverInfo = hover
+    ? (() => {
+        const codeStr = hover.ev.error_code;
+        const info = errorLookup[codeStr];
+        const startMs = new Date(hover.ev.started_at).getTime();
+        const endMs   = hover.ev.ended_at ? new Date(hover.ev.ended_at).getTime() : null;
+        const durSecs = hover.ev.duration_secs
+          ?? (endMs ? Math.round((endMs - startMs) / 1000) : Math.round((Date.now() - startMs) / 1000));
+        return {
+          codeStr,
+          description: info?.description ?? "Unknown",
+          startLabel: fmtTimeHM(startMs),
+          endLabel:   endMs ? fmtTimeHM(endMs) : "ongoing",
+          durLabel:   fmtDuration(durSecs),
+        };
+      })()
+    : null;
+
   return (
-    <g pointerEvents="none">
-      {items.map((it) => {
-        const y = stripTopY + it.lane * ERROR_LANE_HEIGHT + ERROR_LANE_HEIGHT / 2;
-        const labelY = y + ERROR_LABEL_FONT + 1;
-        const centerX = (it.startPx + it.endPx) / 2;
-        const desc = errorLookup[it.ev.error_code]?.description;
-        const title = desc ? `${it.ev.error_code} · ${desc}` : it.ev.error_code;
-        return (
-          <g key={it.ev.id}>
-            <title>{title}</title>
-            <line
-              x1={it.startPx} x2={it.endPx} y1={y} y2={y}
-              stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
-            />
-            {!it.openLeft && (
-              <line
-                x1={it.startPx} x2={it.startPx}
-                y1={y - ERROR_CAP_HEIGHT} y2={y + ERROR_CAP_HEIGHT}
-                stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
-              />
-            )}
-            {!it.openRight && (
-              <line
-                x1={it.endPx} x2={it.endPx}
-                y1={y - ERROR_CAP_HEIGHT} y2={y + ERROR_CAP_HEIGHT}
-                stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
-              />
-            )}
-            {it.openLeft && (
-              <polyline
-                points={`${it.startPx + 4},${y - ERROR_CAP_HEIGHT} ${it.startPx},${y} ${it.startPx + 4},${y + ERROR_CAP_HEIGHT}`}
-                fill="none" stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
-              />
-            )}
-            {it.openRight && (
-              <polyline
-                points={`${it.endPx - 4},${y - ERROR_CAP_HEIGHT} ${it.endPx},${y} ${it.endPx - 4},${y + ERROR_CAP_HEIGHT}`}
-                fill="none" stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
-              />
-            )}
-            <text
-              x={centerX} y={labelY}
-              fill={ERROR_LABEL_COLOR}
-              fontSize={ERROR_LABEL_FONT}
-              fontFamily="ui-monospace, monospace"
-              textAnchor="middle"
+    <>
+      <g>
+        {items.map((it) => {
+          const y = stripTopY + it.lane * ERROR_LANE_HEIGHT + ERROR_LANE_HEIGHT / 2;
+          const labelY = y + ERROR_LABEL_FONT + 1;
+          const centerX = (it.startPx + it.endPx) / 2;
+          // Hit area: spans bracket + label width so thin brackets are still
+          // hoverable. Vertical extent covers cap height + label.
+          const hitX = Math.min(it.startPx, centerX - 14);
+          const hitW = Math.max(it.endPx - it.startPx, 28);
+          return (
+            <g
+              key={it.ev.id}
+              onMouseEnter={onEnter(it.ev)}
+              onMouseLeave={onLeave}
+              style={{ cursor: "default" }}
             >
-              {it.ev.error_code}
-            </text>
-          </g>
-        );
-      })}
-    </g>
+              <rect
+                x={hitX} y={y - ERROR_CAP_HEIGHT - 2}
+                width={hitW} height={ERROR_LANE_HEIGHT}
+                fill="transparent"
+              />
+              <line
+                x1={it.startPx} x2={it.endPx} y1={y} y2={y}
+                stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+                pointerEvents="none"
+              />
+              {!it.openLeft && (
+                <line
+                  x1={it.startPx} x2={it.startPx}
+                  y1={y - ERROR_CAP_HEIGHT} y2={y + ERROR_CAP_HEIGHT}
+                  stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+                  pointerEvents="none"
+                />
+              )}
+              {!it.openRight && (
+                <line
+                  x1={it.endPx} x2={it.endPx}
+                  y1={y - ERROR_CAP_HEIGHT} y2={y + ERROR_CAP_HEIGHT}
+                  stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+                  pointerEvents="none"
+                />
+              )}
+              {it.openLeft && (
+                <polyline
+                  points={`${it.startPx + 4},${y - ERROR_CAP_HEIGHT} ${it.startPx},${y} ${it.startPx + 4},${y + ERROR_CAP_HEIGHT}`}
+                  fill="none" stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+                  pointerEvents="none"
+                />
+              )}
+              {it.openRight && (
+                <polyline
+                  points={`${it.endPx - 4},${y - ERROR_CAP_HEIGHT} ${it.endPx},${y} ${it.endPx - 4},${y + ERROR_CAP_HEIGHT}`}
+                  fill="none" stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+                  pointerEvents="none"
+                />
+              )}
+              <text
+                x={centerX} y={labelY}
+                fill={ERROR_LABEL_COLOR}
+                fontSize={ERROR_LABEL_FONT}
+                fontFamily="ui-monospace, monospace"
+                textAnchor="middle"
+                pointerEvents="none"
+              >
+                {it.ev.error_code}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+      {hover && hoverInfo && typeof document !== "undefined" && createPortal(
+        <div
+          className="fixed z-[9999] bg-slate-800 border border-slate-600 rounded-lg p-3 shadow-xl min-w-[260px] max-w-[420px] pointer-events-none"
+          style={{ left: hover.x, top: hover.y }}
+        >
+          <div className="flex items-baseline gap-2 mb-2 pb-2 border-b border-gray-700">
+            <span className="font-mono text-sm text-red-300">{hoverInfo.codeStr}</span>
+            <span className="text-xs text-gray-300 flex-1">{hoverInfo.description}</span>
+          </div>
+          <table className="w-full text-xs">
+            <tbody>
+              <tr>
+                <td className="py-0.5 pr-3 text-gray-500">Start</td>
+                <td className="py-0.5 font-mono text-gray-200">{hoverInfo.startLabel}</td>
+              </tr>
+              <tr>
+                <td className="py-0.5 pr-3 text-gray-500">End</td>
+                <td className="py-0.5 font-mono text-gray-200">{hoverInfo.endLabel}</td>
+              </tr>
+              <tr>
+                <td className="py-0.5 pr-3 text-gray-500">Duration</td>
+                <td className="py-0.5 font-mono text-gray-200">{hoverInfo.durLabel}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
