@@ -722,8 +722,8 @@ export function ProductionTrendSection({
         )}
       </div>
 
-      {/* Trend charts */}
-      <div className="grid grid-cols-2 gap-4 mb-4">
+      {/* Trend charts — one per row so each gets full width */}
+      <div className="flex flex-col gap-4 mb-4">
         <ChartCard
           title={`Avg Uptime ${chartTitle}`}
           legend={
