@@ -216,7 +216,7 @@ const SPEED_TARGET_FALLBACK = { CB: 2800, CT: 2600 };
 const PERSONALITY = {
   star:        { bucket: "star",        speedMod: 1.03, errorMod: 0.25, scrapBump: -0.005 },
   normal:      { bucket: "normal",      speedMod: 1.00, errorMod: 1.00, scrapBump:  0.000 },
-  problematic: { bucket: "problematic", speedMod: 0.92, errorMod: 2.00, scrapBump:  0.015 },
+  problematic: { bucket: "problematic", speedMod: 0.92, errorMod: 2.00, scrapBump:  0.005 },
 };
 
 function personalityFor(uid) {
@@ -234,10 +234,10 @@ function personalityFor(uid) {
 // ============================================
 // Looked up by exact crew name from shift_assignments. Anything else → DEFAULT_CREW_MOD.
 const CREW_MODS = {
-  "SHIFT A": { speedMod: 1.04, errorDurationMod: 0.70, scrapMod: -0.003 },
+  "SHIFT A": { speedMod: 1.04, errorDurationMod: 0.70, scrapMod: -0.002 },
   "SHIFT B": { speedMod: 1.00, errorDurationMod: 1.00, scrapMod:  0.000 },
   "SHIFT C": { speedMod: 0.98, errorDurationMod: 1.10, scrapMod:  0.000 },
-  "SHIFT D": { speedMod: 0.94, errorDurationMod: 1.40, scrapMod:  0.005 },
+  "SHIFT D": { speedMod: 0.94, errorDurationMod: 1.40, scrapMod:  0.003 },
 };
 const DEFAULT_CREW_MOD = { speedMod: 1.0, errorDurationMod: 1.0, scrapMod: 0 };
 
@@ -265,16 +265,16 @@ function drawShiftP() {
 // SCRAP RATE
 // ============================================
 // Layered model: per-shift baseline + per-tick noise + occasional bad-batch event.
-// Hard ceiling enforced so the dashboard chart never shows above 4%.
-const SCRAP_BASELINE_MIN    = 0.005;  // 0.5%
-const SCRAP_BASELINE_MAX    = 0.025;  // 2.5%
-const SCRAP_TICK_VARIANCE   = 0.004;  // ±0.4pp per tick
-const SCRAP_CEILING         = 0.040;  // 4% hard cap
+// Tuned so the fleet average hovers around 4% scrap with a 5% hard ceiling.
+const SCRAP_BASELINE_MIN    = 0.032;  // 3.2%
+const SCRAP_BASELINE_MAX    = 0.048;  // 4.8%
+const SCRAP_TICK_VARIANCE   = 0.003;  // ±0.3pp per tick
+const SCRAP_CEILING         = 0.050;  // 5% hard cap
 const BAD_BATCH_PROB        = 0.08;   // 8% of shifts have a bad batch event
 const BAD_BATCH_DUR_MIN     = 30;     // minutes
 const BAD_BATCH_DUR_MAX     = 90;
-const BAD_BATCH_ADDER_MIN   = 0.010;  // +1.0pp
-const BAD_BATCH_ADDER_MAX   = 0.015;  // +1.5pp
+const BAD_BATCH_ADDER_MIN   = 0.005;  // +0.5pp
+const BAD_BATCH_ADDER_MAX   = 0.008;  // +0.8pp
 
 function drawShiftBaselineScrap() {
   // Triangular-ish: avg of two uniforms peaks at the midpoint (1.5%)
