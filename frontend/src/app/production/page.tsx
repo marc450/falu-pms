@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig, fetchShiftAssignments, PACKING_FORMATS } from "@/lib/supabase";
+import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig, fetchShiftAssignments, fetchRegisteredMachines, PACKING_FORMATS } from "@/lib/supabase";
 import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat, Thresholds, ShiftConfig } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
@@ -17,6 +17,7 @@ function ProductionContent() {
   const [thresholds, setThresholds] = useState<Thresholds | null>(null);
   const [shiftConfig, setShiftConfig] = useState<ShiftConfig | null>(null);
   const [todayTeams, setTodayTeams] = useState<(string | null)[]>([]);
+  const [displayName, setDisplayName] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
   const failCount = useRef(0);
@@ -52,6 +53,12 @@ function ProductionContent() {
     }
     fetchMachineTargets(machineName)
       .then(setTargets)
+      .catch(() => {});
+    fetchRegisteredMachines()
+      .then((rows) => {
+        const m = rows.find((r) => r.machine_code === machineName);
+        if (m && m.name && m.name !== m.machine_code) setDisplayName(m.name);
+      })
       .catch(() => {});
     fetchThresholds()
       .then(setThresholds)
@@ -307,7 +314,10 @@ function ProductionContent() {
             <i className="bi bi-arrow-left mr-1"></i> Back
           </button>
           <h2 className="text-xl font-bold text-white">
-            Machine Monitor — <span className="text-cyan-400">{machineName}</span>
+            Machine Monitor — <span className="text-cyan-400">{displayName ?? machineName}</span>
+            {displayName && (
+              <span className="text-gray-500 text-sm font-normal ml-2">({machineName})</span>
+            )}
           </h2>
         </div>
         <span className="bg-cyan-900/30 text-cyan-400 text-xs px-3 py-1.5 rounded-full">
