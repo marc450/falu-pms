@@ -433,16 +433,31 @@ interface ErrorBracketLayerProps {
 
 function ErrorBracketLayer(props: ErrorBracketLayerProps) {
   const { events, errorLookup, firstBucketTime, lastBucketTime, stripTopY, offset } = props;
-  if (!offset) return null;
+
+  // Debug marker: always render a magenta dot at the strip's top-left so we can
+  // confirm Customized is firing and where it draws relative to the chart.
+  const debugDot = (
+    <g>
+      <circle cx={offset ? offset.left : 4} cy={stripTopY} r={4} fill="#e879f9" />
+      <text
+        x={offset ? offset.left + 8 : 14} y={stripTopY + 4}
+        fill="#e879f9" fontSize={10} fontFamily="ui-monospace, monospace"
+      >
+        cust offL={offset?.left ?? "?"} offW={offset?.width ?? "?"} ev={events.length}
+      </text>
+    </g>
+  );
+
+  if (!offset) return debugDot;
 
   const { items } = packErrorLanes(
     events, firstBucketTime, lastBucketTime,
     offset.left, offset.left + offset.width,
   );
-  if (items.length === 0) return null;
 
   return (
     <g pointerEvents="none">
+      {debugDot}
       {items.map((it) => {
         const y = stripTopY + it.lane * ERROR_LANE_HEIGHT + ERROR_LANE_HEIGHT / 2;
         const labelY = y + ERROR_LABEL_FONT + 1;
@@ -628,8 +643,8 @@ export function ProductionTrendSection({
   const errorLaneCount = showErrorStrip
     ? packErrorLanes(errorEvents, firstBucketTime, lastBucketTime, 0, 1000).laneCount
     : 0;
-  const errorStripHeight = errorLaneCount > 0
-    ? errorLaneCount * ERROR_LANE_HEIGHT + ERROR_STRIP_PADDING * 2
+  const errorStripHeight = showErrorStrip
+    ? Math.max(1, errorLaneCount) * ERROR_LANE_HEIGHT + ERROR_STRIP_PADDING * 2
     : 0;
 
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
@@ -891,6 +906,11 @@ export function ProductionTrendSection({
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: ERROR_BRACKET_COLOR }} />
                 Errors
+              </span>
+            )}
+            {granularity === "hour" && hasData && (
+              <span className="text-[10px] text-fuchsia-400 font-mono">
+                dbg: ev={errorEvents.length} lanes={errorLaneCount} sh={errorStripHeight}
               </span>
             )}
           </>
