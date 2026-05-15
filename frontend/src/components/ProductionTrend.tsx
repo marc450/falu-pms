@@ -356,9 +356,18 @@ function packErrorLanes(
 
   // The chart plots first-bucket-start at pxLeft and last-bucket-start at
   // pxRight. Linear interpolation between those two anchors keeps the strip
-  // aligned with the line chart's x-axis without depending on recharts internals.
-  const timeToPx = (t: number) =>
-    pxLeft + ((t - firstBucketTime) / (lastBucketTime - firstBucketTime)) * (pxRight - pxLeft);
+  // aligned with the line chart's x-axis. Events that extend past the last
+  // bucket (active errors or errors in the current partial hour) clamp to
+  // pxRight and get the open-right arrow cap.
+  const timeToPx = (t: number) => {
+    if (t <= firstBucketTime) return pxLeft;
+    if (t >= lastBucketTime)  return pxRight;
+    return pxLeft + ((t - firstBucketTime) / (lastBucketTime - firstBucketTime)) * (pxRight - pxLeft);
+  };
+
+  // Effective right edge of the strip's time window — includes the current
+  // partial hour and any active error that's still running.
+  const windowEnd = Math.max(lastBucketTime + 3_600_000, Date.now());
 
   const sorted = [...events].sort((a, b) =>
     new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
@@ -370,9 +379,10 @@ function packErrorLanes(
   for (const ev of sorted) {
     const startMs = new Date(ev.started_at).getTime();
     const endMs   = ev.ended_at ? new Date(ev.ended_at).getTime() : Date.now();
+    if (endMs <= firstBucketTime || startMs >= windowEnd) continue;
 
     const clampedStart = Math.max(firstBucketTime, startMs);
-    const clampedEnd   = Math.min(lastBucketTime,  endMs);
+    const clampedEnd   = Math.min(windowEnd,       endMs);
     if (clampedEnd <= clampedStart) continue;
 
     let startPx = timeToPx(clampedStart);
@@ -405,7 +415,7 @@ function packErrorLanes(
       endPx,
       lane,
       openLeft:  startMs < firstBucketTime,
-      openRight: !ev.ended_at || endMs > lastBucketTime,
+      openRight: !ev.ended_at || endMs > lastBucketTime,  // chart visually ends at last bucket
     });
   }
   return { items, laneCount: lanes.length };
