@@ -6,11 +6,13 @@ import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments, fetchRegisteredMachines, fetchMachineDailyTrend, fetchMachineHourlyTrend,
   fetchMachinePeers, fetchPeersDailyTrend, fetchPeersHourlyTrend,
+  fetchMachineErrorEvents, fetchErrorCodeLookup,
   PACKING_FORMATS,
 } from "@/lib/supabase";
 import type {
   MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat,
   Thresholds, ShiftConfig, FleetTrendRow, DateRange, MachineType,
+  ErrorEvent, PlcErrorCode,
 } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
@@ -50,6 +52,8 @@ function ProductionContent() {
   const [peerRows, setPeerRows] = useState<FleetTrendRow[]>([]);
   const [peerType, setPeerType] = useState<MachineType | null>(null);
   const [peerCount, setPeerCount] = useState<number>(0);
+  const [errorEvents, setErrorEvents] = useState<ErrorEvent[]>([]);
+  const [errorLookup, setErrorLookup] = useState<Record<string, PlcErrorCode>>({});
 
   const loadData = useCallback(async () => {
     if (!machineName) return;
@@ -147,6 +151,19 @@ function ProductionContent() {
             ? await fetchPeersHourlyTrend(peers.peerIds, effectiveRange)
             : await fetchPeersDailyTrend(peers.peerCodes, effectiveRange);
           setPeerRows(peerResult.rows);
+        }
+
+        // Error events are only relevant for the 24h chart annotation layer.
+        // Skip the fetch on other presets to keep daily/weekly views snappy.
+        if (isHourly) {
+          const [events, lookup] = await Promise.all([
+            fetchMachineErrorEvents(machineName, effectiveRange),
+            fetchErrorCodeLookup(),
+          ]);
+          setErrorEvents(events);
+          setErrorLookup(lookup);
+        } else {
+          setErrorEvents([]);
         }
       } catch (e) {
         setTrendError(e instanceof Error ? e.message : "Failed to load trend");
@@ -447,6 +464,8 @@ function ProductionContent() {
             showTotalSwabs={false}
             peerRows={peerRows}
             peerLabel={peerType ? `Peers (${peerType}, ${peerCount})` : undefined}
+            errorEvents={errorEvents}
+            errorLookup={errorLookup}
           />
         </div>
       )}

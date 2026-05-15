@@ -1749,3 +1749,40 @@ export async function fetchErrorShiftSummary(range: DateRange): Promise<ErrorShi
 
   return (data ?? []) as ErrorShiftSummaryRow[];
 }
+
+// ============================================
+// PER MACHINE ERROR EVENT SPANS (for 24h chart annotation)
+// ============================================
+export interface ErrorEvent {
+  id:            number;
+  machine_code:  string;
+  error_code:    string;
+  started_at:    string;        // ISO timestamp
+  ended_at:      string | null; // null while still active
+  duration_secs: number | null;
+}
+
+// Pulls every error_events row for the machine that overlaps the window.
+// error_events has 48h retention so this is safe for any 24h slice.
+export async function fetchMachineErrorEvents(
+  machineCode: string,
+  range: DateRange,
+): Promise<ErrorEvent[]> {
+  const sb = getSupabase();
+  const startIso = range.start.toISOString();
+  const endIso   = range.end.toISOString();
+
+  const { data, error } = await sb
+    .from("error_events")
+    .select("id, machine_code, error_code, started_at, ended_at, duration_secs")
+    .eq("machine_code", machineCode)
+    .lt("started_at", endIso)
+    .or(`ended_at.is.null,ended_at.gt.${startIso}`)
+    .order("started_at", { ascending: true });
+
+  if (error) {
+    console.error("fetchMachineErrorEvents error:", error);
+    return [];
+  }
+  return (data ?? []) as ErrorEvent[];
+}

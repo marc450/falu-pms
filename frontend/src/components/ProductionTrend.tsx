@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea,
+  ResponsiveContainer, ReferenceArea, Customized,
 } from "recharts";
 import {
   format, parseISO,
@@ -12,7 +12,7 @@ import {
 } from "date-fns";
 import { fmtPct } from "@/lib/fmt";
 import { applyEfficiencyColor, applyScrapColor } from "@/lib/supabase";
-import type { DateRange, FleetTrendRow, Thresholds } from "@/lib/supabase";
+import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
 
 // ─── Chart constants ─────────────────────────────────────────────────────────
 
@@ -321,6 +321,173 @@ export function PeriodSelector({
   );
 }
 
+// ─── Error annotation strip (24h chart only) ─────────────────────────────────
+
+const ERROR_BRACKET_COLOR = "#fb923c";  // orange-400
+const ERROR_LABEL_COLOR   = "#fdba74";  // orange-300
+const ERROR_LANE_HEIGHT   = 18;
+const ERROR_STRIP_PADDING = 8;
+const ERROR_LABEL_FONT    = 9;
+const ERROR_LABEL_CHAR_PX = 5.8;        // approx width per char at 9px monospace
+const ERROR_CAP_HEIGHT    = 3;          // half-height of vertical end caps
+
+interface PackedError {
+  ev: ErrorEvent;
+  startPx: number;
+  endPx: number;
+  lane: number;
+  openLeft: boolean;
+  openRight: boolean;
+}
+
+// Greedy lane packing for error spans below the timeline.
+// Lane occupancy reserves the bracket *plus* the centered label width, so two
+// short bursts with overlapping labels still get separated into different lanes.
+function packErrorLanes(
+  events: ErrorEvent[],
+  firstBucketTime: number,
+  lastBucketTime: number,
+  pxLeft: number,
+  pxRight: number,
+): { items: PackedError[]; laneCount: number } {
+  if (events.length === 0 || pxRight <= pxLeft || lastBucketTime <= firstBucketTime) {
+    return { items: [], laneCount: 0 };
+  }
+
+  // The chart plots first-bucket-start at pxLeft and last-bucket-start at
+  // pxRight. Linear interpolation between those two anchors keeps the strip
+  // aligned with the line chart's x-axis without depending on recharts internals.
+  const timeToPx = (t: number) =>
+    pxLeft + ((t - firstBucketTime) / (lastBucketTime - firstBucketTime)) * (pxRight - pxLeft);
+
+  const sorted = [...events].sort((a, b) =>
+    new Date(a.started_at).getTime() - new Date(b.started_at).getTime()
+  );
+
+  const lanes: number[] = [];  // lanes[i] = right-edge px of last placed item
+  const items: PackedError[] = [];
+
+  for (const ev of sorted) {
+    const startMs = new Date(ev.started_at).getTime();
+    const endMs   = ev.ended_at ? new Date(ev.ended_at).getTime() : Date.now();
+
+    const clampedStart = Math.max(firstBucketTime, startMs);
+    const clampedEnd   = Math.min(lastBucketTime,  endMs);
+    if (clampedEnd <= clampedStart) continue;
+
+    let startPx = timeToPx(clampedStart);
+    let endPx   = timeToPx(clampedEnd);
+    startPx = Math.max(pxLeft,  Math.min(pxRight, startPx));
+    endPx   = Math.max(pxLeft,  Math.min(pxRight, endPx));
+    if (endPx - startPx < 2) endPx = startPx + 2;  // ensure visible minimum
+
+    const labelW    = ev.error_code.length * ERROR_LABEL_CHAR_PX + 4;
+    const centerX   = (startPx + endPx) / 2;
+    const occStart  = Math.min(startPx, centerX - labelW / 2);
+    const occEnd    = Math.max(endPx,   centerX + labelW / 2);
+
+    let lane = -1;
+    for (let i = 0; i < lanes.length; i++) {
+      if (lanes[i] + 2 <= occStart) {
+        lane = i;
+        lanes[i] = occEnd;
+        break;
+      }
+    }
+    if (lane === -1) {
+      lanes.push(occEnd);
+      lane = lanes.length - 1;
+    }
+
+    items.push({
+      ev,
+      startPx,
+      endPx,
+      lane,
+      openLeft:  startMs < firstBucketTime,
+      openRight: !ev.ended_at || endMs > lastBucketTime,
+    });
+  }
+  return { items, laneCount: lanes.length };
+}
+
+interface ErrorBracketLayerProps {
+  events: ErrorEvent[];
+  errorLookup: Record<string, PlcErrorCode>;
+  firstBucketTime: number;
+  lastBucketTime: number;
+  stripTopY: number;
+  // Injected by recharts <Customized>:
+  offset?: { left: number; width: number; top: number; height: number };
+}
+
+function ErrorBracketLayer(props: ErrorBracketLayerProps) {
+  const { events, errorLookup, firstBucketTime, lastBucketTime, stripTopY, offset } = props;
+  if (!offset) return null;
+
+  const { items } = packErrorLanes(
+    events, firstBucketTime, lastBucketTime,
+    offset.left, offset.left + offset.width,
+  );
+  if (items.length === 0) return null;
+
+  return (
+    <g pointerEvents="none">
+      {items.map((it) => {
+        const y = stripTopY + it.lane * ERROR_LANE_HEIGHT + ERROR_LANE_HEIGHT / 2;
+        const labelY = y + ERROR_LABEL_FONT + 1;
+        const centerX = (it.startPx + it.endPx) / 2;
+        const desc = errorLookup[it.ev.error_code]?.description;
+        const title = desc ? `${it.ev.error_code} · ${desc}` : it.ev.error_code;
+        return (
+          <g key={it.ev.id}>
+            <title>{title}</title>
+            <line
+              x1={it.startPx} x2={it.endPx} y1={y} y2={y}
+              stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+            />
+            {!it.openLeft && (
+              <line
+                x1={it.startPx} x2={it.startPx}
+                y1={y - ERROR_CAP_HEIGHT} y2={y + ERROR_CAP_HEIGHT}
+                stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+              />
+            )}
+            {!it.openRight && (
+              <line
+                x1={it.endPx} x2={it.endPx}
+                y1={y - ERROR_CAP_HEIGHT} y2={y + ERROR_CAP_HEIGHT}
+                stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+              />
+            )}
+            {it.openLeft && (
+              <polyline
+                points={`${it.startPx + 4},${y - ERROR_CAP_HEIGHT} ${it.startPx},${y} ${it.startPx + 4},${y + ERROR_CAP_HEIGHT}`}
+                fill="none" stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+              />
+            )}
+            {it.openRight && (
+              <polyline
+                points={`${it.endPx - 4},${y - ERROR_CAP_HEIGHT} ${it.endPx},${y} ${it.endPx - 4},${y + ERROR_CAP_HEIGHT}`}
+                fill="none" stroke={ERROR_BRACKET_COLOR} strokeWidth={1.5}
+              />
+            )}
+            <text
+              x={centerX} y={labelY}
+              fill={ERROR_LABEL_COLOR}
+              fontSize={ERROR_LABEL_FONT}
+              fontFamily="ui-monospace, monospace"
+              textAnchor="middle"
+            >
+              {it.ev.error_code}
+            </text>
+          </g>
+        );
+      })}
+    </g>
+  );
+}
+
 // ─── Production Trend section ────────────────────────────────────────────────
 
 const PEER_LINE_COLOR = "#fbbf24"; // amber-400
@@ -339,6 +506,8 @@ export function ProductionTrendSection({
   chartTitleSuffix,
   peerRows = [],
   peerLabel,
+  errorEvents = [],
+  errorLookup = {},
 }: {
   rows: FleetTrendRow[];
   granularity: "hour" | "day";
@@ -353,6 +522,8 @@ export function ProductionTrendSection({
   chartTitleSuffix?: string;
   peerRows?: FleetTrendRow[];
   peerLabel?: string;
+  errorEvents?: ErrorEvent[];
+  errorLookup?: Record<string, PlcErrorCode>;
 }) {
   const hasData    = rows.length > 0;
   const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
@@ -432,6 +603,24 @@ export function ProductionTrendSection({
     ? dailyTickIndices.length
     : (tickInterval === 0 ? rows.length : Math.ceil(rows.length / ((tickInterval ?? 0) + 1)));
   const shouldAngle = visibleTicks > 14;
+
+  // ── Error annotation strip (24h / hourly view only) ──
+  // Lane-pack errors against a dummy 1-unit-wide range first so we know the
+  // lane count without depending on rendered chart width. The actual pixel
+  // positions are computed inside the Customized layer where offset is known.
+  const showErrorStrip = granularity === "hour" && hasData && errorEvents.length > 0;
+  const firstBucketTime = showErrorStrip
+    ? new Date(rows[0].date + ":00:00Z").getTime()
+    : 0;
+  const lastBucketTime = showErrorStrip
+    ? new Date(rows[rows.length - 1].date + ":00:00Z").getTime()
+    : 0;
+  const errorLaneCount = showErrorStrip
+    ? packErrorLanes(errorEvents, firstBucketTime, lastBucketTime, 0, 1000).laneCount
+    : 0;
+  const errorStripHeight = errorLaneCount > 0
+    ? errorLaneCount * ERROR_LANE_HEIGHT + ERROR_STRIP_PADDING * 2
+    : 0;
 
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
   const peerScrapMax = hasPeers ? Math.max(...peerRows.map(r => r.avgScrap)) : 0;
@@ -688,12 +877,18 @@ export function ProductionTrendSection({
                 <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
               </>
             )}
+            {showErrorStrip && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: ERROR_BRACKET_COLOR }} />
+                Errors
+              </span>
+            )}
           </>
         }
       >
         {!hasData ? <NoData /> : (
-          <ResponsiveContainer width="100%" height={220}>
-            <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+          <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
+            <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
               {buTargetLine !== null && (
                 <ReferenceArea y1={buTargetLine} y2={buMax} fill="#4ade80" fillOpacity={0.15} />
               )}
@@ -748,6 +943,20 @@ export function ProductionTrendSection({
                   activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
                   connectNulls
                   isAnimationActive={false}
+                />
+              )}
+              {showErrorStrip && (
+                <Customized
+                  component={(props: object) => (
+                    <ErrorBracketLayer
+                      events={errorEvents}
+                      errorLookup={errorLookup}
+                      firstBucketTime={firstBucketTime}
+                      lastBucketTime={lastBucketTime}
+                      stripTopY={220 + ERROR_STRIP_PADDING}
+                      offset={(props as { offset?: ErrorBracketLayerProps["offset"] }).offset}
+                    />
+                  )}
                 />
               )}
             </LineChart>
