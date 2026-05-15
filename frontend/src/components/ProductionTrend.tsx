@@ -3,7 +3,7 @@
 import { useEffect, useState, useRef } from "react";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea, Customized,
+  ResponsiveContainer, ReferenceArea, usePlotArea,
 } from "recharts";
 import {
   format, parseISO,
@@ -427,44 +427,25 @@ interface ErrorBracketLayerProps {
   firstBucketTime: number;
   lastBucketTime: number;
   stripTopY: number;
-  // Injected by recharts <Customized>:
-  offset?: { left: number; width: number; top: number; height: number };
 }
 
+// Rendered as a direct child of the recharts LineChart. usePlotArea() returns
+// the plot area in chart-SVG coordinates, which gives us a stable horizontal
+// frame to align the bracket strip with the chart's x-axis without depending
+// on the deprecated <Customized> prop-injection pattern.
 function ErrorBracketLayer(props: ErrorBracketLayerProps) {
-  const { events, errorLookup, firstBucketTime, lastBucketTime, stripTopY, offset } = props;
-  const propKeys = Object.keys(props as unknown as Record<string, unknown>).join(",");
-
-  // Debug marker: always render a magenta dot at the strip's top-left so we can
-  // confirm Customized is firing and where it draws relative to the chart.
-  const debugDot = (
-    <g>
-      <circle cx={offset ? offset.left : 4} cy={stripTopY} r={4} fill="#e879f9" />
-      <text
-        x={offset ? offset.left + 8 : 14} y={stripTopY + 4}
-        fill="#e879f9" fontSize={10} fontFamily="ui-monospace, monospace"
-      >
-        cust offL={offset?.left ?? "?"} offW={offset?.width ?? "?"} ev={events.length}
-      </text>
-      <text
-        x={4} y={stripTopY + 18}
-        fill="#e879f9" fontSize={9} fontFamily="ui-monospace, monospace"
-      >
-        keys: {propKeys}
-      </text>
-    </g>
-  );
-
-  if (!offset) return debugDot;
+  const { events, errorLookup, firstBucketTime, lastBucketTime, stripTopY } = props;
+  const plotArea = usePlotArea();
+  if (!plotArea) return null;
 
   const { items } = packErrorLanes(
     events, firstBucketTime, lastBucketTime,
-    offset.left, offset.left + offset.width,
+    plotArea.x, plotArea.x + plotArea.width,
   );
+  if (items.length === 0) return null;
 
   return (
     <g pointerEvents="none">
-      {debugDot}
       {items.map((it) => {
         const y = stripTopY + it.lane * ERROR_LANE_HEIGHT + ERROR_LANE_HEIGHT / 2;
         const labelY = y + ERROR_LABEL_FONT + 1;
@@ -650,8 +631,8 @@ export function ProductionTrendSection({
   const errorLaneCount = showErrorStrip
     ? packErrorLanes(errorEvents, firstBucketTime, lastBucketTime, 0, 1000).laneCount
     : 0;
-  const errorStripHeight = showErrorStrip
-    ? Math.max(1, errorLaneCount) * ERROR_LANE_HEIGHT + ERROR_STRIP_PADDING * 2
+  const errorStripHeight = errorLaneCount > 0
+    ? errorLaneCount * ERROR_LANE_HEIGHT + ERROR_STRIP_PADDING * 2
     : 0;
 
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
@@ -915,11 +896,6 @@ export function ProductionTrendSection({
                 Errors
               </span>
             )}
-            {granularity === "hour" && hasData && (
-              <span className="text-[10px] text-fuchsia-400 font-mono">
-                dbg: ev={errorEvents.length} lanes={errorLaneCount} sh={errorStripHeight}
-              </span>
-            )}
           </>
         }
       >
@@ -983,16 +959,12 @@ export function ProductionTrendSection({
                 />
               )}
               {showErrorStrip && (
-                <Customized
-                  component={
-                    <ErrorBracketLayer
-                      events={errorEvents}
-                      errorLookup={errorLookup}
-                      firstBucketTime={firstBucketTime}
-                      lastBucketTime={lastBucketTime}
-                      stripTopY={220 + ERROR_STRIP_PADDING}
-                    />
-                  }
+                <ErrorBracketLayer
+                  events={errorEvents}
+                  errorLookup={errorLookup}
+                  firstBucketTime={firstBucketTime}
+                  lastBucketTime={lastBucketTime}
+                  stripTopY={220 + ERROR_STRIP_PADDING}
                 />
               )}
             </LineChart>
