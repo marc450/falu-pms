@@ -859,7 +859,7 @@ export function ProductionTrendSection({
                   formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
                 />
                 <Line
-                  type="linear"
+                  type="monotone"
                   dataKey="avgUptime"
                   name="Uptime"
                   stroke="#22d3ee"
@@ -869,7 +869,7 @@ export function ProductionTrendSection({
                 />
                 {hasPeers && (
                   <Line
-                    type="linear"
+                    type="monotone"
                     dataKey="peerUptime"
                     name={peerLabel ?? "Peers"}
                     stroke={PEER_LINE_COLOR}
@@ -933,7 +933,7 @@ export function ProductionTrendSection({
                   formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
                 />
                 <Line
-                  type="linear"
+                  type="monotone"
                   dataKey="avgScrap"
                   name="Scrap"
                   stroke="#22d3ee"
@@ -943,7 +943,7 @@ export function ProductionTrendSection({
                 />
                 {hasPeers && (
                   <Line
-                    type="linear"
+                    type="monotone"
                     dataKey="peerScrap"
                     name={peerLabel ?? "Peers"}
                     stroke={PEER_LINE_COLOR}
@@ -1024,7 +1024,7 @@ export function ProductionTrendSection({
                 formatter={(v, name) => [`${Number(v ?? 0).toLocaleString()} BUs`, String(name)]}
               />
               <Line
-                type="linear"
+                type="monotone"
                 dataKey="totalBU"
                 name="BU Output"
                 stroke="#22d3ee"
@@ -1034,7 +1034,7 @@ export function ProductionTrendSection({
               />
               {hasPeers && (
                 <Line
-                  type="linear"
+                  type="monotone"
                   dataKey="peerBU"
                   name={peerLabel ?? "Peers"}
                   stroke={PEER_LINE_COLOR}
