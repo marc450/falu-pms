@@ -656,6 +656,181 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
 }
 
 // ============================================
+// PER-MACHINE TREND (mirrors fetchFleetTrend / fetchHourlyAnalytics for a single machine)
+// ============================================
+
+export async function fetchMachineDailyTrend(machineCode: string, range: DateRange): Promise<FleetTrendResult> {
+  const sb = getSupabase();
+
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const { data, error } = await sb
+    .from("daily_machine_summary")
+    .select("summary_date, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate")
+    .eq("machine_code", machineCode)
+    .gte("summary_date", fmtDate(range.start))
+    .lt("summary_date",  fmtDate(new Date()))
+    .order("summary_date");
+
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    return { rows: [], granularity: "day", totalReadings: 0 };
+  }
+
+  // daily_machine_summary has one row per (date, shift_label) for this machine.
+  // Roll the shift rows up into one row per day to match FleetTrendRow shape.
+  type DayAcc = {
+    swabs:      number;
+    boxes:      number;
+    discarded:  number;
+    readings:   number;
+    effSum:     number;  // sum of avg_efficiency across shifts (for unweighted day-average)
+    effCount:   number;
+    shiftCount: number;
+  };
+  const byDate = new Map<string, DayAcc>();
+  for (const r of data as Record<string, unknown>[]) {
+    const date = String(r.summary_date);
+    if (!byDate.has(date)) {
+      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, shiftCount: 0 });
+    }
+    const b = byDate.get(date)!;
+    b.swabs     += Number(r.swabs_produced)  || 0;
+    b.boxes     += Number(r.boxes_produced)  || 0;
+    b.discarded += Number(r.discarded_swabs) || 0;
+    b.readings  += Number(r.reading_count)   || 0;
+    const eff = Number(r.avg_efficiency);
+    if (!isNaN(eff)) { b.effSum += eff; b.effCount += 1; }
+    b.shiftCount += 1;
+  }
+
+  const rows: FleetTrendRow[] = Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, b]) => ({
+      date,
+      avgUptime:    b.effCount > 0 ? b.effSum / b.effCount : 0,
+      avgScrap:     b.swabs > 0 ? Math.round((b.discarded / b.swabs) * 1000) / 10 : 0,
+      totalBoxes:   b.boxes,
+      totalSwabs:   b.swabs,
+      machineCount: 1,
+      readingCount: b.readings,
+      shiftCount:   b.shiftCount,
+    }));
+  return { rows, granularity: "day", totalReadings: rows.reduce((s, r) => s + r.readingCount, 0) };
+}
+
+export async function fetchMachineHourlyTrend(machineCode: string, range: DateRange): Promise<FleetTrendResult> {
+  const sb = getSupabase();
+
+  // hourly_analytics is keyed by machine_id (UUID), not machine_code.
+  // Resolve the code → id first, then filter.
+  const { data: machineRow, error: machineErr } = await sb
+    .from("machines")
+    .select("id")
+    .eq("machine_code", machineCode)
+    .maybeSingle();
+  if (machineErr) throw new Error(machineErr.message);
+  if (!machineRow) return { rows: [], granularity: "hour", totalReadings: 0 };
+  const machineId = (machineRow as { id: string }).id;
+
+  const { data, error } = await sb
+    .from("hourly_analytics")
+    .select(
+      "plc_hour, shift_crew, swabs_produced, boxes_produced, " +
+      "production_time_seconds, idle_time_seconds, error_time_seconds, " +
+      "discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate"
+    )
+    .eq("machine_id", machineId)
+    .gte("plc_hour", range.start.toISOString())
+    .lt("plc_hour",  range.end.toISOString())
+    .order("plc_hour");
+
+  if (error) throw new Error(error.message);
+  const rows_raw = (data as unknown) as Array<{
+    plc_hour: string; shift_crew: string;
+    swabs_produced: number; boxes_produced: number;
+    production_time_seconds: number; idle_time_seconds: number; error_time_seconds: number;
+    discarded_swabs: number; reading_count: number;
+    avg_efficiency: number; avg_scrap_rate: number;
+  }> | null;
+  if (!rows_raw || rows_raw.length === 0) {
+    return { rows: [], granularity: "hour", totalReadings: 0 };
+  }
+
+  // Bucket by plc_hour. Each row is already one machine; collapse multiple
+  // shift_crew rows that share the same hour.
+  type HourAcc = {
+    totalSwabs:     number;
+    totalBoxes:     number;
+    totalDiscarded: number;
+    shiftCrews:     Set<string>;
+    readingCount:   number;
+    totalProdSecs:  number;
+  };
+  const bucketMap = new Map<string, HourAcc>();
+  for (const row of rows_raw) {
+    const bucketKey = row.plc_hour.slice(0, 13);
+    if (!bucketMap.has(bucketKey)) {
+      bucketMap.set(bucketKey, {
+        totalSwabs: 0, totalBoxes: 0, totalDiscarded: 0,
+        shiftCrews: new Set(), readingCount: 0, totalProdSecs: 0,
+      });
+    }
+    const b = bucketMap.get(bucketKey)!;
+    b.totalSwabs     += Number(row.swabs_produced)          || 0;
+    b.totalBoxes     += Number(row.boxes_produced)          || 0;
+    b.totalDiscarded += Number(row.discarded_swabs)         || 0;
+    b.readingCount   += Number(row.reading_count)           || 0;
+    b.shiftCrews.add(row.shift_crew);
+    b.totalProdSecs  += Number(row.production_time_seconds) || 0;
+  }
+
+  // Fill every hour in the requested range so the chart has no gaps.
+  // Skip hours that have not fully elapsed — the cron job that aggregates
+  // them hasn't run yet, so an entry would be a false zero bar.
+  const now = new Date();
+  const filledRows: FleetTrendRow[] = [];
+  const cursor = new Date(range.start);
+  cursor.setUTCMinutes(0, 0, 0);
+  while (cursor < range.end) {
+    const key = cursor.toISOString().slice(0, 13);
+    const hourEnd = new Date(cursor);
+    hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
+    if (hourEnd > now) {
+      cursor.setUTCHours(cursor.getUTCHours() + 1);
+      continue;
+    }
+    const b = bucketMap.get(key);
+    if (b) {
+      filledRows.push({
+        date:         key,
+        // For one machine: avgUptime = production_time_seconds / 3600
+        // (% of the hour spent producing). Matches the fleet calculation
+        // divided by 1 instead of machineCount.
+        avgUptime:    Math.round((b.totalProdSecs / 3600) * 1000) / 10,
+        avgScrap:     b.totalSwabs > 0
+          ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
+          : 0,
+        totalBoxes:   b.totalBoxes,
+        totalSwabs:   b.totalSwabs,
+        machineCount: 1,
+        readingCount: b.readingCount,
+        shiftCount:   b.shiftCrews.size,
+      });
+    } else {
+      filledRows.push({
+        date: key, avgUptime: 0, avgScrap: 0, totalBoxes: 0, totalSwabs: 0,
+        machineCount: 0, readingCount: 0, shiftCount: 0,
+      });
+    }
+    cursor.setUTCHours(cursor.getUTCHours() + 1);
+  }
+
+  return { rows: filledRows, granularity: "hour", totalReadings: filledRows.reduce((s, r) => s + r.readingCount, 0) };
+}
+
+// ============================================
 // BRIDGE API CLIENT
 // ============================================
 

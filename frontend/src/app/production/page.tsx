@@ -2,10 +2,21 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import { fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig, fetchShiftAssignments, fetchRegisteredMachines, PACKING_FORMATS } from "@/lib/supabase";
-import type { MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat, Thresholds, ShiftConfig } from "@/lib/supabase";
+import {
+  fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
+  fetchShiftAssignments, fetchRegisteredMachines, fetchMachineDailyTrend, fetchMachineHourlyTrend,
+  PACKING_FORMATS,
+} from "@/lib/supabase";
+import type {
+  MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat,
+  Thresholds, ShiftConfig, FleetTrendRow, DateRange,
+} from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
+import {
+  ProductionTrendSection, PeriodSelector, PRESETS, DEFAULT_PRESET_ID,
+} from "@/components/ProductionTrend";
+import type { Preset, PresetId } from "@/components/ProductionTrend";
 
 function ProductionContent() {
   const searchParams = useSearchParams();
@@ -22,6 +33,16 @@ function ProductionContent() {
   const [loading, setLoading] = useState(true);
   const failCount = useRef(0);
   const router = useRouter();
+
+  // Production Trend state — mirrors the Analytics fleet tab.
+  const [trendPresetId, setTrendPresetId] = useState<PresetId | "custom">(DEFAULT_PRESET_ID);
+  const [trendRange, setTrendRange] = useState<DateRange>(() =>
+    PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange()
+  );
+  const [trendRows, setTrendRows] = useState<FleetTrendRow[]>([]);
+  const [trendGranularity, setTrendGranularity] = useState<"hour" | "day">("day");
+  const [trendLoading, setTrendLoading] = useState(true);
+  const [trendError, setTrendError] = useState<string | null>(null);
 
   const loadData = useCallback(async () => {
     if (!machineName) return;
@@ -83,6 +104,29 @@ function ProductionContent() {
       clearInterval(savedLogsInterval);
     };
   }, [machineName, loadData, loadSavedLogs]);
+
+  // Load production trend for the selected period (mirrors Analytics fleet tab).
+  // 24h preset → hourly data, all other presets → daily.
+  useEffect(() => {
+    if (!machineName) return;
+    setTrendLoading(true);
+    setTrendError(null);
+    // For presets, recompute the range so `end` = now() at call time.
+    const effectiveRange: DateRange =
+      trendPresetId !== "custom"
+        ? PRESETS.find(p => p.id === trendPresetId)!.getRange()
+        : trendRange;
+    const fetcher = trendPresetId === "24h"
+      ? fetchMachineHourlyTrend(machineName, effectiveRange)
+      : fetchMachineDailyTrend(machineName, effectiveRange);
+    fetcher
+      .then(result => {
+        setTrendRows(result.rows);
+        setTrendGranularity(result.granularity);
+      })
+      .catch(e => setTrendError(e instanceof Error ? e.message : "Failed to load trend"))
+      .finally(() => setTrendLoading(false));
+  }, [machineName, trendPresetId, trendRange]);
 
   const status = getStatusColor(machine?.machineStatus?.Status);
 
@@ -416,6 +460,48 @@ function ProductionContent() {
               </span>
             )}
           </div>
+        </div>
+      )}
+
+      {/* ── Production Trend (per-machine history) ── */}
+      {thresholds && (
+        <div className="mt-8">
+          <div className="flex justify-between items-center mb-4 gap-4">
+            <h3 className="text-lg font-semibold text-white">Production Trend</h3>
+            <PeriodSelector
+              activePresetId={trendPresetId}
+              dateRange={trendRange}
+              onPresetSelect={(preset: Preset) => {
+                setTrendPresetId(preset.id);
+                setTrendRange(preset.getRange());
+              }}
+              onCustomRange={(range) => {
+                setTrendPresetId("custom");
+                setTrendRange(range);
+              }}
+            />
+          </div>
+          <ProductionTrendSection
+            rows={trendRows}
+            granularity={trendGranularity}
+            loading={trendLoading}
+            error={trendError}
+            thresholds={{
+              efficiency: {
+                good:     targets?.efficiency_good     ?? thresholds.efficiency.good,
+                mediocre: targets?.efficiency_mediocre ?? thresholds.efficiency.mediocre,
+              },
+              scrap: {
+                good:     targets?.scrap_good     ?? thresholds.scrap.good,
+                mediocre: targets?.scrap_mediocre ?? thresholds.scrap.mediocre,
+              },
+              bu: thresholds.bu,
+            }}
+            buTargetPerShift={targets?.bu_target ?? null}
+            buMediocrePerShift={targets?.bu_mediocre ?? null}
+            dateRange={trendRange}
+            showTotalSwabs={false}
+          />
         </div>
       )}
     </div>
