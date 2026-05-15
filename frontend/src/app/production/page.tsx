@@ -14,7 +14,7 @@ import type {
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
 import {
-  ProductionTrendSection, PeriodSelector, PRESETS, DEFAULT_PRESET_ID,
+  ProductionTrendSection, PeriodSelector, PRESETS,
 } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
 
@@ -35,9 +35,12 @@ function ProductionContent() {
   const router = useRouter();
 
   // Production Trend state — mirrors the Analytics fleet tab.
-  const [trendPresetId, setTrendPresetId] = useState<PresetId | "custom">(DEFAULT_PRESET_ID);
+  // Defaults to 24h on the machine page (vs 7d on Analytics) to match the
+  // "right now" framing of the Machine Monitor.
+  const MACHINE_DEFAULT_PRESET: PresetId = "24h";
+  const [trendPresetId, setTrendPresetId] = useState<PresetId | "custom">(MACHINE_DEFAULT_PRESET);
   const [trendRange, setTrendRange] = useState<DateRange>(() =>
-    PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange()
+    PRESETS.find(p => p.id === MACHINE_DEFAULT_PRESET)!.getRange()
   );
   const [trendRows, setTrendRows] = useState<FleetTrendRow[]>([]);
   const [trendGranularity, setTrendGranularity] = useState<"hour" | "day">("day");
