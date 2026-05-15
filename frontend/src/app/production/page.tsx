@@ -5,11 +5,12 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments, fetchRegisteredMachines, fetchMachineDailyTrend, fetchMachineHourlyTrend,
+  fetchMachinePeers, fetchPeersDailyTrend, fetchPeersHourlyTrend,
   PACKING_FORMATS,
 } from "@/lib/supabase";
 import type {
   MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat,
-  Thresholds, ShiftConfig, FleetTrendRow, DateRange,
+  Thresholds, ShiftConfig, FleetTrendRow, DateRange, MachineType,
 } from "@/lib/supabase";
 import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
@@ -46,6 +47,9 @@ function ProductionContent() {
   const [trendGranularity, setTrendGranularity] = useState<"hour" | "day">("day");
   const [trendLoading, setTrendLoading] = useState(true);
   const [trendError, setTrendError] = useState<string | null>(null);
+  const [peerRows, setPeerRows] = useState<FleetTrendRow[]>([]);
+  const [peerType, setPeerType] = useState<MachineType | null>(null);
+  const [peerCount, setPeerCount] = useState<number>(0);
 
   const loadData = useCallback(async () => {
     if (!machineName) return;
@@ -108,7 +112,7 @@ function ProductionContent() {
     };
   }, [machineName, loadData, loadSavedLogs]);
 
-  // Load production trend for the selected period (mirrors Analytics fleet tab).
+  // Load production trend (machine + peer benchmark) for the selected period.
   // 24h preset → hourly data, all other presets → daily.
   useEffect(() => {
     if (!machineName) return;
@@ -119,16 +123,37 @@ function ProductionContent() {
       trendPresetId !== "custom"
         ? PRESETS.find(p => p.id === trendPresetId)!.getRange()
         : trendRange;
-    const fetcher = trendPresetId === "24h"
-      ? fetchMachineHourlyTrend(machineName, effectiveRange)
-      : fetchMachineDailyTrend(machineName, effectiveRange);
-    fetcher
-      .then(result => {
-        setTrendRows(result.rows);
-        setTrendGranularity(result.granularity);
-      })
-      .catch(e => setTrendError(e instanceof Error ? e.message : "Failed to load trend"))
-      .finally(() => setTrendLoading(false));
+    const isHourly = trendPresetId === "24h";
+
+    (async () => {
+      try {
+        // Self trend first; peer info second. Peers depends on the machine's
+        // machine_type which is read by fetchMachinePeers.
+        const [selfResult, peers] = await Promise.all([
+          isHourly
+            ? fetchMachineHourlyTrend(machineName, effectiveRange)
+            : fetchMachineDailyTrend(machineName, effectiveRange),
+          fetchMachinePeers(machineName),
+        ]);
+        setTrendRows(selfResult.rows);
+        setTrendGranularity(selfResult.granularity);
+        setPeerType(peers.machineType);
+        setPeerCount(peers.peerCodes.length);
+
+        if (peers.peerCodes.length === 0) {
+          setPeerRows([]);
+        } else {
+          const peerResult = isHourly
+            ? await fetchPeersHourlyTrend(peers.peerIds, effectiveRange)
+            : await fetchPeersDailyTrend(peers.peerCodes, effectiveRange);
+          setPeerRows(peerResult.rows);
+        }
+      } catch (e) {
+        setTrendError(e instanceof Error ? e.message : "Failed to load trend");
+      } finally {
+        setTrendLoading(false);
+      }
+    })();
   }, [machineName, trendPresetId, trendRange]);
 
   const status = getStatusColor(machine?.machineStatus?.Status);
@@ -420,6 +445,8 @@ function ProductionContent() {
             buMediocrePerShift={targets?.bu_mediocre ?? null}
             dateRange={trendRange}
             showTotalSwabs={false}
+            peerRows={peerRows}
+            peerLabel={peerType ? `Peers (${peerType}, ${peerCount})` : undefined}
           />
         </div>
       )}

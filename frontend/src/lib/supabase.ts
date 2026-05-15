@@ -112,11 +112,15 @@ export const PACKING_FORMATS = {
 
 export type PackingFormat = keyof typeof PACKING_FORMATS;
 
+export const MACHINE_TYPES = ["CB1", "CT-3000"] as const;
+export type MachineType = typeof MACHINE_TYPES[number];
+
 export interface RegisteredMachine {
   id: string;
   machine_code: string;           // PLC UID — never changes
   name: string;                   // user-editable display name (defaults to machine_code)
   packing_format: PackingFormat | null;
+  machine_type: MachineType | null;
   status: string | null;
   error_message: string | null;
   plc_shift_slot: number | null;
@@ -144,7 +148,7 @@ export async function fetchRegisteredMachines(): Promise<RegisteredMachine[]> {
   const { data, error } = await sb
     .from("machines")
     .select(
-      "id, machine_code, name, packing_format, status, error_message, plc_shift_slot, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
+      "id, machine_code, name, packing_format, machine_type, status, error_message, plc_shift_slot, speed, current_swabs, current_boxes, current_efficiency, current_scrap_rate, last_sync_status, last_sync_shift, cell_id, cell_position, efficiency_good, efficiency_mediocre, scrap_good, scrap_mediocre, bu_target, bu_mediocre, speed_target"
     )
     .eq("hidden", false)
     .order("machine_code");
@@ -241,6 +245,18 @@ export async function updateMachinePackingFormat(
   const { error } = await sb
     .from("machines")
     .update({ packing_format: packing_format || null })
+    .eq("machine_code", machine_code);
+  if (error) throw new Error(error.message);
+}
+
+export async function updateMachineType(
+  machine_code: string,
+  machine_type: MachineType | null
+): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb
+    .from("machines")
+    .update({ machine_type: machine_type ?? null })
     .eq("machine_code", machine_code);
   if (error) throw new Error(error.message);
 }
@@ -815,6 +831,219 @@ export async function fetchMachineHourlyTrend(machineCode: string, range: DateRa
         totalBoxes:   b.totalBoxes,
         totalSwabs:   b.totalSwabs,
         machineCount: 1,
+        readingCount: b.readingCount,
+        shiftCount:   b.shiftCrews.size,
+      });
+    } else {
+      filledRows.push({
+        date: key, avgUptime: 0, avgScrap: 0, totalBoxes: 0, totalSwabs: 0,
+        machineCount: 0, readingCount: 0, shiftCount: 0,
+      });
+    }
+    cursor.setUTCHours(cursor.getUTCHours() + 1);
+  }
+
+  return { rows: filledRows, granularity: "hour", totalReadings: filledRows.reduce((s, r) => s + r.readingCount, 0) };
+}
+
+// ============================================
+// PEER BENCHMARK (machines sharing the same machine_type, excluding self)
+// ============================================
+
+export interface MachinePeers {
+  machineType: MachineType | null;
+  peerCodes:   string[];   // machine_code values
+  peerIds:     string[];   // machine.id values
+}
+
+export async function fetchMachinePeers(machineCode: string): Promise<MachinePeers> {
+  const sb = getSupabase();
+
+  // Resolve the machine_type of the requested machine.
+  const { data: self, error: selfErr } = await sb
+    .from("machines")
+    .select("machine_type")
+    .eq("machine_code", machineCode)
+    .maybeSingle();
+  if (selfErr) throw new Error(selfErr.message);
+  const machineType = (self as { machine_type: MachineType | null } | null)?.machine_type ?? null;
+  if (!machineType) return { machineType: null, peerCodes: [], peerIds: [] };
+
+  // All non-hidden machines of the same type, excluding the requested one.
+  const { data, error } = await sb
+    .from("machines")
+    .select("id, machine_code")
+    .eq("machine_type", machineType)
+    .eq("hidden", false)
+    .neq("machine_code", machineCode);
+  if (error) throw new Error(error.message);
+  const rows = (data ?? []) as Array<{ id: string; machine_code: string }>;
+  return {
+    machineType,
+    peerCodes: rows.map(r => r.machine_code),
+    peerIds:   rows.map(r => r.id),
+  };
+}
+
+// Daily trend aggregated across the given peer machine_codes.
+// Each bucket reports the AVERAGE per peer for swabs/boxes/uptime/scrap,
+// so the line is directly comparable to a single machine's own trend.
+export async function fetchPeersDailyTrend(peerCodes: string[], range: DateRange): Promise<FleetTrendResult> {
+  if (peerCodes.length === 0) {
+    return { rows: [], granularity: "day", totalReadings: 0 };
+  }
+  const sb = getSupabase();
+
+  const fmtDate = (d: Date) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
+  const { data, error } = await sb
+    .from("daily_machine_summary")
+    .select("summary_date, machine_code, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate")
+    .in("machine_code", peerCodes)
+    .gte("summary_date", fmtDate(range.start))
+    .lt("summary_date",  fmtDate(new Date()))
+    .order("summary_date");
+
+  if (error) throw new Error(error.message);
+  if (!data || data.length === 0) {
+    return { rows: [], granularity: "day", totalReadings: 0 };
+  }
+
+  // One row per (date, shift, peer_machine). Aggregate by day across peers.
+  type DayAcc = {
+    swabs:     number;
+    boxes:     number;
+    discarded: number;
+    readings:  number;
+    effSum:    number;
+    effCount:  number;
+    machineIds: Set<string>;
+  };
+  const byDate = new Map<string, DayAcc>();
+  for (const r of data as Record<string, unknown>[]) {
+    const date = String(r.summary_date);
+    if (!byDate.has(date)) {
+      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, machineIds: new Set() });
+    }
+    const b = byDate.get(date)!;
+    b.swabs     += Number(r.swabs_produced)  || 0;
+    b.boxes     += Number(r.boxes_produced)  || 0;
+    b.discarded += Number(r.discarded_swabs) || 0;
+    b.readings  += Number(r.reading_count)   || 0;
+    const eff = Number(r.avg_efficiency);
+    if (!isNaN(eff)) { b.effSum += eff; b.effCount += 1; }
+    b.machineIds.add(String(r.machine_code));
+  }
+
+  const rows: FleetTrendRow[] = Array.from(byDate.entries())
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([date, b]) => {
+      const n = Math.max(1, b.machineIds.size);
+      return {
+        date,
+        // Average efficiency across shifts (already averages out per-peer).
+        avgUptime:    b.effCount > 0 ? b.effSum / b.effCount : 0,
+        // Volume-weighted scrap, same formula as fleet view.
+        avgScrap:     b.swabs > 0 ? Math.round((b.discarded / b.swabs) * 1000) / 10 : 0,
+        // Per-peer averages so the line is directly comparable to one machine.
+        totalBoxes:   b.boxes / n,
+        totalSwabs:   b.swabs / n,
+        machineCount: b.machineIds.size,
+        readingCount: b.readings,
+        shiftCount:   1, // shift normalisation already baked into per-peer average
+      };
+    });
+  return { rows, granularity: "day", totalReadings: rows.reduce((s, r) => s + r.readingCount, 0) };
+}
+
+// Hourly trend aggregated across the given peer machine_ids.
+// Returns one row per hour bucket, averaged across peers.
+export async function fetchPeersHourlyTrend(peerIds: string[], range: DateRange): Promise<FleetTrendResult> {
+  if (peerIds.length === 0) {
+    return { rows: [], granularity: "hour", totalReadings: 0 };
+  }
+  const sb = getSupabase();
+
+  const { data, error } = await sb
+    .from("hourly_analytics")
+    .select(
+      "plc_hour, machine_id, shift_crew, swabs_produced, boxes_produced, " +
+      "production_time_seconds, idle_time_seconds, error_time_seconds, " +
+      "discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate"
+    )
+    .in("machine_id", peerIds)
+    .gte("plc_hour", range.start.toISOString())
+    .lt("plc_hour",  range.end.toISOString())
+    .order("plc_hour");
+
+  if (error) throw new Error(error.message);
+  const rows_raw = (data as unknown) as Array<{
+    plc_hour: string; machine_id: string; shift_crew: string;
+    swabs_produced: number; boxes_produced: number;
+    production_time_seconds: number; idle_time_seconds: number; error_time_seconds: number;
+    discarded_swabs: number; reading_count: number;
+    avg_efficiency: number; avg_scrap_rate: number;
+  }> | null;
+  if (!rows_raw || rows_raw.length === 0) {
+    return { rows: [], granularity: "hour", totalReadings: 0 };
+  }
+
+  type HourAcc = {
+    totalSwabs:     number;
+    totalBoxes:     number;
+    totalDiscarded: number;
+    machineIds:     Set<string>;
+    shiftCrews:     Set<string>;
+    readingCount:   number;
+    totalProdSecs:  number;
+  };
+  const bucketMap = new Map<string, HourAcc>();
+  for (const row of rows_raw) {
+    const bucketKey = row.plc_hour.slice(0, 13);
+    if (!bucketMap.has(bucketKey)) {
+      bucketMap.set(bucketKey, {
+        totalSwabs: 0, totalBoxes: 0, totalDiscarded: 0,
+        machineIds: new Set(), shiftCrews: new Set(),
+        readingCount: 0, totalProdSecs: 0,
+      });
+    }
+    const b = bucketMap.get(bucketKey)!;
+    b.totalSwabs     += Number(row.swabs_produced)          || 0;
+    b.totalBoxes     += Number(row.boxes_produced)          || 0;
+    b.totalDiscarded += Number(row.discarded_swabs)         || 0;
+    b.readingCount   += Number(row.reading_count)           || 0;
+    b.totalProdSecs  += Number(row.production_time_seconds) || 0;
+    b.machineIds.add(row.machine_id);
+    b.shiftCrews.add(row.shift_crew);
+  }
+
+  const now = new Date();
+  const filledRows: FleetTrendRow[] = [];
+  const cursor = new Date(range.start);
+  cursor.setUTCMinutes(0, 0, 0);
+  while (cursor < range.end) {
+    const key = cursor.toISOString().slice(0, 13);
+    const hourEnd = new Date(cursor);
+    hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
+    if (hourEnd > now) {
+      cursor.setUTCHours(cursor.getUTCHours() + 1);
+      continue;
+    }
+    const b = bucketMap.get(key);
+    if (b) {
+      const n = Math.max(1, b.machineIds.size);
+      filledRows.push({
+        date:         key,
+        // Average % of hour spent producing across the peers present this hour.
+        avgUptime:    Math.round((b.totalProdSecs / (n * 3600)) * 1000) / 10,
+        avgScrap:     b.totalSwabs > 0
+          ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
+          : 0,
+        // Per-peer averages for direct comparison with a single machine.
+        totalBoxes:   b.totalBoxes / n,
+        totalSwabs:   b.totalSwabs / n,
+        machineCount: b.machineIds.size,
         readingCount: b.readingCount,
         shiftCount:   b.shiftCrews.size,
       });

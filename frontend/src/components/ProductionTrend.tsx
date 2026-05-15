@@ -323,6 +323,8 @@ export function PeriodSelector({
 
 // ─── Production Trend section ────────────────────────────────────────────────
 
+const PEER_LINE_COLOR = "#fbbf24"; // amber-400
+
 export function ProductionTrendSection({
   rows,
   granularity,
@@ -335,6 +337,8 @@ export function ProductionTrendSection({
   showTotalSwabs = true,
   kpiSubLabel = "Selected period",
   chartTitleSuffix,
+  peerRows = [],
+  peerLabel,
 }: {
   rows: FleetTrendRow[];
   granularity: "hour" | "day";
@@ -347,6 +351,8 @@ export function ProductionTrendSection({
   showTotalSwabs?: boolean;
   kpiSubLabel?: string;
   chartTitleSuffix?: string;
+  peerRows?: FleetTrendRow[];
+  peerLabel?: string;
 }) {
   const hasData    = rows.length > 0;
   const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
@@ -357,9 +363,31 @@ export function ProductionTrendSection({
   const shiftHours   = thresholds.bu.shiftLengthMinutes / 60 || 8;
   const shiftsPerDay = Math.max(1, Math.round(24 / shiftHours));
 
+  // Peer benchmark series. Aligned to the same date keys as `rows`; missing
+  // buckets render as line breaks (recharts skips null y-values with monotone).
+  const hasPeers = peerRows.length > 0;
+  const peerByDate = new Map(peerRows.map(r => [r.date, r]));
+  const peerAvgUptime = hasPeers ? peerRows.reduce((s, d) => s + d.avgUptime, 0) / peerRows.length : null;
+  const peerAvgScrap  = hasPeers ? peerRows.reduce((s, d) => s + d.avgScrap,  0) / peerRows.length : null;
+  // Peer fetchers already return per-peer averages, so summing into BUs gives
+  // "BUs per peer in this period" — directly comparable to the machine's own.
+  const peerTotalSwabs = peerRows.reduce((s, d) => s + d.totalSwabs, 0);
+  const peerTotalBUs   = Math.round(peerTotalSwabs / 7200);
+
+  const rowsWithPeer = rows.map(r => {
+    const p = peerByDate.get(r.date);
+    return {
+      ...r,
+      peerUptime: p ? p.avgUptime : null,
+      peerScrap:  p ? p.avgScrap  : null,
+    };
+  });
+
   const buRows = rows.map(r => {
     const totalBU = Math.round((r.totalSwabs / 7200) * 10) / 10;
-    return { ...r, totalBU };
+    const p = peerByDate.get(r.date);
+    const peerBU = p ? Math.round((p.totalSwabs / 7200) * 10) / 10 : null;
+    return { ...r, totalBU, peerBU };
   });
 
   const buTargetLine = buTargetPerShift !== null
@@ -406,10 +434,33 @@ export function ProductionTrendSection({
   const shouldAngle = visibleTicks > 14;
 
   const scrapDataMax = hasData ? Math.max(...rows.map(r => r.avgScrap)) : 0;
-  const scrapMax     = Math.ceil(Math.max(scrapDataMax, thresholds.scrap.mediocre) + 1);
+  const peerScrapMax = hasPeers ? Math.max(...peerRows.map(r => r.avgScrap)) : 0;
+  const scrapMax     = Math.ceil(Math.max(scrapDataMax, peerScrapMax, thresholds.scrap.mediocre) + 1);
 
-  const buDataMax = hasData ? Math.max(...buRows.map(r => r.totalBU)) : 0;
-  const buMax     = Math.ceil(Math.max(buDataMax, buTargetLine ?? 0, buMediocreLine ?? 0) * 1.15);
+  const buDataMax     = hasData ? Math.max(...buRows.map(r => r.totalBU)) : 0;
+  const peerBuDataMax = hasPeers ? Math.max(...peerRows.map(r => Math.round((r.totalSwabs / 7200) * 10) / 10)) : 0;
+  const buMax         = Math.ceil(Math.max(buDataMax, peerBuDataMax, buTargetLine ?? 0, buMediocreLine ?? 0) * 1.15);
+
+  // Delta subtext helpers — appear below KPI tile value when peers are present.
+  // For uptime and BU, higher is better → "+" means above peers.
+  // For scrap, lower is better → "+" means worse than peers.
+  const fmtDeltaPP = (selfV: number | null, peerV: number | null) => {
+    if (selfV === null || peerV === null) return null;
+    const d = selfV - peerV;
+    const sign = d > 0 ? "+" : "";
+    return `${sign}${d.toFixed(1)} pp vs peers`;
+  };
+  const fmtDeltaBU = (selfV: number, peerV: number) => {
+    if (peerV <= 0) return null;
+    const d = selfV - peerV;
+    const sign = d > 0 ? "+" : "";
+    return `${sign}${d.toLocaleString()} BUs vs peers`;
+  };
+  const uptimeSub = hasPeers ? fmtDeltaPP(avgUptime, peerAvgUptime) ?? kpiSubLabel : kpiSubLabel;
+  const scrapSub  = hasPeers ? fmtDeltaPP(avgScrap,  peerAvgScrap)  ?? kpiSubLabel : kpiSubLabel;
+  const buSub     = hasPeers
+    ? (fmtDeltaBU(totalBUs, peerTotalBUs) ?? (buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`))
+    : (buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`);
 
   const chartTitle = chartTitleSuffix ?? (granularity === "hour" ? "— hourly" : "— daily");
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity);
@@ -437,7 +488,7 @@ export function ProductionTrendSection({
           icon="bi-speedometer2"
           label="Avg Uptime"
           value={fmtPct(avgUptime, 1)}
-          sub={kpiSubLabel}
+          sub={uptimeSub}
           colorClass={ec.text}
           borderClass={ec.border}
         />
@@ -445,7 +496,7 @@ export function ProductionTrendSection({
           icon="bi-exclamation-triangle"
           label="Avg Scrap Rate"
           value={fmtPct(avgScrap, 1)}
-          sub={kpiSubLabel}
+          sub={scrapSub}
           colorClass={sc.text}
           borderClass={sc.border}
         />
@@ -453,7 +504,7 @@ export function ProductionTrendSection({
           icon="bi-bullseye"
           label="Total BU Output"
           value={totalBUs > 0 ? totalBUs.toLocaleString() : "—"}
-          sub={buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`}
+          sub={buSub}
           colorClass={buKpiColor.text}
           borderClass={buKpiColor.border}
         />
@@ -475,6 +526,12 @@ export function ProductionTrendSection({
           title={`Avg Uptime ${chartTitle}`}
           legend={
             <>
+              {hasPeers && peerLabel && (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: PEER_LINE_COLOR }} />
+                  {peerLabel}
+                </span>
+              )}
               <ZoneLegend color="#4ade80" label={`Good (≥${fmtPct(thresholds.efficiency.good, 1)})`} />
               <ZoneLegend color="#eab308" label={`Mediocre (≥${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
               <ZoneLegend color="#ef4444" label={`Poor (<${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
@@ -483,7 +540,7 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <LineChart data={rowsWithPeer} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                 <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
@@ -509,7 +566,7 @@ export function ProductionTrendSection({
                   labelStyle={TOOLTIP_LABEL_STYLE}
                   itemStyle={TOOLTIP_ITEM_STYLE}
                   labelFormatter={(l) => fmtLabel(l as string)}
-                  formatter={(v) => [fmtPct(Number(v ?? 0), 1), "Uptime"]}
+                  formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
                 />
                 <Line
                   type="monotone"
@@ -520,6 +577,20 @@ export function ProductionTrendSection({
                   dot={false}
                   activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
                 />
+                {hasPeers && (
+                  <Line
+                    type="monotone"
+                    dataKey="peerUptime"
+                    name={peerLabel ?? "Peers"}
+                    stroke={PEER_LINE_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -529,6 +600,12 @@ export function ProductionTrendSection({
           title={`Avg Scrap Rate ${chartTitle}`}
           legend={
             <>
+              {hasPeers && peerLabel && (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: PEER_LINE_COLOR }} />
+                  {peerLabel}
+                </span>
+              )}
               <ZoneLegend color="#4ade80" label={`Good (≤${fmtPct(thresholds.scrap.good, 1)})`} />
               <ZoneLegend color="#eab308" label={`Mediocre (≤${fmtPct(thresholds.scrap.mediocre, 1)})`} />
               <ZoneLegend color="#ef4444" label={`Poor (>${fmtPct(thresholds.scrap.mediocre, 1)})`} />
@@ -537,7 +614,7 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={rows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <LineChart data={rowsWithPeer} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                 <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={thresholds.scrap.mediocre} y2={scrapMax} fill="#ef4444" fillOpacity={0.12} />
@@ -563,7 +640,7 @@ export function ProductionTrendSection({
                   labelStyle={TOOLTIP_LABEL_STYLE}
                   itemStyle={TOOLTIP_ITEM_STYLE}
                   labelFormatter={(l) => fmtLabel(l as string)}
-                  formatter={(v) => [fmtPct(Number(v ?? 0), 1), "Scrap"]}
+                  formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
                 />
                 <Line
                   type="monotone"
@@ -574,6 +651,20 @@ export function ProductionTrendSection({
                   dot={false}
                   activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
                 />
+                {hasPeers && (
+                  <Line
+                    type="monotone"
+                    dataKey="peerScrap"
+                    name={peerLabel ?? "Peers"}
+                    stroke={PEER_LINE_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                )}
               </LineChart>
             </ResponsiveContainer>
           )}
@@ -582,13 +673,23 @@ export function ProductionTrendSection({
 
       <ChartCard
         title={`Total BU Output ${chartTitle}`}
-        legend={buTargetLine !== null ? (
+        legend={
           <>
-            <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTargetLine).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/day"})`} />
-            <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
-            <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
+            {hasPeers && peerLabel && (
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: PEER_LINE_COLOR }} />
+                {peerLabel}
+              </span>
+            )}
+            {buTargetLine !== null && (
+              <>
+                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTargetLine).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/day"})`} />
+                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
+                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
+              </>
+            )}
           </>
-        ) : undefined}
+        }
       >
         {!hasData ? <NoData /> : (
           <ResponsiveContainer width="100%" height={220}>
@@ -624,7 +725,7 @@ export function ProductionTrendSection({
                 labelStyle={TOOLTIP_LABEL_STYLE}
                 itemStyle={TOOLTIP_ITEM_STYLE}
                 labelFormatter={(l) => fmtLabel(l as string)}
-                formatter={(v) => [`${Number(v ?? 0).toLocaleString()} BUs`, "BU Output"]}
+                formatter={(v, name) => [`${Number(v ?? 0).toLocaleString()} BUs`, String(name)]}
               />
               <Line
                 type="monotone"
@@ -635,6 +736,20 @@ export function ProductionTrendSection({
                 dot={false}
                 activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
               />
+              {hasPeers && (
+                <Line
+                  type="monotone"
+                  dataKey="peerBU"
+                  name={peerLabel ?? "Peers"}
+                  stroke={PEER_LINE_COLOR}
+                  strokeWidth={1.5}
+                  strokeDasharray="4 3"
+                  dot={false}
+                  activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
+                  connectNulls
+                  isAnimationActive={false}
+                />
+              )}
             </LineChart>
           </ResponsiveContainer>
         )}

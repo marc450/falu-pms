@@ -10,6 +10,8 @@ import {
   assignMachineToCell,
   updateCellOrder,
   updateMachinePackingFormat,
+  updateMachineType,
+  MACHINE_TYPES,
   renameMachine,
   updateMachineTargets,
   updateMachineTargetsBulk,
@@ -39,7 +41,7 @@ import {
   fetchFactoryTimezone,
   saveFactoryTimezone,
 } from "@/lib/supabase";
-import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile, ShiftMechanics, DowntimeAlertConfig } from "@/lib/supabase";
+import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineType, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile, ShiftMechanics, DowntimeAlertConfig } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
 import { fmtH } from "@/lib/fmt";
 
@@ -259,6 +261,15 @@ function MachinesTab() {
     await updateMachinePackingFormat(code, format);
   };
 
+  const handleTypeChange = async (code: string, type: MachineType | null) => {
+    setMachines((prev) =>
+      prev.map((m) =>
+        m.machine_code === code ? { ...m, machine_type: type } : m
+      )
+    );
+    await updateMachineType(code, type);
+  };
+
   const startRenameMachine = (m: RegisteredMachine) => {
     setRenamingMachine(m.machine_code);
     setMachineRenameValue(m.name || m.machine_code);
@@ -287,11 +298,13 @@ function MachinesTab() {
             code={m.machine_code}
             name={m.name || m.machine_code}
             packingFormat={m.packing_format}
+            machineType={m.machine_type}
             isDragging={dragging === m.machine_code}
             isRenaming={renamingMachine === m.machine_code}
             renameValue={machineRenameValue}
             renameInputRef={renamingMachine === m.machine_code ? machineRenameInputRef : undefined}
             onFormatChange={(fmt) => handleFormatChange(m.machine_code, fmt)}
+            onTypeChange={(t) => handleTypeChange(m.machine_code, t)}
             onDragStart={() => setDragging(m.machine_code)}
             onDragEnd={() => { setDragging(null); setDropTarget(null); }}
             onChipDragOver={(e) => {
@@ -510,11 +523,13 @@ function MachineChip({
   code,
   name,
   packingFormat,
+  machineType,
   isDragging,
   isRenaming,
   renameValue,
   renameInputRef,
   onFormatChange,
+  onTypeChange,
   onDragStart,
   onDragEnd,
   onChipDragOver,
@@ -527,11 +542,13 @@ function MachineChip({
   code: string;
   name?: string;
   packingFormat?: PackingFormat | null;
+  machineType?: MachineType | null;
   isDragging?: boolean;
   isRenaming?: boolean;
   renameValue?: string;
   renameInputRef?: React.RefObject<HTMLInputElement | null>;
   onFormatChange?: (fmt: PackingFormat | null) => void;
+  onTypeChange?: (t: MachineType | null) => void;
   onDragStart?: () => void;
   onDragEnd?: () => void;
   onChipDragOver?: (e: React.DragEvent) => void;
@@ -608,31 +625,45 @@ function MachineChip({
         )}
       </div>
 
-      {/* Bottom row: packing format dropdown + delete */}
+      {/* Bottom rows: packing format dropdown, then machine type dropdown, then delete */}
       {!isRenaming && (
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-1.5">
+          <div className="flex items-center gap-2">
+            <select
+              value={packingFormat ?? ""}
+              onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="flex-1 min-w-0 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
+              title="Packing format"
+            >
+              <option value="">— format</option>
+              {(Object.entries(PACKING_FORMATS) as [PackingFormat, string][]).map(([key, label]) => (
+                <option key={key} value={key}>{label}</option>
+              ))}
+            </select>
+            {onDelete && (
+              <button
+                onPointerDown={(e) => e.stopPropagation()}
+                onClick={(e) => { e.stopPropagation(); onDelete(); }}
+                className="text-gray-500 hover:text-red-400 transition-colors shrink-0"
+                title="Remove machine"
+              >
+                <i className="bi bi-x-lg text-xs"></i>
+              </button>
+            )}
+          </div>
           <select
-            value={packingFormat ?? ""}
-            onChange={(e) => onFormatChange?.((e.target.value as PackingFormat) || null)}
+            value={machineType ?? ""}
+            onChange={(e) => onTypeChange?.((e.target.value as MachineType) || null)}
             onPointerDown={(e) => e.stopPropagation()}
-            className="flex-1 min-w-0 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
-            title="Packing format"
+            className="w-full text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
+            title="Machine type"
           >
-            <option value="">— format</option>
-            {(Object.entries(PACKING_FORMATS) as [PackingFormat, string][]).map(([key, label]) => (
-              <option key={key} value={key}>{label}</option>
+            <option value="">— type</option>
+            {MACHINE_TYPES.map(t => (
+              <option key={t} value={t}>{t}</option>
             ))}
           </select>
-          {onDelete && (
-            <button
-              onPointerDown={(e) => e.stopPropagation()}
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              className="text-gray-500 hover:text-red-400 transition-colors shrink-0"
-              title="Remove machine"
-            >
-              <i className="bi bi-x-lg text-xs"></i>
-            </button>
-          )}
         </div>
       )}
       </div>
