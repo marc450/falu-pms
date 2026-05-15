@@ -10,7 +10,7 @@ import { updateUserProfile, changePassword } from "@/lib/supabase";
 function FaluLogo({ className }: { className?: string }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
   // eslint-disable-next-line @next/next/no-img-element
-  return <img src={`${basePath}/falu-logo.png`} alt="Logo" className={className} />;
+  return <img src={`${basePath}/falu-logo.svg`} alt="Logo" className={className} />;
 }
 
 // ─────────────────────────────────────────────────────────────
