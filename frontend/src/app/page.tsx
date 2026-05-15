@@ -197,15 +197,15 @@ function SortHeader({
 }
 
 function sortMachineList(
-  list: MachineData[],
+  list: DashboardMachine[],
   col: SortColumn,
   asc: boolean
-): MachineData[] {
+): DashboardMachine[] {
   return [...list].sort((a, b) => {
     let aVal: string | number = 0;
     let bVal: string | number = 0;
     switch (col) {
-      case "Machine":    aVal = a.machine; bVal = b.machine; break;
+      case "Machine":    aVal = a.displayName ?? a.machine; bVal = b.displayName ?? b.machine; break;
       case "Status":     aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
       case "Speed":      aVal = a.machineStatus?.Speed || 0; bVal = b.machineStatus?.Speed || 0; break;
       case "IdleTime": {
@@ -369,7 +369,7 @@ function sortCellMachines(
     let bVal: string | number = 0;
     switch (col) {
       case "Position": aVal = a.cellPosition ?? 0; bVal = b.cellPosition ?? 0; break;
-      case "Machine": aVal = a.machine; bVal = b.machine; break;
+      case "Machine": aVal = a.displayName ?? a.machine; bVal = b.displayName ?? b.machine; break;
       case "Status":  aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
       case "Uptime":    aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
       case "Scrap":     aVal = a.machineStatus?.Reject     || 0; bVal = b.machineStatus?.Reject     || 0; break;
