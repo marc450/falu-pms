@@ -369,97 +369,13 @@ function ProductionContent() {
         </span>
       </div>
 
-      {offline || !machine ? (
+      {(offline || !machine) && (
         <div className="bg-gray-800/50 border border-gray-700 rounded-lg px-6 py-12 flex flex-col items-center gap-3 text-center">
           <i className="bi bi-wifi-off text-4xl text-gray-600"></i>
           <p className="text-gray-300 font-medium">Machine Offline</p>
           <p className="text-gray-500 text-sm max-w-sm">
             <span className="text-cyan-400 font-mono">{machineName}</span> is not currently connected to the MQTT bridge. Live shift data will appear here automatically once the machine comes online.
           </p>
-        </div>
-      ) : (
-        <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-          {/* Card header */}
-          <div className="bg-gray-700/60 border-b border-gray-600 px-5 py-3 flex justify-between items-center">
-            <h4 className="text-white font-semibold"><span className="text-cyan-400">{machine.machine}</span> — Shift Data</h4>
-            <div className="flex items-center gap-2">
-              <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium ${status.bg} ${status.text}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${status.dot}`}></span>
-                {formatStatus(machine.machineStatus?.Status)}
-              </span>
-              <span className="bg-gray-700/50 text-gray-300 text-xs px-2.5 py-1 rounded-full">
-                Last Request: {machine.lastRequestShift
-                  ? new Date(machine.lastRequestShift).toLocaleTimeString("de-DE")
-                  : "---"}
-              </span>
-            </div>
-          </div>
-
-          {/* Shift data table */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-center text-gray-400 border-b border-gray-700">
-                  <th className="px-4 py-3 text-left w-1/5 font-medium">Metric</th>
-                  {crewNames.map(crew => (
-                    <th key={crew} className={`px-4 py-3 font-medium ${crew === currentCrew ? "bg-cyan-600 text-white" : "text-cyan-400"}`}>
-                      {crew}
-                    </th>
-                  ))}
-                  <th className="px-4 py-3 font-medium text-cyan-400">Total</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-700/50">
-                {metrics.map((metric) => (
-                  <tr key={metric.key} className="hover:bg-white/5">
-                    <td className="px-4 py-2.5 font-medium text-gray-200">{metric.label}</td>
-                    {crewNames.map(crew => (
-                      <td key={crew} className={`px-4 py-2.5 text-center ${shiftCellClass(crew)} ${cellColor(metric, crewData(crew))}`}>
-                        {renderShiftValue(crewData(crew), metric.key, metric.format)}
-                      </td>
-                    ))}
-                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
-                      {renderShiftValue(totalData(), metric.key, metric.format)}
-                    </td>
-                  </tr>
-                ))}
-                {/* Errors section separator */}
-                <tr className="bg-gray-900/40">
-                  <td colSpan={crewNames.length + 2} className="px-4 py-2 text-xs font-semibold text-gray-500 uppercase tracking-wider border-t border-gray-600">
-                    <i className="bi bi-exclamation-triangle mr-1.5"></i>Errors
-                  </td>
-                </tr>
-                {errorMetrics.map((metric) => (
-                  <tr key={metric.key} className="hover:bg-white/5 bg-gray-900/20">
-                    <td className="px-4 py-2.5 font-medium text-gray-300">{metric.label}</td>
-                    {crewNames.map(crew => (
-                      <td key={crew} className={`px-4 py-2.5 text-center ${shiftCellClass(crew)} ${cellColor(metric, crewData(crew))}`}>
-                        {renderShiftValue(crewData(crew), metric.key, metric.format)}
-                      </td>
-                    ))}
-                    <td className={`px-4 py-2.5 text-center ${cellColor(metric, totalData())}`}>
-                      {renderShiftValue(totalData(), metric.key, metric.format)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-
-          {/* Footer */}
-          <div className="px-5 py-3 border-t border-gray-700 flex justify-between text-xs text-gray-500">
-            <span>
-              Last Update:{" "}
-              {machine.lastSyncShift
-                ? new Date(machine.lastSyncShift).toLocaleTimeString("de-DE")
-                : "---"}
-            </span>
-            {machine.lastSyncShift && (
-              <span className="text-green-400">
-                <i className="bi bi-check-circle mr-1"></i> Data synchronized
-              </span>
-            )}
-          </div>
         </div>
       )}
 
