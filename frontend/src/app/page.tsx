@@ -27,7 +27,7 @@ import { getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
 
 type SortColumn  = "Machine" | "Status" | "Speed" | "IdleTime" | "ErrorTime" | "Efficiency" | "Reject" | "LastSync";
-type CellSortCol = "Machine" | "Status" | "Uptime" | "Scrap" | "TotalBU" | "BU" | "Speed" | "IdleTime" | "ErrorTime" | "Sync";
+type CellSortCol = "Position" | "Machine" | "Status" | "Uptime" | "Scrap" | "TotalBU" | "BU" | "Speed" | "IdleTime" | "ErrorTime" | "Sync";
 
 type DashboardMachine = MachineData & {
   cellId?: string | null;
@@ -368,6 +368,7 @@ function sortCellMachines(
     let aVal: string | number = 0;
     let bVal: string | number = 0;
     switch (col) {
+      case "Position": aVal = a.cellPosition ?? 0; bVal = b.cellPosition ?? 0; break;
       case "Machine": aVal = a.machine; bVal = b.machine; break;
       case "Status":  aVal = a.machineStatus?.Status || "zzz"; bVal = b.machineStatus?.Status || "zzz"; break;
       case "Uptime":    aVal = a.machineStatus?.Efficiency || 0; bVal = b.machineStatus?.Efficiency || 0; break;
@@ -435,7 +436,7 @@ function CellSection({
   errorLookup: Record<string, PlcErrorCode>;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const [sortCol, setSortCol]   = useState<CellSortCol>("Machine");
+  const [sortCol, setSortCol]   = useState<CellSortCol>("Position");
   const [sortAsc, setSortAsc]   = useState(true);
   const plannedDowntimeMins = thresholds.bu.plannedDowntimeMinutes ?? 0;
 
