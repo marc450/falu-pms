@@ -652,18 +652,26 @@ function MachineChip({
               </button>
             )}
           </div>
-          <select
-            value={machineType ?? ""}
-            onChange={(e) => onTypeChange?.((e.target.value as MachineType) || null)}
-            onPointerDown={(e) => e.stopPropagation()}
-            className="w-full text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
-            title="Machine type"
-          >
-            <option value="">— type</option>
-            {MACHINE_TYPES.map(t => (
-              <option key={t} value={t}>{t}</option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <select
+              value={machineType ?? ""}
+              onChange={(e) => onTypeChange?.((e.target.value as MachineType) || null)}
+              onPointerDown={(e) => e.stopPropagation()}
+              className="flex-1 min-w-0 text-xs bg-gray-800 border border-gray-600 rounded px-1.5 py-0.5 text-gray-300 cursor-pointer focus:border-cyan-500 outline-none hover:border-gray-400"
+              title="Machine type"
+            >
+              <option value="">— type</option>
+              {MACHINE_TYPES.map(t => (
+                <option key={t} value={t}>{t}</option>
+              ))}
+            </select>
+            {/* Invisible spacer so this dropdown ends at the same X as the format row above */}
+            {onDelete && (
+              <span className="invisible shrink-0" aria-hidden="true">
+                <i className="bi bi-x-lg text-xs"></i>
+              </span>
+            )}
+          </div>
         </div>
       )}
       </div>
