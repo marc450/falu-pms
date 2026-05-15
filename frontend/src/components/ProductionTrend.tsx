@@ -463,7 +463,27 @@ function ErrorBracketLayer(props: ErrorBracketLayerProps) {
 
   const onEnter = (ev: ErrorEvent) => (e: React.MouseEvent<SVGGElement>) => {
     const rect = (e.currentTarget as SVGGraphicsElement).getBoundingClientRect();
-    setHover({ ev, x: rect.left, y: rect.bottom + 4 });
+    // Viewport-aware placement so the tooltip is never clipped at the bottom
+    // or right edge of the screen. Dimensions are estimated worst-case from
+    // the tooltip's min/max-width and content; an overshoot of a few pixels
+    // is fine because the tooltip itself flexes around its content.
+    const TT_WIDTH  = 300;
+    const TT_HEIGHT = 130;
+    const MARGIN    = 8;
+
+    let y = rect.bottom + 4;
+    if (y + TT_HEIGHT + MARGIN > window.innerHeight) {
+      y = rect.top - TT_HEIGHT - 4;
+    }
+    y = Math.max(MARGIN, y);
+
+    let x = rect.left;
+    if (x + TT_WIDTH + MARGIN > window.innerWidth) {
+      x = window.innerWidth - TT_WIDTH - MARGIN;
+    }
+    x = Math.max(MARGIN, x);
+
+    setHover({ ev, x, y });
   };
   const onLeave = () => setHover(null);
 
