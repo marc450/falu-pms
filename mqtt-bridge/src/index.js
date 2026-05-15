@@ -221,6 +221,67 @@ async function restoreNotificationTimestamps() {
 }
 
 // ============================================
+// REHYDRATE OPEN ERROR EVENTS
+// Reads error_events rows where ended_at IS NULL so the in-memory
+// openErrorEvents map survives bridge restarts. Without this every restart
+// orphans every open row forever — the Status:"Running" transition handler
+// has nothing in memory to close, so the rows stay open until the 48h
+// retention cleanup deletes them.
+//
+// For each open row:
+//   - If the machine is currently in error  → restore into m.openErrorEvents
+//   - Otherwise                             → close as an orphan with
+//     ended_at = m.lastSync ?? now()
+// ============================================
+async function restoreOpenErrorEvents() {
+  const { data, error } = await supabase
+    .from("error_events")
+    .select("id, machine_code, error_code, started_at")
+    .is("ended_at", null);
+
+  if (error) {
+    logger.warn(`Could not restore open error events: ${error.message}`);
+    return;
+  }
+  if (!data || data.length === 0) {
+    logger.info("No open error_events to restore on startup");
+    return;
+  }
+
+  let rehydrated = 0;
+  let orphansClosed = 0;
+  for (const row of data) {
+    const m = allMachines[row.machine_code];
+    if (!m) continue;
+    const status = (m.machineStatus?.Status || "").toLowerCase();
+
+    if (status === "error") {
+      // Machine is still in error — restore so future clear events close it.
+      if (!m.openErrorEvents) m.openErrorEvents = {};
+      m.openErrorEvents[row.error_code] = row.id;
+      rehydrated++;
+    } else {
+      // Machine already recovered while the bridge was down. Close as orphan.
+      const endTime = m.lastSync ? new Date(m.lastSync) : new Date();
+      const durationSecs = Math.max(
+        0,
+        Math.round((endTime.getTime() - new Date(row.started_at).getTime()) / 1000),
+      );
+      const { error: upErr } = await supabase
+        .from("error_events")
+        .update({ ended_at: endTime.toISOString(), duration_secs: durationSecs })
+        .eq("id", row.id);
+      if (upErr) {
+        logger.warn(`Failed to close orphan error_event ${row.id}: ${upErr.message}`);
+        continue;
+      }
+      orphansClosed++;
+    }
+  }
+  logger.info(`Restored ${rehydrated} open error_events; closed ${orphansClosed} orphans on startup`);
+}
+
+// ============================================
 // MACHINE ID RESOLUTION
 // ============================================
 // Only numeric machine codes are valid. Anything else is either a malformed
@@ -1085,6 +1146,7 @@ app.listen(PORT, () => {
 
   loadRegisteredMachines()
     .then(() => restoreNotificationTimestamps())
+    .then(() => restoreOpenErrorEvents())
     .then(() => loadAlertConfig())
     .then(() => connectMqtt())
     .catch((err) => logger.error(`Startup error: ${err.message}`));
