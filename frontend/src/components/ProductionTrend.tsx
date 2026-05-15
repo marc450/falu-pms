@@ -433,7 +433,7 @@ interface ErrorBracketLayerProps {
 
 function ErrorBracketLayer(props: ErrorBracketLayerProps) {
   const { events, errorLookup, firstBucketTime, lastBucketTime, stripTopY, offset } = props;
-  const propKeys = Object.keys(props as Record<string, unknown>).join(",");
+  const propKeys = Object.keys(props as unknown as Record<string, unknown>).join(",");
 
   // Debug marker: always render a magenta dot at the strip's top-left so we can
   // confirm Customized is firing and where it draws relative to the chart.
