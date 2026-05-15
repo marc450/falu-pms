@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef } from "react";
+// @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
 import { createPortal } from "react-dom";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
