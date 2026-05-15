@@ -390,7 +390,7 @@ async function handleShiftMessage(payload) {
     // Close all open error_event rows for this machine
     if (m.openErrorEvents && Object.keys(m.openErrorEvents).length > 0) {
       const plcEnd = new Date(plcNow);
-      const crew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
+      const crew = resolveMessageCrew(data) || "Unassigned";
       for (const [errCode, eventId] of Object.entries(m.openErrorEvents)) {
         const { data: ev } = await supabase.from("error_events").select("started_at").eq("id", eventId).single();
         const durationSecs = ev ? Math.round((plcEnd.getTime() - new Date(ev.started_at).getTime()) / 1000) : 0;
@@ -469,7 +469,7 @@ async function handleShiftMessage(payload) {
                   (data.ProducedBoxes || 0) > 0;
 
   if (hasData) {
-    const crew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
+    const crew = resolveMessageCrew(data) || "Unassigned";
     const { error: insertError } = await supabase.from("shift_readings").insert({
       machine_id: machineId,
       machine_code: machineCode,
@@ -505,7 +505,7 @@ async function handleShiftMessage(payload) {
   }
 
   if (data.Save) {
-    const saveCrew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
+    const saveCrew = resolveMessageCrew(data) || "Unassigned";
     logger.info(`Save flag (end of shift) received for ${machineCode}, crew ${saveCrew}`);
 
     // ── Flush in-memory error counts to error_shift_summary ──
@@ -584,7 +584,7 @@ async function handleErrorMessage(payload) {
   if (!m.shiftErrorCounts) m.shiftErrorCounts = {};
 
   const machineId = machineIdCache[machineCode];
-  const crew = resolveCurrentCrew(data.Timestamp) || "Unassigned";
+  const crew = resolveMessageCrew(data) || "Unassigned";
 
   if (data.ErrorStatus) {
     // Error activated
@@ -757,6 +757,25 @@ function resolveCurrentCrew(timestamp) {
   }
 
   return teams[slotIndex];
+}
+
+/**
+ * Resolve the crew for an incoming MQTT message.
+ *
+ * Same as resolveCurrentCrew(data.Timestamp) except SAVE messages — which carry
+ * the just-ended shift's cumulative totals — are pinned to one second before
+ * their wall-clock timestamp. Without this nudge a SAVE message published at
+ * the exact shift boundary (e.g. 19:00:00.000) would be tagged with the NEW
+ * crew, even though its payload is entirely the previous crew's data.
+ */
+function resolveMessageCrew(data) {
+  const ts = data?.Timestamp;
+  if (!ts) return resolveCurrentCrew();
+  if (data?.Save === true) {
+    const adjusted = new Date(new Date(ts).getTime() - 1000).toISOString();
+    return resolveCurrentCrew(adjusted);
+  }
+  return resolveCurrentCrew(ts);
 }
 
 /**
