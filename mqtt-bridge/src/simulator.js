@@ -210,6 +210,16 @@ const SPEED_VARIATION = 150;  // ±pcs/min tick-level noise (natural-looking)
 const SPEED_TARGET_FALLBACK = { CB: 2800, CT: 2600 };
 
 // ============================================
+// FORCED-CYCLE OVERRIDE
+// ============================================
+// Prototype/demo machines whose status follows a deterministic
+// error-then-production loop instead of the normal stochastic model.
+// Cycle math: e.g. errorMin = 2, runMin = 1 → 3-min loop, 33% uptime.
+const FORCED_CYCLE = {
+  "11562": { errorMin: 2, runMin: 1 },
+};
+
+// ============================================
 // MACHINE PERSONALITY
 // ============================================
 // Deterministic per-UID: hash → bucket. Stable across restarts without a DB column.
@@ -599,35 +609,52 @@ function simulateTick(machine, elapsedMin) {
   const pers  = machine.personality;
 
   // ── Determine state ──────────────────────────────────────────────────
-  const inBreak    = inBreakAt(elapsedMin);
-  const inCleaning = elapsedMin >= machine.cleaningStartMin &&
-                     elapsedMin <  machine.cleaningStartMin + 30;
-  const wasInError = machine.errorEndMin !== null && elapsedMin < machine.errorEndMin;
-
   let status;
-  if (wasInError) {
-    status = "error";
-  } else if (inBreak || inCleaning) {
-    status = "idle";
+  const forced = FORCED_CYCLE[machine.name];
+  if (forced) {
+    // Deterministic loop: `errorMin` minutes of error, then `runMin` minutes running.
+    const period   = forced.errorMin + forced.runMin;
+    const cyclePos = ((elapsedMin % period) + period) % period;
+    if (cyclePos < forced.errorMin) {
+      status = "error";
+      machine.errorEndMin = Math.floor(elapsedMin / period) * period + forced.errorMin;
+    } else {
+      if (machine.errorEndMin !== null) {
+        machine.lastErrorEndMin = machine.errorEndMin;
+        machine.errorEndMin = null;
+      }
+      status = "running";
+    }
   } else {
-    status = "running";
-    // Roll for a new error. Probability is modulated by personality and by the
-    // cascading-window multiplier (more likely shortly after a recent error).
-    const effProb = ERROR_PROB_TICK * pers.errorMod * cascadeMultiplier(machine, elapsedMin);
-    if (Math.random() < effProb) {
-      const baseDuration = pickErrorDuration();
-      const duration     = Math.max(1, Math.round(baseDuration * crew.errorDurationMod));
-      machine.errorEndMin = elapsedMin + duration;
+    const inBreak    = inBreakAt(elapsedMin);
+    const inCleaning = elapsedMin >= machine.cleaningStartMin &&
+                       elapsedMin <  machine.cleaningStartMin + 30;
+    const wasInError = machine.errorEndMin !== null && elapsedMin < machine.errorEndMin;
+
+    if (wasInError) {
+      status = "error";
+    } else if (inBreak || inCleaning) {
+      status = "idle";
+    } else {
+      status = "running";
+      // Roll for a new error. Probability is modulated by personality and by the
+      // cascading-window multiplier (more likely shortly after a recent error).
+      const effProb = ERROR_PROB_TICK * pers.errorMod * cascadeMultiplier(machine, elapsedMin);
+      if (Math.random() < effProb) {
+        const baseDuration = pickErrorDuration();
+        const duration     = Math.max(1, Math.round(baseDuration * crew.errorDurationMod));
+        machine.errorEndMin = elapsedMin + duration;
+      }
+    }
+
+    // Capture the moment an error has just resolved this tick — needed so the
+    // cascading window starts at the right elapsedMin for the next roll.
+    if (machine.errorEndMin !== null && elapsedMin >= machine.errorEndMin) {
+      machine.lastErrorEndMin = machine.errorEndMin;
+      machine.errorEndMin = null;
     }
   }
   machine.status = status;
-
-  // Capture the moment an error has just resolved this tick — needed so the
-  // cascading window starts at the right elapsedMin for the next roll.
-  if (machine.errorEndMin !== null && elapsedMin >= machine.errorEndMin) {
-    machine.lastErrorEndMin = machine.errorEndMin;
-    machine.errorEndMin = null;
-  }
 
   // ── Time accounting ──────────────────────────────────────────────────
   if      (status === "error") shift.errorTime      += TICK_MIN;
