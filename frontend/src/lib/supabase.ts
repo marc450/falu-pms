@@ -474,7 +474,7 @@ export interface DateRange {
 }
 
 export interface FleetTrendRow {
-  date: string;        // "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH" (hourly)
+  date: string;        // "YYYY-MM-DD" (daily) or "YYYY-MM-DDTHH:MM" (intraday)
   avgUptime: number;   // avg efficiency % across all machines in bucket (0 for idle hours)
   avgScrap: number;    // avg scrap_rate % across all machines in bucket (0 for idle hours)
   totalBoxes: number;  // sum of per-(machine_id, shift_crew) MAX produced_boxes
@@ -535,140 +535,97 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
 }
 
 // ============================================
-// HOURLY ANALYTICS (pre-aggregated 24h view)
+// INTRADAY TREND (24h view, sub-hour buckets read directly from shift_readings)
 // ============================================
+//
+// Bucket size for the 24h view. 15 min × 96 buckets = a smooth continuous
+// line that still aligns cleanly with every hour mark on the x-axis.
+export const INTRADAY_BUCKET_MINUTES = 15;
 
-interface HourlyAnalyticsRow {
-  plc_hour:                string;
-  machine_id:              string;
-  shift_crew:              string;
-  swabs_produced:          number;
-  boxes_produced:          number;
-  production_time_seconds: number;
-  idle_time_seconds:       number;
-  error_time_seconds:      number;
-  discarded_swabs:         number;
-  reading_count:           number;
-  avg_efficiency:          number;
-  avg_scrap_rate:          number;
+// Bucket-key format: "YYYY-MM-DDTHH:MM" (16 chars, UTC).
+// The chart's parser detects sub-hour keys by length (>13 chars).
+function bucketKeyFromDate(d: Date): string {
+  return d.toISOString().slice(0, 16);
 }
 
-export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrendResult> {
+// Round a Date down to the start of its bucket (aligned to UTC midnight).
+function alignToBucketStart(d: Date, bucketMinutes: number): Date {
+  const out = new Date(d);
+  out.setUTCSeconds(0, 0);
+  const m = out.getUTCMinutes();
+  out.setUTCMinutes(m - (m % bucketMinutes));
+  return out;
+}
+
+interface IntradayBucketRow {
+  bucket:        string;   // "YYYY-MM-DDTHH:MM"
+  avg_uptime:    number;
+  avg_scrap:     number;
+  total_boxes:   number;
+  total_swabs:   number;
+  machine_count: number;
+  reading_count: number;
+  shift_count:   number;
+}
+
+// Shared workhorse: calls get_fleet_trend_minute, gap-fills the requested
+// range so the chart has a continuous line, and skips the current partial
+// bucket (whose end is still in the future — data would otherwise creep up
+// between auto-refreshes and look jittery).
+async function fetchIntradayTrend(
+  range: DateRange,
+  machineIds: string[] | null,
+): Promise<FleetTrendResult> {
   const sb = getSupabase();
+  const bucketMs = INTRADAY_BUCKET_MINUTES * 60_000;
 
-  const { data, error } = await sb
-    .from("hourly_analytics")
-    .select(
-      "plc_hour, machine_id, shift_crew, swabs_produced, boxes_produced, " +
-      "production_time_seconds, idle_time_seconds, error_time_seconds, " +
-      "discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate"
-    )
-    .gte("plc_hour", range.start.toISOString())
-    .lt("plc_hour",  range.end.toISOString())
-    .order("plc_hour");
-
+  const { data, error } = await sb.rpc("get_fleet_trend_minute", {
+    range_start:    range.start.toISOString(),
+    range_end:      range.end.toISOString(),
+    bucket_minutes: INTRADAY_BUCKET_MINUTES,
+    machine_ids:    machineIds,
+  });
   if (error) throw new Error(error.message);
-  const rows_raw = (data as unknown) as HourlyAnalyticsRow[];
-  if (!rows_raw || rows_raw.length === 0) {
-    return { rows: [], granularity: "hour", totalReadings: 0 };
-  }
 
-  // Group by plc_hour bucket — aggregate across all machines and shifts
-  type BucketAcc = {
-    totalSwabs:     number;
-    totalBoxes:     number;
-    totalDiscarded: number;  // for volume-weighted scrap: discarded / produced
-    machineIds:     Set<string>;
-    shiftCrews:     Set<string>;
-    readingCount:   number;
-    totalProdSecs:  number;  // sum of production_time_seconds (delta) across machines
-  };
+  const rows_raw = (data ?? []) as IntradayBucketRow[];
+  const bucketMap = new Map<string, IntradayBucketRow>();
+  for (const r of rows_raw) bucketMap.set(r.bucket, r);
 
-  const bucketMap = new Map<string, BucketAcc>();
-
-  for (const row of rows_raw) {
-    // Bucket key: "YYYY-MM-DDTHH" — matches fmtBucket used by the chart
-    const bucketKey = row.plc_hour.slice(0, 13);
-
-    if (!bucketMap.has(bucketKey)) {
-      bucketMap.set(bucketKey, {
-        totalSwabs:     0,
-        totalBoxes:     0,
-        totalDiscarded: 0,
-        machineIds:     new Set(),
-        shiftCrews:     new Set(),
-        readingCount:   0,
-        totalProdSecs:  0,
-      });
-    }
-
-    const b = bucketMap.get(bucketKey)!;
-    b.totalSwabs     += Number(row.swabs_produced)  || 0;
-    b.totalBoxes     += Number(row.boxes_produced)  || 0;
-    b.totalDiscarded += Number(row.discarded_swabs) || 0;
-    b.readingCount   += Number(row.reading_count)   || 0;
-    b.machineIds.add(row.machine_id);
-    b.shiftCrews.add(row.shift_crew);
-
-    // Uptime: sum production_time_seconds (delta-based, same logic as swabs).
-    // Divided by (machineCount * 3600) later to get avg % of hour spent producing.
-    b.totalProdSecs += Number(row.production_time_seconds) || 0;
-  }
-
-  // Fill every hour in the requested range so the chart has no gaps.
-  // Hours with no machine data get zeroed-out entries (machines offline/idle).
-  // Only include an hour if it has fully elapsed — the pg_cron aggregation job
-  // runs at :05 past each hour, so a slot whose end time is still in the future
-  // will have no DB row yet and must not appear as a false zero bar.
-  const now         = new Date();
+  const now = new Date();
   const filledRows: FleetTrendRow[] = [];
-  const cursor = new Date(range.start);
-  cursor.setUTCMinutes(0, 0, 0);
+  const cursor = alignToBucketStart(range.start, INTRADAY_BUCKET_MINUTES);
   while (cursor < range.end) {
-    const key = cursor.toISOString().slice(0, 13); // "YYYY-MM-DDTHH"
-    // Never render an hour that has not yet fully elapsed — the cron job
-    // for that hour has not run yet so any data would be partial/incomplete.
-    const hourEnd = new Date(cursor);
-    hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
-    if (hourEnd > now) {
-      cursor.setUTCHours(cursor.getUTCHours() + 1);
-      continue;
-    }
-    const b = bucketMap.get(key);
+    const bucketEnd = new Date(cursor.getTime() + bucketMs);
+    if (bucketEnd > now) break;   // current partial bucket → omit
+
+    const key = bucketKeyFromDate(cursor);
+    const b   = bucketMap.get(key);
     if (b) {
-      // Real data from hourly_analytics — include now that the hour is complete.
       filledRows.push({
         date:         key,
-        avgUptime:    b.machineIds.size > 0
-          ? Math.round((b.totalProdSecs / (b.machineIds.size * 3600)) * 1000) / 10
-          : 0,
-        avgScrap:     b.totalSwabs > 0
-          ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
-          : 0,
-        totalBoxes:   b.totalBoxes,
-        totalSwabs:   b.totalSwabs,
-        machineCount: b.machineIds.size,
-        readingCount: b.readingCount,
-        shiftCount:   b.shiftCrews.size,
+        avgUptime:    Number(b.avg_uptime)    || 0,
+        avgScrap:     Number(b.avg_scrap)     || 0,
+        totalBoxes:   Number(b.total_boxes)   || 0,
+        totalSwabs:   Number(b.total_swabs)   || 0,
+        machineCount: Number(b.machine_count) || 0,
+        readingCount: Number(b.reading_count) || 0,
+        shiftCount:   Number(b.shift_count)   || 0,
       });
     } else {
-      // No DB row — emit a zero slot (hour is idle/offline).
       filledRows.push({
-        date:         key,
-        avgUptime:    0,
-        avgScrap:     0,
-        totalBoxes:   0,
-        totalSwabs:   0,
-        machineCount: 0,
-        readingCount: 0,
-        shiftCount:   0,
+        date: key, avgUptime: 0, avgScrap: 0, totalBoxes: 0, totalSwabs: 0,
+        machineCount: 0, readingCount: 0, shiftCount: 0,
       });
     }
-    cursor.setUTCHours(cursor.getUTCHours() + 1);
+    cursor.setTime(cursor.getTime() + bucketMs);
   }
 
   const totalReadings = filledRows.reduce((s, r) => s + r.readingCount, 0);
   return { rows: filledRows, granularity: "hour", totalReadings };
+}
+
+export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrendResult> {
+  return fetchIntradayTrend(range, null);
 }
 
 // ============================================
@@ -739,8 +696,7 @@ export async function fetchMachineDailyTrend(machineCode: string, range: DateRan
 export async function fetchMachineHourlyTrend(machineCode: string, range: DateRange): Promise<FleetTrendResult> {
   const sb = getSupabase();
 
-  // hourly_analytics is keyed by machine_id (UUID), not machine_code.
-  // Resolve the code → id first, then filter.
+  // The RPC filters by machine_id (UUID), so resolve the code → id first.
   const { data: machineRow, error: machineErr } = await sb
     .from("machines")
     .select("id")
@@ -748,102 +704,8 @@ export async function fetchMachineHourlyTrend(machineCode: string, range: DateRa
     .maybeSingle();
   if (machineErr) throw new Error(machineErr.message);
   if (!machineRow) return { rows: [], granularity: "hour", totalReadings: 0 };
-  const machineId = (machineRow as { id: string }).id;
 
-  const { data, error } = await sb
-    .from("hourly_analytics")
-    .select(
-      "plc_hour, shift_crew, swabs_produced, boxes_produced, " +
-      "production_time_seconds, idle_time_seconds, error_time_seconds, " +
-      "discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate"
-    )
-    .eq("machine_id", machineId)
-    .gte("plc_hour", range.start.toISOString())
-    .lt("plc_hour",  range.end.toISOString())
-    .order("plc_hour");
-
-  if (error) throw new Error(error.message);
-  const rows_raw = (data as unknown) as Array<{
-    plc_hour: string; shift_crew: string;
-    swabs_produced: number; boxes_produced: number;
-    production_time_seconds: number; idle_time_seconds: number; error_time_seconds: number;
-    discarded_swabs: number; reading_count: number;
-    avg_efficiency: number; avg_scrap_rate: number;
-  }> | null;
-  if (!rows_raw || rows_raw.length === 0) {
-    return { rows: [], granularity: "hour", totalReadings: 0 };
-  }
-
-  // Bucket by plc_hour. Each row is already one machine; collapse multiple
-  // shift_crew rows that share the same hour.
-  type HourAcc = {
-    totalSwabs:     number;
-    totalBoxes:     number;
-    totalDiscarded: number;
-    shiftCrews:     Set<string>;
-    readingCount:   number;
-    totalProdSecs:  number;
-  };
-  const bucketMap = new Map<string, HourAcc>();
-  for (const row of rows_raw) {
-    const bucketKey = row.plc_hour.slice(0, 13);
-    if (!bucketMap.has(bucketKey)) {
-      bucketMap.set(bucketKey, {
-        totalSwabs: 0, totalBoxes: 0, totalDiscarded: 0,
-        shiftCrews: new Set(), readingCount: 0, totalProdSecs: 0,
-      });
-    }
-    const b = bucketMap.get(bucketKey)!;
-    b.totalSwabs     += Number(row.swabs_produced)          || 0;
-    b.totalBoxes     += Number(row.boxes_produced)          || 0;
-    b.totalDiscarded += Number(row.discarded_swabs)         || 0;
-    b.readingCount   += Number(row.reading_count)           || 0;
-    b.shiftCrews.add(row.shift_crew);
-    b.totalProdSecs  += Number(row.production_time_seconds) || 0;
-  }
-
-  // Fill every hour in the requested range so the chart has no gaps.
-  // Skip hours that have not fully elapsed — the cron job that aggregates
-  // them hasn't run yet, so an entry would be a false zero bar.
-  const now = new Date();
-  const filledRows: FleetTrendRow[] = [];
-  const cursor = new Date(range.start);
-  cursor.setUTCMinutes(0, 0, 0);
-  while (cursor < range.end) {
-    const key = cursor.toISOString().slice(0, 13);
-    const hourEnd = new Date(cursor);
-    hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
-    if (hourEnd > now) {
-      cursor.setUTCHours(cursor.getUTCHours() + 1);
-      continue;
-    }
-    const b = bucketMap.get(key);
-    if (b) {
-      filledRows.push({
-        date:         key,
-        // For one machine: avgUptime = production_time_seconds / 3600
-        // (% of the hour spent producing). Matches the fleet calculation
-        // divided by 1 instead of machineCount.
-        avgUptime:    Math.round((b.totalProdSecs / 3600) * 1000) / 10,
-        avgScrap:     b.totalSwabs > 0
-          ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
-          : 0,
-        totalBoxes:   b.totalBoxes,
-        totalSwabs:   b.totalSwabs,
-        machineCount: 1,
-        readingCount: b.readingCount,
-        shiftCount:   b.shiftCrews.size,
-      });
-    } else {
-      filledRows.push({
-        date: key, avgUptime: 0, avgScrap: 0, totalBoxes: 0, totalSwabs: 0,
-        machineCount: 0, readingCount: 0, shiftCount: 0,
-      });
-    }
-    cursor.setUTCHours(cursor.getUTCHours() + 1);
-  }
-
-  return { rows: filledRows, granularity: "hour", totalReadings: filledRows.reduce((s, r) => s + r.readingCount, 0) };
+  return fetchIntradayTrend(range, [(machineRow as { id: string }).id]);
 }
 
 // ============================================
@@ -957,106 +819,21 @@ export async function fetchPeersDailyTrend(peerCodes: string[], range: DateRange
   return { rows, granularity: "day", totalReadings: rows.reduce((s, r) => s + r.readingCount, 0) };
 }
 
-// Hourly trend aggregated across the given peer machine_ids.
-// Returns one row per hour bucket, averaged across peers.
+// Intraday trend aggregated across the given peer machine_ids.
+// The RPC sums production across peers; we post-divide so the line shows the
+// per-peer average (directly comparable to a single machine's own trend).
+// avgUptime and avgScrap are already per-peer (computed server-side as
+// sum / (machine_count * bucket_secs) and volume-weighted respectively).
 export async function fetchPeersHourlyTrend(peerIds: string[], range: DateRange): Promise<FleetTrendResult> {
   if (peerIds.length === 0) {
     return { rows: [], granularity: "hour", totalReadings: 0 };
   }
-  const sb = getSupabase();
-
-  const { data, error } = await sb
-    .from("hourly_analytics")
-    .select(
-      "plc_hour, machine_id, shift_crew, swabs_produced, boxes_produced, " +
-      "production_time_seconds, idle_time_seconds, error_time_seconds, " +
-      "discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate"
-    )
-    .in("machine_id", peerIds)
-    .gte("plc_hour", range.start.toISOString())
-    .lt("plc_hour",  range.end.toISOString())
-    .order("plc_hour");
-
-  if (error) throw new Error(error.message);
-  const rows_raw = (data as unknown) as Array<{
-    plc_hour: string; machine_id: string; shift_crew: string;
-    swabs_produced: number; boxes_produced: number;
-    production_time_seconds: number; idle_time_seconds: number; error_time_seconds: number;
-    discarded_swabs: number; reading_count: number;
-    avg_efficiency: number; avg_scrap_rate: number;
-  }> | null;
-  if (!rows_raw || rows_raw.length === 0) {
-    return { rows: [], granularity: "hour", totalReadings: 0 };
-  }
-
-  type HourAcc = {
-    totalSwabs:     number;
-    totalBoxes:     number;
-    totalDiscarded: number;
-    machineIds:     Set<string>;
-    shiftCrews:     Set<string>;
-    readingCount:   number;
-    totalProdSecs:  number;
-  };
-  const bucketMap = new Map<string, HourAcc>();
-  for (const row of rows_raw) {
-    const bucketKey = row.plc_hour.slice(0, 13);
-    if (!bucketMap.has(bucketKey)) {
-      bucketMap.set(bucketKey, {
-        totalSwabs: 0, totalBoxes: 0, totalDiscarded: 0,
-        machineIds: new Set(), shiftCrews: new Set(),
-        readingCount: 0, totalProdSecs: 0,
-      });
-    }
-    const b = bucketMap.get(bucketKey)!;
-    b.totalSwabs     += Number(row.swabs_produced)          || 0;
-    b.totalBoxes     += Number(row.boxes_produced)          || 0;
-    b.totalDiscarded += Number(row.discarded_swabs)         || 0;
-    b.readingCount   += Number(row.reading_count)           || 0;
-    b.totalProdSecs  += Number(row.production_time_seconds) || 0;
-    b.machineIds.add(row.machine_id);
-    b.shiftCrews.add(row.shift_crew);
-  }
-
-  const now = new Date();
-  const filledRows: FleetTrendRow[] = [];
-  const cursor = new Date(range.start);
-  cursor.setUTCMinutes(0, 0, 0);
-  while (cursor < range.end) {
-    const key = cursor.toISOString().slice(0, 13);
-    const hourEnd = new Date(cursor);
-    hourEnd.setUTCHours(hourEnd.getUTCHours() + 1);
-    if (hourEnd > now) {
-      cursor.setUTCHours(cursor.getUTCHours() + 1);
-      continue;
-    }
-    const b = bucketMap.get(key);
-    if (b) {
-      const n = Math.max(1, b.machineIds.size);
-      filledRows.push({
-        date:         key,
-        // Average % of hour spent producing across the peers present this hour.
-        avgUptime:    Math.round((b.totalProdSecs / (n * 3600)) * 1000) / 10,
-        avgScrap:     b.totalSwabs > 0
-          ? Math.round((b.totalDiscarded / b.totalSwabs) * 1000) / 10
-          : 0,
-        // Per-peer averages for direct comparison with a single machine.
-        totalBoxes:   b.totalBoxes / n,
-        totalSwabs:   b.totalSwabs / n,
-        machineCount: b.machineIds.size,
-        readingCount: b.readingCount,
-        shiftCount:   b.shiftCrews.size,
-      });
-    } else {
-      filledRows.push({
-        date: key, avgUptime: 0, avgScrap: 0, totalBoxes: 0, totalSwabs: 0,
-        machineCount: 0, readingCount: 0, shiftCount: 0,
-      });
-    }
-    cursor.setUTCHours(cursor.getUTCHours() + 1);
-  }
-
-  return { rows: filledRows, granularity: "hour", totalReadings: filledRows.reduce((s, r) => s + r.readingCount, 0) };
+  const result = await fetchIntradayTrend(range, peerIds);
+  const perPeerRows = result.rows.map(r => {
+    const n = Math.max(1, r.machineCount);
+    return { ...r, totalBoxes: r.totalBoxes / n, totalSwabs: r.totalSwabs / n };
+  });
+  return { ...result, rows: perPeerRows };
 }
 
 // ============================================

@@ -234,7 +234,7 @@ export default function Analytics() {
           buMediocrePerShift={buMediocrePerShift}
           dateRange={kpiRange}
           kpiSubLabel="Park average · selected period"
-          chartTitleSuffix={granularity === "hour" ? "— hourly park total" : "— daily park total"}
+          chartTitleSuffix={granularity === "hour" ? "— intraday park total" : "— daily park total"}
         />
       )}
     </div>

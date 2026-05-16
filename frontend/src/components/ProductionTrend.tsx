@@ -73,26 +73,37 @@ function fmtDateShort(d: Date): string {
   return `${day}. ${mon} '${yr}`;
 }
 
+// Bucket keys come in three lengths: "YYYY-MM-DD" (day, 10), "YYYY-MM-DDTHH"
+// (hour, 13 — legacy), "YYYY-MM-DDTHH:MM" (sub-hour, 16). Append whatever
+// suffix is needed to round it out to a parseable UTC instant.
+export function parseBucketKey(key: string): Date {
+  if (key.length >= 16) return parseISO(key + ":00Z");        // sub-hour
+  if (key.length >= 13) return parseISO(key + ":00:00Z");     // hour
+  return parseISO(key);                                       // day
+}
+
 function fmtBucketFull(key: string, granularity: "hour" | "day"): string {
   try {
     if (granularity === "hour") {
-      const d = parseISO(key + ":00:00Z");
+      const d = parseBucketKey(key);
       return `${fmtDateShort(d)} ${format(d, "HH:mm")}`;
     }
     return fmtDateShort(parseISO(key));
   } catch { return key; }
 }
 
-function fmtBucketRange(key: string, granularity: "hour" | "day"): [string, string] {
+// Instant label for the x-axis. For sub-hour buckets we only label the
+// integer-hour positions ("10:00", "11:00", "12:00", …) and leave the
+// in-between buckets unlabelled, giving a continuous timeline feel.
+function fmtBucketLabel(key: string, granularity: "hour" | "day"): string {
   try {
     if (granularity === "hour") {
-      const d = parseISO(key + ":00:00Z");
-      const next = new Date(d.getTime() + 3_600_000);
-      return [format(d, "HH:mm"), format(next, "HH:mm")];
+      const d = parseBucketKey(key);
+      if (d.getUTCMinutes() !== 0) return "";
+      return format(d, "HH:mm");
     }
-    const d = parseISO(key);
-    return [fmtDateShort(d), ""];
-  } catch { return [key, ""]; }
+    return fmtDateShort(parseISO(key));
+  } catch { return key; }
 }
 
 function filterDailyTicks(rows: { date: string }[]): number[] {
@@ -116,9 +127,9 @@ function toDateInputValue(d: Date): string {
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function RangeTick({ x, y, payload, granularity, angled }: any) {
-  const [line1, line2] = fmtBucketRange(payload?.value ?? "", granularity);
+  const label = fmtBucketLabel(payload?.value ?? "", granularity);
+  if (!label) return null;
   if (angled) {
-    const label = granularity === "day" ? line1 : `${line1}–${line2}`;
     return (
       <g transform={`translate(${x},${y})`}>
         <text transform="rotate(-40)" textAnchor="end" fill="#9ca3af" fontSize={10} dy={4} dx={-4}>
@@ -127,22 +138,10 @@ function RangeTick({ x, y, payload, granularity, angled }: any) {
       </g>
     );
   }
-  if (granularity === "day") {
-    return (
-      <g transform={`translate(${x},${y})`}>
-        <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10}>
-          {line1}
-        </text>
-      </g>
-    );
-  }
   return (
     <g transform={`translate(${x},${y})`}>
       <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10}>
-        {line1}
-      </text>
-      <text x={0} y={0} dy={23} textAnchor="middle" fill="#9ca3af" fontSize={10}>
-        {line2}
+        {label}
       </text>
     </g>
   );
@@ -655,6 +654,16 @@ export function ProductionTrendSection({
   const shiftHours   = thresholds.bu.shiftLengthMinutes / 60 || 8;
   const shiftsPerDay = Math.max(1, Math.round(24 / shiftHours));
 
+  // Detect the sub-daily bucket size from the first two rows so the BU chart
+  // can rate-normalise its y-axis to "BUs/hour" regardless of bucket length
+  // (15-min buckets are 1/4 of the legacy 60-min buckets).
+  const bucketMinutes = granularity === "hour" && rows.length >= 2
+    ? Math.max(1, Math.round(
+        (parseBucketKey(rows[1].date).getTime() - parseBucketKey(rows[0].date).getTime()) / 60_000
+      ))
+    : 60;
+  const buRateMultiplier = granularity === "hour" ? 60 / bucketMinutes : 1;
+
   // Peer benchmark series. Aligned to the same date keys as `rows`; missing
   // buckets render as line breaks (recharts skips null y-values with monotone).
   const hasPeers = peerRows.length > 0;
@@ -675,10 +684,12 @@ export function ProductionTrendSection({
     };
   });
 
+  // For sub-hour intraday buckets we rate-normalise to BUs/hour so the y-axis
+  // and target lines (which are per-hour) stay consistent across granularities.
   const buRows = rows.map(r => {
-    const totalBU = Math.round((r.totalSwabs / 7200) * 10) / 10;
+    const totalBU = Math.round((r.totalSwabs / 7200) * buRateMultiplier * 10) / 10;
     const p = peerByDate.get(r.date);
-    const peerBU = p ? Math.round((p.totalSwabs / 7200) * 10) / 10 : null;
+    const peerBU = p ? Math.round((p.totalSwabs / 7200) * buRateMultiplier * 10) / 10 : null;
     return { ...r, totalBU, peerBU };
   });
 
@@ -714,28 +725,40 @@ export function ProductionTrendSection({
   })();
 
   const dailyTickIndices = granularity === "day" ? filterDailyTicks(rows) : [];
-  const tickInterval = granularity === "day"
-    ? undefined
-    : (rows.length <= 24 ? 0 : Math.ceil(rows.length / 20) - 1);
+
+  // For intraday (sub-hour buckets) pass an explicit `ticks` array containing
+  // only the bucket keys aligned to the integer hour, downsampled to keep at
+  // most ~24 labels visible. Recharts will only render ticks at those
+  // positions, which is what gives the x-axis the "10:00 11:00 12:00" feel.
+  const hourTicks = granularity === "hour"
+    ? (() => {
+        const aligned = rows.filter(r => {
+          const d = parseBucketKey(r.date);
+          return d.getUTCMinutes() === 0;
+        }).map(r => r.date);
+        const MAX_LABELS = 24;
+        const step = Math.max(1, Math.ceil(aligned.length / MAX_LABELS));
+        return aligned.filter((_, i) => i % step === 0);
+      })()
+    : undefined;
+
   const dailyTicks = granularity === "day"
     ? dailyTickIndices.map(i => rows[i].date)
     : undefined;
+  const explicitTicks = dailyTicks ?? hourTicks;
+
   const visibleTicks = granularity === "day"
     ? dailyTickIndices.length
-    : (tickInterval === 0 ? rows.length : Math.ceil(rows.length / ((tickInterval ?? 0) + 1)));
+    : (hourTicks?.length ?? rows.length);
   const shouldAngle = visibleTicks > 14;
 
-  // ── Error annotation strip (24h / hourly view only) ──
+  // ── Error annotation strip (intraday view only) ──
   // Lane-pack errors against a dummy 1-unit-wide range first so we know the
   // lane count without depending on rendered chart width. The actual pixel
   // positions are computed inside the Customized layer where offset is known.
   const showErrorStrip = granularity === "hour" && hasData && errorEvents.length > 0;
-  const firstBucketTime = showErrorStrip
-    ? new Date(rows[0].date + ":00:00Z").getTime()
-    : 0;
-  const lastBucketTime = showErrorStrip
-    ? new Date(rows[rows.length - 1].date + ":00:00Z").getTime()
-    : 0;
+  const firstBucketTime = showErrorStrip ? parseBucketKey(rows[0].date).getTime() : 0;
+  const lastBucketTime  = showErrorStrip ? parseBucketKey(rows[rows.length - 1].date).getTime() : 0;
   const errorLaneCount = showErrorStrip
     ? packErrorLanes(errorEvents, firstBucketTime, lastBucketTime, 0, 1000).laneCount
     : 0;
@@ -772,7 +795,7 @@ export function ProductionTrendSection({
     ? (fmtDeltaBU(totalBUs, peerTotalBUs) ?? (buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`))
     : (buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`);
 
-  const chartTitle = chartTitleSuffix ?? (granularity === "hour" ? "— hourly" : "— daily");
+  const chartTitle = chartTitleSuffix ?? (granularity === "hour" ? "— intraday" : "— daily");
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity);
 
   if (loading) {
@@ -860,9 +883,9 @@ export function ProductionTrendSection({
                   tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
-                  interval={tickInterval}
+                  interval={0}
                   height={shouldAngle ? 56 : 36}
-                  {...(dailyTicks ? { ticks: dailyTicks } : {})}
+                  {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
                 <YAxis
                   domain={[0, 100]}
@@ -934,9 +957,9 @@ export function ProductionTrendSection({
                   tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
-                  interval={tickInterval}
+                  interval={0}
                   height={shouldAngle ? 56 : 36}
-                  {...(dailyTicks ? { ticks: dailyTicks } : {})}
+                  {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
                 <YAxis
                   domain={[0, scrapMax]}
@@ -1025,9 +1048,9 @@ export function ProductionTrendSection({
                 tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
                 tickLine={false}
                 axisLine={{ stroke: AXIS_COLOR }}
-                interval={tickInterval}
+                interval={0}
                 height={shouldAngle ? 56 : 36}
-                {...(dailyTicks ? { ticks: dailyTicks } : {})}
+                {...(explicitTicks ? { ticks: explicitTicks } : {})}
               />
               <YAxis
                 domain={[0, buMax]}
