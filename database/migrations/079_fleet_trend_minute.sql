@@ -54,7 +54,7 @@ sr_bucket_raw AS (
     count(*)                            AS rdg_count,
     max(produced_boxes)                 AS max_boxes,
     max(produced_swabs)                 AS max_swabs,
-    max(production_time)                AS max_prod_t,    -- seconds (cumulative)
+    max(production_time_seconds)        AS max_prod_t,    -- seconds (cumulative, post-066 name)
     max(discarded_swabs)                AS max_discarded
   FROM shift_readings
   WHERE recorded_at >= range_start
