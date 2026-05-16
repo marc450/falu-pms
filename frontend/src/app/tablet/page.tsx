@@ -172,7 +172,7 @@ function PinGate({
 
   return (
     <>
-      <LangPicker lang={lang} onChange={onLangChange} />
+      <LangPicker lang={lang} onChange={onLangChange} absolute />
       <div className="flex flex-col items-center gap-8 px-8">
         <div className="text-center">
           <p className="text-gray-500 text-sm uppercase tracking-widest mb-2">{t(lang, "machine")}</p>
@@ -217,12 +217,22 @@ function PadButton({
 
 // ─── Language picker ───────────────────────────────────────────────────
 
-function LangPicker({ lang, onChange }: { lang: TabletLang; onChange: (l: TabletLang) => void }) {
+function LangPicker({
+  lang, onChange, dropUp = false, absolute = false,
+}: {
+  lang: TabletLang;
+  onChange: (l: TabletLang) => void;
+  dropUp?: boolean;
+  absolute?: boolean;
+}) {
   const [open, setOpen] = useState(false);
   const current = TABLET_LANGS.find(l => l.code === lang) ?? TABLET_LANGS[0];
 
+  const wrapper = absolute ? "absolute top-4 right-4 z-50" : "relative";
+  const menu    = dropUp   ? "absolute bottom-full right-0 mb-2" : "absolute top-full right-0 mt-2";
+
   return (
-    <div className="absolute top-4 right-4 z-50">
+    <div className={wrapper}>
       <button
         onClick={() => setOpen(o => !o)}
         className="flex items-center gap-2 bg-gray-900/80 hover:bg-gray-800 border border-gray-700 rounded-full px-4 py-2 text-base"
@@ -231,7 +241,7 @@ function LangPicker({ lang, onChange }: { lang: TabletLang; onChange: (l: Tablet
         <span className="text-gray-300">{current.label}</span>
       </button>
       {open && (
-        <div className="absolute top-full right-0 mt-2 bg-gray-900 border border-gray-700 rounded-2xl overflow-hidden min-w-[180px]">
+        <div className={`${menu} bg-gray-900 border border-gray-700 rounded-2xl overflow-hidden min-w-[180px] z-50`}>
           {TABLET_LANGS.map(l => (
             <button
               key={l.code}
@@ -244,6 +254,33 @@ function LangPicker({ lang, onChange }: { lang: TabletLang; onChange: (l: Tablet
           ))}
         </div>
       )}
+    </div>
+  );
+}
+
+// Bottom bar shared by the Running and Error screens — machine identity on the
+// left, cell on the right, language picker far-right.
+function BottomBar({
+  machineLabel, cellName, lang, onLangChange,
+}: {
+  machineLabel: string;
+  cellName: string | null;
+  lang: TabletLang;
+  onLangChange: (l: TabletLang) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-6 border-t border-gray-800/60 px-6 py-3 bg-gray-950/40">
+      <div className="min-w-0">
+        <p className="text-gray-500 text-[10px] uppercase tracking-widest">{t(lang, "machine")}</p>
+        <p className="text-lg font-semibold text-white truncate">{machineLabel}</p>
+      </div>
+      {cellName && (
+        <div className="min-w-0 text-right">
+          <p className="text-gray-500 text-[10px] uppercase tracking-widest">{t(lang, "cell")}</p>
+          <p className="text-lg font-semibold text-cyan-400 truncate">{cellName}</p>
+        </div>
+      )}
+      <LangPicker lang={lang} onChange={onLangChange} dropUp />
     </div>
   );
 }
@@ -315,14 +352,9 @@ function Kiosk({
   const selfStatus = peers.find(p => p.machine_code === session.machine_code)?.status ?? null;
   const isErrorView = (selfStatus?.toLowerCase() === "error") && openErrors.length > 0;
 
-  return (
-    <>
-      <LangPicker lang={lang} onChange={onLangChange} />
-      {isErrorView
-        ? <ErrorScreen errors={openErrors} lookup={errorLookup} lang={lang} machineLabel={machineLabel(session)} />
-        : <RunningScreen peers={peers} selfCode={session.machine_code} cellName={cellName} lang={lang} machineLabel={machineLabel(session)} />}
-    </>
-  );
+  return isErrorView
+    ? <ErrorScreen errors={openErrors} lookup={errorLookup} lang={lang} onLangChange={onLangChange} cellName={cellName} machineLabel={machineLabel(session)} />
+    : <RunningScreen peers={peers} selfCode={session.machine_code} cellName={cellName} lang={lang} onLangChange={onLangChange} machineLabel={machineLabel(session)} />;
 }
 
 function machineLabel(s: TabletSession): string {
@@ -332,12 +364,13 @@ function machineLabel(s: TabletSession): string {
 // ─── Running screen ────────────────────────────────────────────────────
 
 function RunningScreen({
-  peers, selfCode, cellName, lang, machineLabel,
+  peers, selfCode, cellName, lang, onLangChange, machineLabel,
 }: {
   peers: TabletPeerRow[];
   selfCode: string;
   cellName: string | null;
   lang: TabletLang;
+  onLangChange: (l: TabletLang) => void;
   machineLabel: string;
 }) {
   // Rank the cell by current-shift BU output, then surface the operator's own
@@ -352,21 +385,8 @@ function RunningScreen({
   const display = selfRow ? [selfRow, ...others] : others;
 
   return (
-    <div className="w-full h-full flex flex-col p-8">
-      <header className="flex items-center justify-between mb-6 pr-40">
-        <div>
-          <p className="text-gray-500 text-sm uppercase tracking-widest mb-1">{t(lang, "machine")}</p>
-          <h1 className="text-4xl font-bold text-white">{machineLabel}</h1>
-        </div>
-        {cellName && (
-          <div className="text-right">
-            <p className="text-gray-500 text-sm uppercase tracking-widest mb-1">{t(lang, "cell")}</p>
-            <h2 className="text-3xl font-semibold text-cyan-400">{cellName}</h2>
-          </div>
-        )}
-      </header>
-
-      <div className="flex-1 overflow-y-auto">
+    <div className="w-full h-full flex flex-col">
+      <div className="flex-1 overflow-y-auto p-6">
         {display.length === 0 ? (
           <p className="text-gray-500 text-xl text-center mt-20">{t(lang, "no_peers")}</p>
         ) : (
@@ -409,6 +429,7 @@ function RunningScreen({
           </ul>
         )}
       </div>
+      <BottomBar machineLabel={machineLabel} cellName={cellName} lang={lang} onLangChange={onLangChange} />
     </div>
   );
 }
@@ -416,68 +437,69 @@ function RunningScreen({
 // ─── Error screen ──────────────────────────────────────────────────────
 
 function ErrorScreen({
-  errors, lookup, lang, machineLabel,
+  errors, lookup, lang, onLangChange, cellName, machineLabel,
 }: {
   errors: ErrorEvent[];
   lookup: Record<string, PlcErrorCode>;
   lang: TabletLang;
+  onLangChange: (l: TabletLang) => void;
+  cellName: string | null;
   machineLabel: string;
 }) {
   return (
-    <div className="fixed inset-0 bg-red-900/95 text-white flex flex-col p-8 overflow-auto">
-      <header className="flex items-center justify-between mb-6 pr-40">
-        <div>
-          <p className="text-red-200 text-sm uppercase tracking-widest mb-1">{t(lang, "error_header")}</p>
-          <h1 className="text-4xl font-bold">{machineLabel}</h1>
-        </div>
-        <i className="bi bi-exclamation-triangle-fill text-6xl text-red-200"></i>
-      </header>
-
-      <div className="flex-1 flex flex-col gap-4 min-h-0">
+    <div className="fixed inset-0 bg-red-900/95 text-white flex flex-col">
+      <div className="flex-1 overflow-y-auto px-8 py-6">
         {errors.length === 0 ? (
           <p className="text-red-200 text-xl text-center mt-20">{t(lang, "no_active_errors")}</p>
-        ) : errors.map(ev => {
-          const info = lookup[ev.error_code];
-          return (
-            <div
-              key={ev.id}
-              className="bg-red-950/60 border-2 border-red-300/40 rounded-2xl p-6 flex flex-col gap-4 flex-1 min-h-0"
-            >
-              {/* Error name as large title with the code as a side badge */}
-              <div className="flex items-start justify-between gap-4">
-                <h2 className="text-3xl md:text-4xl font-bold text-red-50 leading-tight">
-                  {info?.description ?? ev.error_code}
-                </h2>
-                <span className="shrink-0 text-base font-mono font-semibold text-red-200/80 bg-red-950/80 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
-                  {ev.error_code}
-                </span>
-              </div>
+        ) : (
+          <div className="flex flex-col gap-6">
+            {errors.map(ev => {
+              const info = lookup[ev.error_code];
+              return (
+                <article key={ev.id} className="flex flex-col gap-5">
+                  {/* Error name as large title; code sits as a small badge next to it. */}
+                  <div className="flex items-baseline justify-between gap-4">
+                    <div>
+                      <p className="text-red-300/80 text-xs uppercase tracking-[0.25em] mb-1">
+                        {t(lang, "error_header")}
+                      </p>
+                      <h2 className="text-4xl md:text-5xl font-bold text-red-50 leading-tight">
+                        {info?.description ?? ev.error_code}
+                      </h2>
+                    </div>
+                    <span className="shrink-0 text-sm font-mono font-semibold text-red-200/70 bg-red-950/60 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
+                      {ev.error_code}
+                    </span>
+                  </div>
 
-              {/* SOLUTION — the dominant block, fills the remaining vertical space */}
-              {info?.solution ? (
-                <div className="bg-cyan-950/50 border-2 border-cyan-400/50 rounded-xl px-8 py-6 flex-1 flex flex-col justify-center min-h-0">
-                  <p className="text-cyan-300 text-base uppercase tracking-[0.2em] mb-3">{t(lang, "solution")}</p>
-                  <p className="text-4xl md:text-5xl font-semibold text-cyan-50 leading-[1.2]">
-                    {info.solution}
-                  </p>
-                </div>
-              ) : (
-                <div className="flex-1" />
-              )}
+                  {/* SOLUTION — biggest text on the screen, top-aligned, no surrounding box. */}
+                  {info?.solution && (
+                    <div>
+                      <p className="text-cyan-300 text-sm uppercase tracking-[0.25em] mb-2">
+                        {t(lang, "solution")}
+                      </p>
+                      <p className="text-4xl md:text-5xl font-semibold text-cyan-50 leading-[1.2]">
+                        {info.solution}
+                      </p>
+                    </div>
+                  )}
 
-              {/* Cause demoted to a single-line footer */}
-              {info?.cause && (
-                <p className="text-base md:text-lg text-red-200/80 leading-snug">
-                  <span className="text-red-300/70 uppercase tracking-widest text-xs mr-2">
-                    {t(lang, "cause")}:
-                  </span>
-                  {info.cause}
-                </p>
-              )}
-            </div>
-          );
-        })}
+                  {/* Cause stays as a small footer line. */}
+                  {info?.cause && (
+                    <p className="text-base text-red-200/70 leading-snug">
+                      <span className="text-red-300/60 uppercase tracking-widest text-xs mr-2">
+                        {t(lang, "cause")}:
+                      </span>
+                      {info.cause}
+                    </p>
+                  )}
+                </article>
+              );
+            })}
+          </div>
+        )}
       </div>
+      <BottomBar machineLabel={machineLabel} cellName={cellName} lang={lang} onLangChange={onLangChange} />
     </div>
   );
 }
