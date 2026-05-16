@@ -373,16 +373,12 @@ function RunningScreen({
   onLangChange: (l: TabletLang) => void;
   machineLabel: string;
 }) {
-  // Rank the cell by current-shift BU output, then surface the operator's own
-  // machine at the top of the list (regardless of where it actually ranks) so
-  // it's always immediately visible on small tablets without scrolling.
-  const ranked = [...peers]
+  // Rank the cell by current-shift BU output; the kiosk machine sits in its
+  // natural sorted position with the row highlighted so it's findable.
+  const display = [...peers]
     .map(p => ({ ...p, bu: Math.round((p.current_swabs ?? 0) / 7200) }))
     .sort((a, b) => b.bu - a.bu)
     .map((p, idx) => ({ ...p, rank: idx + 1 }));
-  const selfRow = ranked.find(p => p.machine_code === selfCode) ?? null;
-  const others  = ranked.filter(p => p.machine_code !== selfCode);
-  const display = selfRow ? [selfRow, ...others] : others;
 
   return (
     <div className="w-full h-full flex flex-col">
