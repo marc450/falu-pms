@@ -433,28 +433,46 @@ function ErrorScreen({
         <i className="bi bi-exclamation-triangle-fill text-6xl text-red-200"></i>
       </header>
 
-      <div className="flex-1 flex flex-col gap-4">
+      <div className="flex-1 flex flex-col gap-4 min-h-0">
         {errors.length === 0 ? (
           <p className="text-red-200 text-xl text-center mt-20">{t(lang, "no_active_errors")}</p>
         ) : errors.map(ev => {
           const info = lookup[ev.error_code];
           return (
-            <div key={ev.id} className="bg-red-950/60 border-2 border-red-300/40 rounded-2xl p-6">
-              <div className="flex items-baseline gap-4 mb-3">
-                <span className="text-4xl font-bold text-red-100 tracking-wider">{ev.error_code}</span>
-                <span className="text-2xl text-red-100">{info?.description ?? ""}</span>
+            <div
+              key={ev.id}
+              className="bg-red-950/60 border-2 border-red-300/40 rounded-2xl p-6 flex flex-col gap-4 flex-1 min-h-0"
+            >
+              {/* Error name as large title with the code as a side badge */}
+              <div className="flex items-start justify-between gap-4">
+                <h2 className="text-3xl md:text-4xl font-bold text-red-50 leading-tight">
+                  {info?.description ?? ev.error_code}
+                </h2>
+                <span className="shrink-0 text-base font-mono font-semibold text-red-200/80 bg-red-950/80 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
+                  {ev.error_code}
+                </span>
               </div>
-              {info?.cause && (
-                <div className="mb-3">
-                  <p className="text-red-300 text-sm uppercase tracking-widest mb-1">{t(lang, "cause")}</p>
-                  <p className="text-xl text-red-50 leading-snug">{info.cause}</p>
+
+              {/* SOLUTION — the dominant block, fills the remaining vertical space */}
+              {info?.solution ? (
+                <div className="bg-cyan-950/50 border-2 border-cyan-400/50 rounded-xl px-8 py-6 flex-1 flex flex-col justify-center min-h-0">
+                  <p className="text-cyan-300 text-base uppercase tracking-[0.2em] mb-3">{t(lang, "solution")}</p>
+                  <p className="text-4xl md:text-5xl font-semibold text-cyan-50 leading-[1.2]">
+                    {info.solution}
+                  </p>
                 </div>
+              ) : (
+                <div className="flex-1" />
               )}
-              {info?.solution && (
-                <div className="bg-cyan-950/40 border border-cyan-400/40 rounded-xl p-4">
-                  <p className="text-cyan-300 text-sm uppercase tracking-widest mb-1">{t(lang, "solution")}</p>
-                  <p className="text-xl text-cyan-50 leading-snug">{info.solution}</p>
-                </div>
+
+              {/* Cause demoted to a single-line footer */}
+              {info?.cause && (
+                <p className="text-base md:text-lg text-red-200/80 leading-snug">
+                  <span className="text-red-300/70 uppercase tracking-widest text-xs mr-2">
+                    {t(lang, "cause")}:
+                  </span>
+                  {info.cause}
+                </p>
               )}
             </div>
           );
