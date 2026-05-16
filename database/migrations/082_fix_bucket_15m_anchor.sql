@@ -3,43 +3,41 @@
 -- ============================================================
 -- 081 keyed the per-bucket cumulative-counter anchor by
 -- (machine_id, shift_crew). shift_crew rotates (crew "A" works
--- the 07:00-19:00 day shift, crew "B" the 19:00-07:00 night
--- shift, then they swap), so the anchor lookup at the start of
--- each shift returned that crew's _end value from 12-24h
--- earlier — while the PLC counter had grown continuously in
--- the meantime. Result: every shift change (07:00 and 19:00)
--- produced a spike in production_time_seconds / swabs_produced
--- of one full shift's worth of work crammed into one 15-min
--- bucket. Intraday uptime charts hit 300-500%, BU output
--- spiked to 10× normal.
+-- 07:00-19:00, crew "B" 19:00-07:00, then they swap), so the
+-- anchor lookup at the start of each shift returned that crew's
+-- _end value from 12-24h earlier — while the PLC counter had
+-- grown continuously in the meantime. Result: every shift change
+-- (07:00 and 19:00) produced a spike of one full shift's worth
+-- of work crammed into one 15-min bucket. Intraday uptime hit
+-- 300-500%, BU output spiked to 10× normal.
 --
 -- The PLC counters are machine-level, not crew-level — they
 -- don't reset at shift change. So the correct anchor is the
 -- previous bucket for the same machine, regardless of crew.
--- This migration:
---   1. Collapses the unique key to (machine_id, bucket_ts) —
---      one row per machine per 15-min window. The shift_crew
---      column is kept as a label: the crew of the latest
---      reading in the window (= the incoming crew at a
---      handoff bucket).
---   2. Rewrites aggregate_cell_bucket to loop per machine
---      (not per (machine, crew)) and look up the anchor by
---      machine only.
---   3. Truncates the polluted backing table and re-runs the
---      48h backfill against the fixed logic.
--- get_fleet_trend_minute is unchanged — its read query SUMs
--- across rows in a bucket and is correct under the new shape.
+--
+-- This migration: schema + function fix only, no backfill.
+-- The optional 48h backfill is in 082b — it does too much work
+-- per HTTP request for the Supabase SQL editor to run in one
+-- shot, so it's split into chunks the user runs separately.
+-- After 082 runs, the cron job (every 15 min) starts producing
+-- correct rows. The chart self-heals over ~24h, or run 082b
+-- for an immediate fix.
 -- ============================================================
 
 
 -- ── A. Drop polluted data and replace unique constraint ─────────────────────
--- The 48h rolling window means there's no long-term loss; the
--- backfill at the end of this migration regenerates everything.
+-- 48h rolling table, so no long-term data is lost. The new function
+-- writes one row per (machine, bucket); the previous one wrote one
+-- per (machine, bucket, crew), and some shift-transition buckets had
+-- two rows — they would violate the new constraint, so we wipe first.
 
 TRUNCATE TABLE bucket_analytics_15m;
 
 ALTER TABLE bucket_analytics_15m
-  DROP CONSTRAINT bucket_analytics_15m_machine_id_bucket_ts_shift_crew_key;
+  DROP CONSTRAINT IF EXISTS bucket_analytics_15m_machine_id_bucket_ts_shift_crew_key;
+
+ALTER TABLE bucket_analytics_15m
+  DROP CONSTRAINT IF EXISTS bucket_analytics_15m_machine_id_bucket_ts_key;
 
 ALTER TABLE bucket_analytics_15m
   ADD CONSTRAINT bucket_analytics_15m_machine_id_bucket_ts_key
@@ -47,8 +45,14 @@ ALTER TABLE bucket_analytics_15m
 
 
 -- ── B. Rewrite aggregate_cell_bucket ────────────────────────────────────────
--- Anchor is keyed by machine_id only. Crew is recorded as the
--- crew of the latest reading in the window (incoming crew).
+-- - Loop per machine (not per (machine, crew)). One row per (machine, bucket).
+-- - Anchor lookup by machine_id only — matches the machine-level nature of
+--   the PLC counter.
+-- - Crew label = crew of the latest reading in the window (incoming crew at
+--   a handoff bucket).
+-- - No anchor → anchor := current MAX, so delta = 0 for the first bucket of
+--   a machine. Prevents the "first bucket post-deploy is a spike" failure
+--   mode that the old function had (anchor=0 → delta=full lifetime counter).
 
 CREATE OR REPLACE FUNCTION aggregate_cell_bucket(
   p_cell_id      uuid,
@@ -81,13 +85,13 @@ DECLARE
   v_anc_boxes     bigint;
   v_anc_prod_t    bigint;
   v_anc_discard   bigint;
+  v_has_anchor    boolean;
 
   v_delta_swabs   bigint;
   v_delta_boxes   bigint;
   v_delta_prod_t  bigint;
   v_delta_discard bigint;
 BEGIN
-  -- Loop per machine (not per (machine, crew)). One bucket row per machine.
   FOR v_machine_id, v_machine_code IN
     SELECT DISTINCT
       sr.machine_id,
@@ -103,9 +107,6 @@ BEGIN
       AND sr.recorded_at <  v_db_end
       AND sr.shift_crew  IS NOT NULL
   LOOP
-    -- MAX of cumulative counters across ALL readings for this machine in
-    -- the window, regardless of crew. The PLC counter is monotonic
-    -- across shift boundaries.
     SELECT
       COUNT(*),
       MAX(sr.produced_swabs),
@@ -124,9 +125,6 @@ BEGIN
       CONTINUE;
     END IF;
 
-    -- Crew label = crew of the latest reading in the window. At a shift
-    -- handoff bucket this is the incoming crew (they own most of the
-    -- 15-min window and all of the next ones).
     SELECT sr.shift_crew
       INTO v_label_crew
     FROM shift_readings sr
@@ -137,26 +135,30 @@ BEGIN
     ORDER BY sr.recorded_at DESC
     LIMIT 1;
 
-    -- Anchor: most recent prior bucket for this machine, regardless of crew.
     SELECT
       _end_produced_swabs,
       _end_produced_boxes,
       _end_production_time_s,
-      _end_discarded_swabs
+      _end_discarded_swabs,
+      TRUE
     INTO
-      v_anc_swabs, v_anc_boxes, v_anc_prod_t, v_anc_discard
+      v_anc_swabs, v_anc_boxes, v_anc_prod_t, v_anc_discard, v_has_anchor
     FROM bucket_analytics_15m
     WHERE machine_id = v_machine_id
       AND bucket_ts  < p_bucket_start
     ORDER BY bucket_ts DESC
     LIMIT 1;
 
-    v_anc_swabs   := COALESCE(v_anc_swabs,   0);
-    v_anc_boxes   := COALESCE(v_anc_boxes,   0);
-    v_anc_prod_t  := COALESCE(v_anc_prod_t,  0);
-    v_anc_discard := COALESCE(v_anc_discard, 0);
+    IF NOT FOUND THEN
+      -- No prior bucket for this machine: treat current MAX as the anchor
+      -- so delta = 0. The bucket still records _end_* values, so the next
+      -- bucket has a real anchor and produces a correct delta.
+      v_anc_swabs   := COALESCE(v_max_swabs,   0);
+      v_anc_boxes   := COALESCE(v_max_boxes,   0);
+      v_anc_prod_t  := COALESCE(v_max_prod_t,  0);
+      v_anc_discard := COALESCE(v_max_discard, 0);
+    END IF;
 
-    -- GREATEST(0,...) guards against PLC restarts that reset counters
     v_delta_swabs   := GREATEST(0, COALESCE(v_max_swabs,   0) - v_anc_swabs);
     v_delta_boxes   := GREATEST(0, COALESCE(v_max_boxes,   0) - v_anc_boxes);
     v_delta_prod_t  := GREATEST(0, COALESCE(v_max_prod_t,  0) - v_anc_prod_t);
@@ -193,27 +195,3 @@ $$;
 
 GRANT EXECUTE ON FUNCTION aggregate_cell_bucket(uuid, timestamptz)
   TO anon, authenticated;
-
-
--- ── C. Backfill the last 48h with the fixed logic ───────────────────────────
-
-DO $$
-DECLARE
-  v_bucket   timestamptz;
-  v_earliest timestamptz := date_bin(
-    interval '15 minutes',
-    now() - interval '48 hours',
-    TIMESTAMP WITH TIME ZONE '2000-01-01 00:00:00+00'
-  );
-  v_latest   timestamptz := date_bin(
-    interval '15 minutes',
-    now(),
-    TIMESTAMP WITH TIME ZONE '2000-01-01 00:00:00+00'
-  ) - interval '15 minutes';
-BEGIN
-  FOR v_bucket IN
-    SELECT generate_series(v_earliest, v_latest, interval '15 minutes')
-  LOOP
-    PERFORM aggregate_all_cells_for_bucket(v_bucket);
-  END LOOP;
-END $$;
