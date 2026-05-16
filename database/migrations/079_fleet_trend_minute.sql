@@ -15,8 +15,8 @@
 --   ARRAY[<uuid>, …]    → peer set
 --
 -- Delta logic mirrors get_fleet_trend HOURLY path (migration 025):
---   per (machine, shift_number, bucket) take MAX of each cumulative counter,
---   then LAG within (machine, shift_number) ORDER BY bucket gives the
+--   per (machine, shift_crew, bucket) take MAX of each cumulative counter,
+--   then LAG within (machine, shift_crew) ORDER BY bucket gives the
 --   incremental production / production_time / discarded for that bucket.
 --   GREATEST(0, …) guards against PLC restarts or out-of-order delivery.
 
@@ -50,7 +50,7 @@ sr_bucket_raw AS (
       TIMESTAMP WITH TIME ZONE '2000-01-01 00:00:00+00'
     )                                   AS bucket_ts,
     machine_id,
-    shift_number,
+    shift_crew,
     count(*)                            AS rdg_count,
     max(produced_boxes)                 AS max_boxes,
     max(produced_swabs)                 AS max_swabs,
@@ -72,32 +72,32 @@ sr_bucket_inc AS (
     GREATEST(0,
       max_boxes - COALESCE(
         LAG(max_boxes) OVER (
-          PARTITION BY machine_id, shift_number
+          PARTITION BY machine_id, shift_crew
           ORDER BY bucket_ts
         ), 0)
     ) AS inc_boxes,
     GREATEST(0,
       max_swabs - COALESCE(
         LAG(max_swabs) OVER (
-          PARTITION BY machine_id, shift_number
+          PARTITION BY machine_id, shift_crew
           ORDER BY bucket_ts
         ), 0)
     ) AS inc_swabs,
     GREATEST(0,
       max_prod_t - COALESCE(
         LAG(max_prod_t) OVER (
-          PARTITION BY machine_id, shift_number
+          PARTITION BY machine_id, shift_crew
           ORDER BY bucket_ts
         ), 0)
     ) AS inc_prod_secs,
     GREATEST(0,
       max_discarded - COALESCE(
         LAG(max_discarded) OVER (
-          PARTITION BY machine_id, shift_number
+          PARTITION BY machine_id, shift_crew
           ORDER BY bucket_ts
         ), 0)
     ) AS inc_discarded,
-    shift_number
+    shift_crew
   FROM sr_bucket_raw
 ),
 
@@ -113,7 +113,7 @@ sr_bucket_agg AS (
     sum(inc_prod_secs)::bigint                          AS total_prod_secs,
     count(DISTINCT machine_id)                          AS machine_count,
     sum(rdg_count)                                      AS reading_count,
-    count(DISTINCT shift_number)                        AS shift_count
+    count(DISTINCT shift_crew)                        AS shift_count
   FROM sr_bucket_inc
   GROUP BY bucket_ts
 )
