@@ -218,9 +218,13 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
   const isLoginPage       = pathname === "/login";
   const isLeaderboardPage = pathname === "/leaderboard";
   const isSettingsPage    = pathname === "/settings";
+  const isTabletPage      = pathname?.startsWith("/tablet") ?? false;
 
   useEffect(() => {
     if (loading) return;
+    // The tablet kiosk has its own per-machine token + PIN auth — skip the
+    // Supabase login gate entirely.
+    if (isTabletPage) return;
     if (!session && !isLoginPage) {
       router.replace("/login");
     }
@@ -231,7 +235,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     if (session && isSettingsPage && !isAdmin) {
       router.replace("/");
     }
-  }, [loading, session, isLoginPage, isSettingsPage, isAdmin, router]);
+  }, [loading, session, isLoginPage, isSettingsPage, isTabletPage, isAdmin, router]);
 
   // While checking auth state, show a minimal spinner
   if (loading) {
@@ -244,6 +248,11 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
 
   // Login page — render without sidebar/chrome
   if (isLoginPage) {
+    return <>{children}</>;
+  }
+
+  // Tablet kiosk — fullscreen, no sidebar, own auth via URL token + PIN
+  if (isTabletPage) {
     return <>{children}</>;
   }
 

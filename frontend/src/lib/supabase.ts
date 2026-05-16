@@ -1563,3 +1563,77 @@ export async function fetchMachineErrorEvents(
   }
   return (data ?? []) as ErrorEvent[];
 }
+
+// ============================================
+// TABLET KIOSK
+// ============================================
+
+export interface TabletSession {
+  id:            string;        // machines.id (uuid)
+  machine_code:  string;
+  name:          string | null;
+  cell_id:       string | null;
+}
+
+/**
+ * Look up a machine by its tablet_token. Returns null for an unknown or
+ * unprovisioned token.
+ */
+export async function validateTabletToken(token: string): Promise<TabletSession | null> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("machines")
+    .select("id, machine_code, name, cell_id")
+    .eq("tablet_token", token)
+    .maybeSingle();
+  if (error) {
+    console.error("validateTabletToken error:", error);
+    return null;
+  }
+  return data as TabletSession | null;
+}
+
+/**
+ * Verify a 4-digit PIN against the row matching the given token.
+ * The PIN is stored unhashed for the prototype — fine for a per-machine
+ * kiosk, but we should hash before any real deployment.
+ */
+export async function validateTabletPin(token: string, pin: string): Promise<boolean> {
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("machines")
+    .select("tablet_pin")
+    .eq("tablet_token", token)
+    .maybeSingle();
+  if (error || !data) return false;
+  return (data as { tablet_pin: string | null }).tablet_pin === pin;
+}
+
+export interface TabletPeerRow {
+  machine_code:    string;
+  name:            string | null;
+  status:          string | null;
+  current_swabs:   number | null;
+  current_efficiency: number | null;
+}
+
+/**
+ * Pull live data for every machine in the same cell. Used to render the
+ * BU-output ranking on the running screen. If the kiosk machine has no
+ * cell assigned it returns just that one machine.
+ */
+export async function fetchTabletCellPeers(cellId: string | null, machineCode: string): Promise<TabletPeerRow[]> {
+  const sb = getSupabase();
+  let query = sb
+    .from("machines")
+    .select("machine_code, name, status, current_swabs, current_efficiency")
+    .eq("hidden", false);
+  if (cellId) query = query.eq("cell_id", cellId);
+  else        query = query.eq("machine_code", machineCode);
+  const { data, error } = await query;
+  if (error) {
+    console.error("fetchTabletCellPeers error:", error);
+    return [];
+  }
+  return (data ?? []) as TabletPeerRow[];
+}
