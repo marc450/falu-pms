@@ -580,10 +580,9 @@ async function fetchIntradayTrend(
   const bucketMs = INTRADAY_BUCKET_MINUTES * 60_000;
 
   const { data, error } = await sb.rpc("get_fleet_trend_minute", {
-    range_start:    range.start.toISOString(),
-    range_end:      range.end.toISOString(),
-    bucket_minutes: INTRADAY_BUCKET_MINUTES,
-    machine_ids:    machineIds,
+    range_start: range.start.toISOString(),
+    range_end:   range.end.toISOString(),
+    machine_ids: machineIds,
   });
   if (error) throw new Error(error.message);
 
