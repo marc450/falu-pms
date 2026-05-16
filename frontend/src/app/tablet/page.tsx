@@ -340,9 +340,16 @@ function RunningScreen({
   lang: TabletLang;
   machineLabel: string;
 }) {
+  // Rank the cell by current-shift BU output, then surface the operator's own
+  // machine at the top of the list (regardless of where it actually ranks) so
+  // it's always immediately visible on small tablets without scrolling.
   const ranked = [...peers]
     .map(p => ({ ...p, bu: Math.round((p.current_swabs ?? 0) / 7200) }))
-    .sort((a, b) => b.bu - a.bu);
+    .sort((a, b) => b.bu - a.bu)
+    .map((p, idx) => ({ ...p, rank: idx + 1 }));
+  const selfRow = ranked.find(p => p.machine_code === selfCode) ?? null;
+  const others  = ranked.filter(p => p.machine_code !== selfCode);
+  const display = selfRow ? [selfRow, ...others] : others;
 
   return (
     <div className="w-full h-full flex flex-col p-8">
@@ -359,42 +366,42 @@ function RunningScreen({
         )}
       </header>
 
-      <div className="flex-1 overflow-hidden">
-        {ranked.length === 0 ? (
+      <div className="flex-1 overflow-y-auto">
+        {display.length === 0 ? (
           <p className="text-gray-500 text-xl text-center mt-20">{t(lang, "no_peers")}</p>
         ) : (
-          <ul className="flex flex-col gap-3">
-            {ranked.map((p, idx) => {
+          <ul className="flex flex-col gap-2">
+            {display.map((p) => {
               const isSelf = p.machine_code === selfCode;
-              const rank   = idx + 1;
+              const rank   = p.rank;
               const eff    = p.current_efficiency != null ? `${Math.round(p.current_efficiency)}%` : "—";
               return (
                 <li
                   key={p.machine_code}
-                  className={`flex items-center gap-6 rounded-2xl px-6 py-4 ${
+                  className={`flex items-center gap-5 rounded-2xl px-5 py-3 ${
                     isSelf
-                      ? "bg-cyan-500/10 border-2 border-cyan-400"
+                      ? "bg-cyan-500/15 border-2 border-cyan-400"
                       : "bg-gray-900/70 border border-gray-800"
                   }`}
                 >
-                  <span className={`text-4xl font-bold w-16 text-center ${
-                    rank === 1 ? "text-yellow-300" : rank === 2 ? "text-gray-300" : rank === 3 ? "text-amber-600" : "text-gray-600"
+                  <span className={`text-3xl font-bold w-14 text-center ${
+                    rank === 1 ? "text-yellow-300" : rank === 2 ? "text-gray-300" : rank === 3 ? "text-amber-600" : "text-gray-500"
                   }`}>{rank}</span>
-                  <div className="flex-1">
-                    <p className="text-2xl font-semibold text-white">
+                  <div className="flex-1 min-w-0">
+                    <p className={`text-xl font-semibold ${isSelf ? "text-cyan-300" : "text-white"}`}>
                       {p.name && p.name !== p.machine_code ? p.name : p.machine_code}
                     </p>
                     {p.name && p.name !== p.machine_code && (
-                      <p className="text-sm text-gray-500">{p.machine_code}</p>
+                      <p className="text-xs text-gray-500">{p.machine_code}</p>
                     )}
                   </div>
-                  <div className="text-right w-32">
-                    <p className="text-3xl font-bold text-white">{p.bu.toLocaleString()}</p>
-                    <p className="text-xs text-gray-500 uppercase tracking-widest">{t(lang, "bu")}</p>
-                  </div>
                   <div className="text-right w-28">
-                    <p className="text-2xl font-semibold text-gray-200">{eff}</p>
-                    <p className="text-xs text-gray-500 uppercase tracking-widest">{t(lang, "uptime")}</p>
+                    <p className="text-2xl font-bold text-white">{p.bu.toLocaleString()}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">{t(lang, "bu")}</p>
+                  </div>
+                  <div className="text-right w-24">
+                    <p className="text-xl font-semibold text-gray-200">{eff}</p>
+                    <p className="text-[10px] text-gray-500 uppercase tracking-widest">{t(lang, "uptime")}</p>
                   </div>
                 </li>
               );
