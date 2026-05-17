@@ -41,9 +41,8 @@ export default function ForgotPasswordPage() {
 
         {/* Brand */}
         <div className="text-center mb-8">
-          <FaluLogo className="w-16 h-16 mx-auto mb-4 rounded-lg" />
-          <h1 className="text-white text-2xl font-bold tracking-tight">FALU</h1>
-          <p className="text-gray-500 text-sm mt-1">Production Monitoring</p>
+          <FaluLogo className="w-16 h-16 mx-auto mb-4" />
+          <p className="text-gray-500 text-sm">Production Monitoring &amp; Operator Guidance</p>
         </div>
 
         {/* Card */}
