@@ -791,8 +791,8 @@ function ParkSummaryTiles({
   const sc            = applyMachineScrapColor(avgScrap, avgScrapGood, avgScrapMed);
   const buc           = applyBuRunRateColor(floorProjected, floorTarget, floorMediocreTarget > 0 ? floorMediocreTarget : null);
 
-  const onlineColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
-  const onlineBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
+  const runningColor  = running === 0 ? "text-red-400" : running < total ? "text-yellow-400" : "text-green-400";
+  const runningBorder = running === 0 ? "border-red-600" : running < total ? "border-yellow-600" : "border-green-600";
 
   if (total === 0) return null;
 
@@ -810,11 +810,11 @@ function ParkSummaryTiles({
     <div className="grid grid-cols-4 gap-3 mb-6">
       <SummaryTile
         icon="bi-activity"
-        label="Machines Online"
+        label="Machines Running"
         value={`${running} / ${total}`}
         sub="currently running"
-        colorClass={onlineColor}
-        borderClass={onlineBorder}
+        colorClass={runningColor}
+        borderClass={runningBorder}
       />
       <SummaryTile
         icon="bi-speedometer2"
