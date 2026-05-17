@@ -278,7 +278,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
         {/* Brand */}
         <div className="p-4 border-b border-gray-800">
           <div className="flex items-center gap-2.5">
-            <FaluLogo className="w-9 h-9 shrink-0 rounded" />
+            <FaluLogo className="w-9 h-9 shrink-0" />
             <div>
               <h1 className="text-sm font-bold text-white leading-tight">FALU</h1>
               <p className="text-xs text-gray-500 mt-0.5">Production Monitoring &amp; Operator Guidance</p>
