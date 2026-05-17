@@ -539,6 +539,53 @@ function RunningScreen({
   );
 }
 
+// Parses a numbered operator guidance string (e.g. "1) check this\n2) check that")
+// into an array of step bodies, stripping the leading "N)" or "N." prefix and
+// dropping empty lines. A guidance string with no newlines comes back as a
+// single-element array.
+function parseGuidanceSteps(text: string): string[] {
+  return text
+    .split(/\r?\n/)
+    .map(line => line.replace(/^\s*\d+\s*[\)\.]\s*/, "").trim())
+    .filter(line => line.length > 0);
+}
+
+// Renders the operator-guidance block. One step → plain paragraph (same look
+// as before, smaller type). Multiple steps → numbered list with a badge per
+// row, thin red divider between rows, so the eye can land on a single step
+// instead of scanning a wall of text.
+function GuidanceBlock({ text, label }: { text: string; label: string }) {
+  const steps = parseGuidanceSteps(text);
+  return (
+    <div>
+      <p className="text-cyan-300 text-sm uppercase tracking-[0.25em] mb-3">
+        {label}
+      </p>
+      {steps.length <= 1 ? (
+        <p className="text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">
+          {steps[0] ?? text}
+        </p>
+      ) : (
+        <ol className="flex flex-col">
+          {steps.map((step, idx) => (
+            <li
+              key={idx}
+              className={`flex items-start gap-5 py-3 ${idx > 0 ? "border-t border-red-300/15" : ""}`}
+            >
+              <span className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-red-950/60 border border-red-300/30 text-cyan-200 text-2xl font-semibold leading-none">
+                {idx + 1}
+              </span>
+              <p className="flex-1 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
+                {step}
+              </p>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 // ─── Error screen ──────────────────────────────────────────────────────
 
 function ErrorScreen({
@@ -579,14 +626,7 @@ function ErrorScreen({
 
                   {/* OPERATOR GUIDANCE — biggest text on the screen, top-aligned, no surrounding box. */}
                   {info?.operator_guidance && (
-                    <div>
-                      <p className="text-cyan-300 text-sm uppercase tracking-[0.25em] mb-2">
-                        {t(lang, "operator_guidance")}
-                      </p>
-                      <p className="text-4xl md:text-5xl font-semibold text-cyan-50 leading-[1.2] whitespace-pre-line">
-                        {info.operator_guidance}
-                      </p>
-                    </div>
+                    <GuidanceBlock text={info.operator_guidance} label={t(lang, "operator_guidance")} />
                   )}
 
                 </article>
