@@ -1,12 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback, useMemo } from "react";
-import { format, parseISO } from "date-fns";
 import { fmtN, fmtH, fmtPct } from "@/lib/fmt";
-import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceLine,
-} from "recharts";
 import {
   fetchMachineShiftSummary,
 } from "@/lib/supabase";
@@ -16,19 +11,6 @@ import type { DateRange, RegisteredMachine, MachineShiftRow, TimeSlot, ShiftAssi
 
 const BU_TARGET_DEFAULT   = 185;
 const BU_MEDIOCRE_DEFAULT = 150;
-
-const TOOLTIP_CONTENT_STYLE = {
-  backgroundColor: "#1f2937",
-  border: "1px solid #374151",
-  borderRadius: "6px",
-  fontSize: 12,
-  color: "#e5e7eb",
-};
-const TOOLTIP_LABEL_STYLE = { color: "#9ca3af", marginBottom: 4 };
-const TOOLTIP_ITEM_STYLE  = { color: "#e5e7eb", padding: "1px 0" };
-const TICK_STYLE          = { fill: "#9ca3af", fontSize: 11 };
-const GRID_COLOR          = "#374151";
-const AXIS_COLOR          = "#4b5563";
 
 const CREW_COLORS = ["#22d3ee", "#a78bfa", "#4ade80", "#fb923c", "#f472b6", "#facc15"];
 
@@ -143,19 +125,6 @@ function stdDev(values: number[]): number | null {
   const mean = values.reduce((s, v) => s + v, 0) / values.length;
   const variance = values.reduce((s, v) => s + (v - mean) ** 2, 0) / (values.length - 1);
   return Math.sqrt(variance);
-}
-
-/** Simple linear regression slope (BU per day) */
-function trendSlope(points: { x: number; y: number }[]): number | null {
-  if (points.length < 3) return null;
-  const n = points.length;
-  const sumX  = points.reduce((s, p) => s + p.x, 0);
-  const sumY  = points.reduce((s, p) => s + p.y, 0);
-  const sumXY = points.reduce((s, p) => s + p.x * p.y, 0);
-  const sumX2 = points.reduce((s, p) => s + p.x * p.x, 0);
-  const denom = n * sumX2 - sumX * sumX;
-  if (denom === 0) return null;
-  return (n * sumXY - sumX * sumY) / denom;
 }
 
 function buColor(val: number | null): string {
@@ -298,24 +267,6 @@ export default function ShiftAnalytics({
     return m;
   }, [crewStats]);
 
-  // ── Per-day chart data for ALL crews (only on-duty days) ──
-  const chartData = useMemo(() => {
-    const workDays = Array.from(new Set(annotated.map(r => r.work_day))).sort();
-    const days = workDays.slice(-30);
-    return days.map(day => {
-      let dateLabel = day;
-      try { dateLabel = format(parseISO(day), "dd.MM"); } catch { /* noop */ }
-      const entry: Record<string, string | number | undefined> = { day, dateLabel };
-      for (const crew of crewsInData) {
-        const crewRows = annotated.filter(r => r.work_day === day && r.crewName === crew);
-        // Only include a value when the crew actually worked that day
-        const bu = avgBu(crewRows);
-        entry[crew] = bu !== null ? bu : undefined;
-      }
-      return entry;
-    });
-  }, [annotated, crewsInData]);
-
   // ── Per-machine comparison for ALL crews ──
   const machineComparison = useMemo(() => {
     const allCodes = Array.from(new Set(annotated.map(r => r.machine_code))).sort();
@@ -352,26 +303,6 @@ export default function ShiftAnalytics({
     );
     return { min: allBu.length > 0 ? Math.min(...allBu) : 0, max: allBu.length > 0 ? Math.max(...allBu) : 1 };
   }, [machineComparison]);
-
-  // ── Per-crew trend (slope + consistency) ──
-  const crewTrends = useMemo(() => {
-    return crewStats.map(c => {
-      // Get daily BU values for this crew
-      const dailyBu: { x: number; y: number }[] = [];
-      const workDays = Array.from(new Set(annotated.filter(r => r.crewName === c.name).map(r => r.work_day))).sort();
-      workDays.forEach((day, i) => {
-        const dayRows = annotated.filter(r => r.work_day === day && r.crewName === c.name);
-        const bu = avgBu(dayRows);
-        if (bu !== null) dailyBu.push({ x: i, y: bu });
-      });
-      const slope = trendSlope(dailyBu);
-      const buValues = dailyBu.map(p => p.y);
-      const std = stdDev(buValues);
-      const minBu = buValues.length > 0 ? Math.min(...buValues) : null;
-      const maxBu = buValues.length > 0 ? Math.max(...buValues) : null;
-      return { name: c.name, color: c.color, slope, std, minBu, maxBu, days: buValues.length };
-    });
-  }, [crewStats, annotated]);
 
   // ── Render ──
   if (loading) {
@@ -426,114 +357,6 @@ export default function ShiftAnalytics({
         </div>
       </div>
 
-      {/* ═══════════════════════════════════════════════════════════════════
-          SECTION 2: CREW BU TREND
-          ═══════════════════════════════════════════════════════════════════ */}
-      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-sm font-semibold text-white flex items-center gap-2">
-            BU Trend
-          </span>
-          <div className="flex items-center gap-3 text-xs text-gray-500 flex-wrap justify-end">
-            {crewStats.map(c => (
-              <span key={c.name} className="flex items-center gap-1.5">
-                <span className="w-3 h-2 rounded-sm inline-block" style={{ background: c.color }}></span>
-                {c.name}
-              </span>
-            ))}
-          </div>
-        </div>
-
-        {/* Line chart */}
-        {chartData.length === 0 ? (
-          <div className="flex items-center justify-center h-48 text-gray-500 text-sm">No data</div>
-        ) : (
-          <ResponsiveContainer width="100%" height={260}>
-            <LineChart data={chartData} margin={{ top: 4, right: 8, left: -18, bottom: 16 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-              <ReferenceLine y={BU_TARGET_DEFAULT}   stroke="#4ade80" strokeDasharray="6 3" strokeOpacity={0.5} label={{ value: "Target", position: "right", fill: "#4ade80", fontSize: 10 }} />
-              <ReferenceLine y={BU_MEDIOCRE_DEFAULT} stroke="#eab308" strokeDasharray="6 3" strokeOpacity={0.35} />
-              <XAxis
-                dataKey="dateLabel"
-                tick={TICK_STYLE}
-                tickLine={false}
-                axisLine={{ stroke: AXIS_COLOR }}
-                interval={chartData.length > 14 ? Math.ceil(chartData.length / 14) - 1 : 0}
-              />
-              <YAxis
-                domain={[100, "auto"]}
-                tick={TICK_STYLE}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v: number) => String(v)}
-              />
-              <Tooltip
-                contentStyle={TOOLTIP_CONTENT_STYLE}
-                labelStyle={TOOLTIP_LABEL_STYLE}
-                itemStyle={TOOLTIP_ITEM_STYLE}
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                formatter={(v: any, name: any) => [`${fmtN(Number(v), 1)} BU`, name]}
-              />
-              {crewStats.map(c => (
-                <Line
-                  key={c.name}
-                  type="monotone"
-                  dataKey={c.name}
-                  name={c.name}
-                  stroke={c.color}
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4, strokeWidth: 0 }}
-                  connectNulls={true}
-                />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-
-        {/* Trend summary row */}
-        <div className={`grid gap-3 mt-4 ${
-          crewTrends.length <= 2 ? "grid-cols-2" :
-          crewTrends.length === 3 ? "grid-cols-3" :
-          "grid-cols-2 sm:grid-cols-4"
-        }`}>
-          {crewTrends.map(t => {
-            const trendLabel = t.slope === null ? "N/A"
-              : t.slope > 0.3 ? "Improving"
-              : t.slope < -0.3 ? "Declining"
-              : "Stable";
-            const trendColor = t.slope === null ? "text-gray-500"
-              : t.slope > 0.3 ? "text-green-400"
-              : t.slope < -0.3 ? "text-red-400"
-              : "text-gray-400";
-            const trendIcon = t.slope === null ? "bi-dash"
-              : t.slope > 0.3 ? "bi-arrow-up-right"
-              : t.slope < -0.3 ? "bi-arrow-down-right"
-              : "bi-arrow-right";
-            return (
-              <div key={t.name} className="bg-gray-900/40 rounded-lg px-3 py-3">
-                <div className="flex items-center gap-1.5 mb-2">
-                  <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: t.color }}></span>
-                  <span className="text-xs font-semibold text-white">{t.name}</span>
-                </div>
-                <div className="flex items-center gap-2 mb-1.5">
-                  <i className={`bi ${trendIcon} ${trendColor}`}></i>
-                  <span className={`text-sm font-bold ${trendColor}`}>{trendLabel}</span>
-                  {t.slope !== null && (
-                    <span className="text-[10px] text-gray-500">
-                      ({t.slope > 0 ? "+" : ""}{fmtN(t.slope, 2)} BU/day)
-                    </span>
-                  )}
-                </div>
-                <div className="flex items-center justify-between text-[10px] text-gray-500">
-                  <span>Range: {fmtN(t.minBu, 0)}{"\u2013"}{fmtN(t.maxBu, 0)} BU</span>
-                  <span>±{fmtN(t.std, 1)}</span>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
 
       {/* ═══════════════════════════════════════════════════════════════════
           SECTION 3: PER-MACHINE BREAKDOWN (ALL CREWS)
