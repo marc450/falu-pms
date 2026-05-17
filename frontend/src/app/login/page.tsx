@@ -44,7 +44,7 @@ export default function LoginPage() {
         {/* Brand */}
         <div className="text-center mb-8">
           <FaluLogo className="w-16 h-16 mx-auto mb-4 rounded-lg" />
-          <p className="text-gray-500 text-sm">Production Monitoring</p>
+          <p className="text-gray-500 text-sm">Production Monitoring &amp; Operator Guidance</p>
         </div>
 
         {/* Card */}

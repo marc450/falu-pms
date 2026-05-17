@@ -3,8 +3,8 @@ import "./globals.css";
 import AuthLayout from "@/components/AuthLayout";
 
 export const metadata: Metadata = {
-  title: "FALU - Production Monitoring",
-  description: "FALU production monitoring system",
+  title: "FALU - Production Monitoring & Operator Guidance",
+  description: "FALU production monitoring and operator guidance system",
 };
 
 export default function RootLayout({
