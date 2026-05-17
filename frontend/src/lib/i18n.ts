@@ -30,7 +30,8 @@ const STRINGS: Record<TabletLang, Dict> = {
     status_offline:      "Offline",
     error_header:        "Error",
     cause:               "Cause",
-    solution:            "Solution",
+    operator_guidance:   "Operator Guidance",
+    tech_support:        "Technical Support Guidance",
     no_active_errors:    "Waiting for error details…",
 
     language:            "Language",
@@ -54,7 +55,8 @@ const STRINGS: Record<TabletLang, Dict> = {
     status_offline:      "Desconectada",
     error_header:        "Error",
     cause:               "Causa",
-    solution:            "Solución",
+    operator_guidance:   "Guía para el operador",
+    tech_support:        "Guía para soporte técnico",
     no_active_errors:    "Esperando detalles del error…",
 
     language:            "Idioma",

@@ -268,7 +268,8 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
       code: string;
       description: string;
       cause: string | null;
-      solution: string | null;
+      operatorGuidance: string | null;
+      techSupportGuidance: string | null;
       totalSecs: number;
       occurrences: number;
       machines: Set<string>;
@@ -283,7 +284,8 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
           code: r.error_code,
           description: info?.description ?? "Unknown",
           cause: info?.cause ?? null,
-          solution: info?.solution ?? null,
+          operatorGuidance: info?.operator_guidance ?? null,
+          techSupportGuidance: info?.technical_support_guidance ?? null,
           totalSecs: 0,
           occurrences: 0,
           machines: new Set(),
@@ -597,9 +599,9 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
                       <tr>
                         <td colSpan={6} className="p-0">
                           <div className="bg-gray-900/60 border-t border-b border-gray-700/30">
-                            {/* Cause + Solution cards */}
-                            {(row.cause || row.solution) && (
-                              <div className="grid grid-cols-2 gap-4 px-6 pt-4 pb-2">
+                            {/* Cause + Operator + Technical Support guidance cards */}
+                            {(row.cause || row.operatorGuidance || row.techSupportGuidance) && (
+                              <div className="grid grid-cols-3 gap-4 px-6 pt-4 pb-2">
                                 {row.cause && (
                                   <div className="bg-gray-800/50 rounded-lg p-3">
                                     <div className="flex items-center gap-1.5 mb-1.5">
@@ -609,13 +611,22 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
                                     <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">{row.cause}</p>
                                   </div>
                                 )}
-                                {row.solution && (
+                                {row.operatorGuidance && (
                                   <div className="bg-gray-800/50 rounded-lg p-3">
                                     <div className="flex items-center gap-1.5 mb-1.5">
-                                      <i className="bi bi-wrench text-blue-400 text-[11px]"></i>
-                                      <span className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">Possible Solution</span>
+                                      <i className="bi bi-person-gear text-blue-400 text-[11px]"></i>
+                                      <span className="text-[11px] font-semibold text-blue-400 uppercase tracking-wider">Operator Guidance</span>
                                     </div>
-                                    <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">{row.solution}</p>
+                                    <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">{row.operatorGuidance}</p>
+                                  </div>
+                                )}
+                                {row.techSupportGuidance && (
+                                  <div className="bg-gray-800/50 rounded-lg p-3">
+                                    <div className="flex items-center gap-1.5 mb-1.5">
+                                      <i className="bi bi-tools text-purple-400 text-[11px]"></i>
+                                      <span className="text-[11px] font-semibold text-purple-400 uppercase tracking-wider">Technical Support Guidance</span>
+                                    </div>
+                                    <p className="text-xs text-gray-300 leading-relaxed whitespace-pre-line">{row.techSupportGuidance}</p>
                                   </div>
                                 )}
                               </div>

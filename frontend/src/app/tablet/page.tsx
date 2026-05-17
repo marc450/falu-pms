@@ -549,14 +549,14 @@ function ErrorScreen({
                     </span>
                   </div>
 
-                  {/* SOLUTION — biggest text on the screen, top-aligned, no surrounding box. */}
-                  {info?.solution && (
+                  {/* OPERATOR GUIDANCE — biggest text on the screen, top-aligned, no surrounding box. */}
+                  {info?.operator_guidance && (
                     <div>
                       <p className="text-cyan-300 text-sm uppercase tracking-[0.25em] mb-2">
-                        {t(lang, "solution")}
+                        {t(lang, "operator_guidance")}
                       </p>
-                      <p className="text-4xl md:text-5xl font-semibold text-cyan-50 leading-[1.2]">
-                        {info.solution}
+                      <p className="text-4xl md:text-5xl font-semibold text-cyan-50 leading-[1.2] whitespace-pre-line">
+                        {info.operator_guidance}
                       </p>
                     </div>
                   )}

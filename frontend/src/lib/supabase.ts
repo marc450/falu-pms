@@ -1491,8 +1491,8 @@ export interface PlcErrorCode {
   severity: string;
   description: string;
   cause: string | null;
-  solution: string | null;
-  info: string | null;
+  operator_guidance: string | null;
+  technical_support_guidance: string | null;
 }
 
 let _errorCodeCache: Record<string, PlcErrorCode> | null = null;
@@ -1502,7 +1502,7 @@ export async function fetchErrorCodeLookup(): Promise<Record<string, PlcErrorCod
   const sb = getSupabase();
   const { data, error } = await sb
     .from("plc_error_codes")
-    .select("code, severity, description, cause, solution, info");
+    .select("code, severity, description, cause, operator_guidance, technical_support_guidance");
   if (error || !data) return {};
   _errorCodeCache = {};
   for (const row of data) {
