@@ -1,16 +1,20 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import {
   validateTabletToken, validateTabletPin,
   fetchTabletCellPeers, fetchMachineErrorEvents, fetchErrorCodeLookup,
+  getSupabase,
 } from "@/lib/supabase";
 import type { TabletSession, TabletPeerRow, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
 import { TABLET_LANGS, t } from "@/lib/i18n";
 import type { TabletLang } from "@/lib/i18n";
 
-// 3-second poll matches the tablet UX brief without hammering Supabase.
+// Peer status (other machines in the cell) still polls — it's a cell-wide
+// aggregate where 3s is plenty fresh. Error state and this machine's
+// status flip to push via Realtime (see the effect below) so the
+// ErrorScreen flip happens in <100ms instead of up to 3s.
 const POLL_MS = 3000;
 
 export default function TabletKioskPage() {
@@ -296,6 +300,7 @@ function Kiosk({
 }) {
   const [peers, setPeers] = useState<TabletPeerRow[]>([]);
   const [openErrors, setOpenErrors] = useState<ErrorEvent[]>([]);
+  const [selfStatus, setSelfStatus] = useState<string | null>(null);
   const [errorLookup, setErrorLookup] = useState<Record<string, PlcErrorCode>>({});
   const [cellName, setCellName] = useState<string | null>(null);
 
@@ -310,7 +315,6 @@ function Kiosk({
     let cancelled = false;
     (async () => {
       try {
-        const { getSupabase } = await import("@/lib/supabase");
         const sb = getSupabase();
         const { data } = await sb.from("production_cells")
           .select("name").eq("id", session.cell_id).maybeSingle();
@@ -320,15 +324,46 @@ function Kiosk({
     return () => { cancelled = true; };
   }, [session.cell_id]);
 
-  // Live polling loop.
-  const pollRef = useRef<number | null>(null);
+  // ── Peer polling ──────────────────────────────────────────────────
+  // Cell-wide aggregate (other machines' BU/efficiency) — 3 s cadence
+  // is fine and Realtime would fire per-row too aggressively for what
+  // is a passive secondary view.
   useEffect(() => {
     let cancelled = false;
 
-    async function tick() {
+    async function tickPeers() {
       try {
-        const [peersData, events] = await Promise.all([
-          fetchTabletCellPeers(session.cell_id, session.machine_code),
+        const peersData = await fetchTabletCellPeers(session.cell_id, session.machine_code);
+        if (cancelled) return;
+        setPeers(peersData);
+      } catch { /* ignore transient errors */ }
+    }
+
+    tickPeers();
+    const intervalId = window.setInterval(tickPeers, POLL_MS);
+    return () => {
+      cancelled = true;
+      window.clearInterval(intervalId);
+    };
+  }, [session.cell_id, session.machine_code]);
+
+  // ── Error state via Realtime push ─────────────────────────────────
+  // Subscribes to two streams for this machine: error_events
+  // (INSERT/UPDATE/DELETE) and machines (status changes). Initial
+  // snapshot via REST so we have correct state before the first
+  // push lands. After that, every change arrives in <100ms.
+  //
+  // Backed by migration 087, which adds both tables to the
+  // supabase_realtime publication.
+  useEffect(() => {
+    let cancelled = false;
+    const sb = getSupabase();
+
+    // Initial snapshot
+    (async () => {
+      try {
+        const [machineResult, events] = await Promise.all([
+          sb.from("machines").select("status").eq("id", session.id).maybeSingle(),
           // Pull the last 4 hours so freshly-opened events appear instantly.
           fetchMachineErrorEvents(session.machine_code, {
             start: new Date(Date.now() - 4 * 60 * 60 * 1000),
@@ -336,20 +371,66 @@ function Kiosk({
           }),
         ]);
         if (cancelled) return;
-        setPeers(peersData);
+        setSelfStatus((machineResult.data as { status: string | null } | null)?.status ?? null);
         setOpenErrors(events.filter(e => e.ended_at === null));
-      } catch { /* ignore transient errors */ }
-    }
+      } catch { /* ignore — Realtime will catch up via subsequent pushes */ }
+    })();
 
-    tick();
-    pollRef.current = window.setInterval(tick, POLL_MS);
+    // Live subscription
+    const channel = sb.channel(`tablet-${session.id}`)
+      .on(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        "postgres_changes" as any,
+        {
+          event: "*",
+          schema: "public",
+          table: "error_events",
+          filter: `machine_id=eq.${session.id}`,
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (payload: any) => {
+          if (cancelled) return;
+          const row = (payload.new ?? payload.old) as Partial<ErrorEvent> | null;
+          const id = row?.id;
+          if (id == null) return;
+          setOpenErrors((prev) => {
+            const others = prev.filter(e => e.id !== id);
+            // An "open" error has ended_at === null. INSERTs and UPDATEs
+            // where ended_at is still null mean the error is active;
+            // UPDATEs that set ended_at, and DELETEs, mean it's gone.
+            if (payload.eventType !== "DELETE" && row?.ended_at == null) {
+              const next = [...others, row as ErrorEvent];
+              next.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+              return next;
+            }
+            return others;
+          });
+        }
+      )
+      .on(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        "postgres_changes" as any,
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "machines",
+          filter: `id=eq.${session.id}`,
+        },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (payload: any) => {
+          if (cancelled) return;
+          const newRow = payload.new as { status?: string | null } | null;
+          setSelfStatus(newRow?.status ?? null);
+        }
+      )
+      .subscribe();
+
     return () => {
       cancelled = true;
-      if (pollRef.current) window.clearInterval(pollRef.current);
+      sb.removeChannel(channel);
     };
-  }, [session.cell_id, session.machine_code]);
+  }, [session.id, session.machine_code]);
 
-  const selfStatus = peers.find(p => p.machine_code === session.machine_code)?.status ?? null;
   const isErrorView = (selfStatus?.toLowerCase() === "error") && openErrors.length > 0;
 
   return isErrorView
