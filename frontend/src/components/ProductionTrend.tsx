@@ -15,6 +15,7 @@ import {
 import { fmtPct } from "@/lib/fmt";
 import { applyEfficiencyColor, applyScrapColor } from "@/lib/supabase";
 import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
+import { useFactoryTimezone, formatHourMinute, getZonedParts } from "@/lib/useFactoryTimezone";
 
 // ─── Chart constants ─────────────────────────────────────────────────────────
 
@@ -66,7 +67,17 @@ function fmtMillions(n: number): string {
   return `${m.toLocaleString("en-US", { minimumFractionDigits: 1, maximumFractionDigits: 1 })}M`;
 }
 
-function fmtDateShort(d: Date): string {
+// All three formatters take an optional `tz` (IANA timezone, e.g.
+// "Europe/Zurich"). When given, the Date is rendered as it would appear
+// at the factory's wall clock — required for chart axes/tooltips read by
+// any viewer not physically at the factory. When omitted, falls back to
+// browser-local (legacy behavior) so callers that don't yet thread tz
+// through aren't broken.
+function fmtDateShort(d: Date, tz?: string): string {
+  if (tz) {
+    const p = getZonedParts(d, tz);
+    return `${String(p.day).padStart(2, "0")}. ${MONTH_ABBR[p.month - 1]} '${String(p.year).slice(2)}`;
+  }
   const day = String(d.getDate()).padStart(2, "0");
   const mon = MONTH_ABBR[d.getMonth()];
   const yr  = String(d.getFullYear()).slice(2);
@@ -82,27 +93,32 @@ export function parseBucketKey(key: string): Date {
   return parseISO(key);                                       // day
 }
 
-function fmtBucketFull(key: string, granularity: "hour" | "day"): string {
+function fmtBucketFull(key: string, granularity: "hour" | "day", tz?: string): string {
   try {
     if (granularity === "hour") {
       const d = parseBucketKey(key);
-      return `${fmtDateShort(d)} ${format(d, "HH:mm")}`;
+      const time = tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
+      return `${fmtDateShort(d, tz)} ${time}`;
     }
-    return fmtDateShort(parseISO(key));
+    return fmtDateShort(parseISO(key), tz);
   } catch { return key; }
 }
 
 // Instant label for the x-axis. For sub-hour buckets we only label the
 // integer-hour positions ("10:00", "11:00", "12:00", …) and leave the
-// in-between buckets unlabelled, giving a continuous timeline feel.
-function fmtBucketLabel(key: string, granularity: "hour" | "day"): string {
+// in-between buckets unlabelled, giving a continuous timeline feel. The
+// "top of hour" check has to happen in the factory's clock too — UTC
+// top-of-hour aligns with whole-hour-offset timezones (CET/CEST) but not
+// with half-hour offsets like India (UTC+5:30).
+function fmtBucketLabel(key: string, granularity: "hour" | "day", tz?: string): string {
   try {
     if (granularity === "hour") {
       const d = parseBucketKey(key);
-      if (d.getUTCMinutes() !== 0) return "";
-      return format(d, "HH:mm");
+      const minute = tz ? getZonedParts(d, tz).minute : d.getUTCMinutes();
+      if (minute !== 0) return "";
+      return tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
     }
-    return fmtDateShort(parseISO(key));
+    return fmtDateShort(parseISO(key), tz);
   } catch { return key; }
 }
 
@@ -126,8 +142,8 @@ function toDateInputValue(d: Date): string {
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function RangeTick({ x, y, payload, granularity, angled }: any) {
-  const label = fmtBucketLabel(payload?.value ?? "", granularity);
+function RangeTick({ x, y, payload, granularity, angled, tz }: any) {
+  const label = fmtBucketLabel(payload?.value ?? "", granularity, tz);
   if (!label) return null;
   if (angled) {
     return (
@@ -645,6 +661,10 @@ export function ProductionTrendSection({
   errorEvents?: ErrorEvent[];
   errorLookup?: Record<string, PlcErrorCode>;
 }) {
+  // Factory timezone — used by every label/tooltip formatter on this chart
+  // so the X-axis reads in the operator's wall-clock time, not the browser's.
+  const factoryTz = useFactoryTimezone();
+
   const hasData    = rows.length > 0;
   const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
   const avgScrap   = hasData ? rows.reduce((s, d) => s + d.avgScrap,  0) / rows.length : null;
@@ -796,7 +816,7 @@ export function ProductionTrendSection({
     : (buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`);
 
   const chartTitle = chartTitleSuffix ?? (granularity === "hour" ? "— intraday" : "— daily");
-  const fmtLabel = (key: string) => fmtBucketFull(key, granularity);
+  const fmtLabel = (key: string) => fmtBucketFull(key, granularity, factoryTz);
 
   if (loading) {
     return (
@@ -880,7 +900,7 @@ export function ProductionTrendSection({
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
+                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
@@ -954,7 +974,7 @@ export function ProductionTrendSection({
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
+                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
@@ -1045,7 +1065,7 @@ export function ProductionTrendSection({
               <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
               <XAxis
                 dataKey="date"
-                tick={<RangeTick granularity={granularity} angled={shouldAngle} />}
+                tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
                 tickLine={false}
                 axisLine={{ stroke: AXIS_COLOR }}
                 interval={0}
