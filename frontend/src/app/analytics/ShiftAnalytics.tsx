@@ -121,12 +121,15 @@ interface AnnotatedRow extends MachineShiftRow {
   crewName: string;
 }
 
+// Mean of *actual* BUs produced per shift for the given rows.
+// (Previously this was a run-hours-weighted average of `bu_normalized`.
+// The crew comparison now reflects real output — a crew that ran more
+// shifts isn't penalised compared to one that ran fewer, but slower
+// shifts are no longer hidden by the normalization.)
 function avgBu(rows: MachineShiftRow[]): number | null {
-  const valid = rows.filter(r => r.bu_normalized !== null && r.run_hours != null && r.run_hours > 0);
-  if (valid.length === 0) return null;
-  const totalHours = valid.reduce((s, r) => s + r.run_hours!, 0);
-  if (totalHours === 0) return null;
-  return valid.reduce((s, r) => s + (r.bu_normalized! * r.run_hours!), 0) / totalHours;
+  if (rows.length === 0) return null;
+  const totalBus = rows.reduce((s, r) => s + (r.swabs_produced / 7200), 0);
+  return totalBus / rows.length;
 }
 
 function avgField(rows: MachineShiftRow[], field: "run_hours" | "avg_efficiency" | "avg_scrap"): number | null {
@@ -323,7 +326,10 @@ export default function ShiftAnalytics({
       for (const crew of crewsInData) {
         const mRows = annotated.filter(r => r.machine_code === code && r.crewName === crew);
         const bu = avgBu(mRows);
-        const buVals = mRows.filter(r => r.bu_normalized !== null).map(r => r.bu_normalized!);
+        // Std-dev across actual BUs per shift (matches the avgBu basis
+        // above — both report the spread/centre of *real* output, not
+        // normalized projections).
+        const buVals = mRows.map(r => r.swabs_produced / 7200);
         perCrew[crew] = { bu, std: stdDev(buVals) };
         if (bu !== null) { totalBu += bu; buCount++; }
       }

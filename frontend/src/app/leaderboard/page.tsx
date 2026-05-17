@@ -40,11 +40,13 @@ function simpleAvg(
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface CellStats {
-  cellId:   string;
-  cellName: string;
-  avgBu:    number | null;
-  avgEff:   number | null;
-  avgScrap: number | null;
+  cellId:        string;
+  cellName:      string;
+  actualBus:     number;        // Σ swabs_produced / 7200 across the period
+  targetBus:     number;        // Σ bu_target across (machine, shift) rows in the cell
+  pctOfTarget:   number | null; // null when targetBus = 0
+  avgEff:        number | null;
+  avgScrap:      number | null;
 }
 
 // ─── Styling helpers ──────────────────────────────────────────────────────────
@@ -61,6 +63,20 @@ function rankBadge(rank: number): string {
   if (rank === 2) return "bg-gray-300 text-gray-900";
   if (rank === 3) return "bg-amber-700 text-white";
   return "bg-gray-700 text-gray-400";
+}
+
+// % of target → fill color for the production-vs-target bar.
+function progressBarColor(pct: number | null): string {
+  if (pct === null) return "bg-gray-700";
+  if (pct >= 95) return "bg-green-500";
+  if (pct >= 75) return "bg-yellow-500";
+  return "bg-red-500";
+}
+function progressTextColor(pct: number | null): string {
+  if (pct === null) return "text-gray-500";
+  if (pct >= 95) return "text-green-400";
+  if (pct >= 75) return "text-yellow-400";
+  return "text-red-400";
 }
 
 function buColor(val: number | null, good: number, med: number): string {
@@ -258,22 +274,20 @@ export default function LeaderboardPage() {
     return m;
   }, [cells]);
 
-  // ── BU thresholds ──
-  const buGood = useMemo(() => {
-    const t = machines.map(m => m.bu_target).filter((v): v is number => v != null);
-    return t.length > 0 ? t.reduce((s, v) => s + v, 0) / t.length : 185;
-  }, [machines]);
-  const buMed = useMemo(() => {
-    const t = machines.map(m => m.bu_mediocre).filter((v): v is number => v != null);
-    return t.length > 0 ? t.reduce((s, v) => s + v, 0) / t.length : 150;
+  // ── Per-machine BU target lookup ──
+  const machineTargetMap = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const mc of machines) {
+      if (mc.bu_target != null) m.set(mc.machine_code, mc.bu_target);
+    }
+    return m;
   }, [machines]);
 
   // ── Fleet KPIs ──
-  const fleetBu    = useMemo(() => weightedAvg(rows, "bu_normalized"), [rows]);
   const fleetEff   = useMemo(() => simpleAvg(rows, "avg_efficiency"), [rows]);
   const fleetScrap = useMemo(() => simpleAvg(rows, "avg_scrap"), [rows]);
 
-  // ── Cell stats ──
+  // ── Cell stats — production vs target, ranked by actual output ──
   const cellStats: CellStats[] = useMemo(() => {
     const grouped = new Map<string, MachineShiftRow[]>();
     for (const r of rows) {
@@ -286,22 +300,30 @@ export default function LeaderboardPage() {
     for (const [cellId, cellRows] of grouped) {
       const name = cellNameMap.get(cellId);
       if (!name) continue;
+      const actualBus = cellRows.reduce((s, r) => s + (r.swabs_produced / 7200), 0);
+      const targetBus = cellRows.reduce(
+        (s, r) => s + (machineTargetMap.get(r.machine_code) ?? 0),
+        0,
+      );
       stats.push({
         cellId,
-        cellName: name,
-        avgBu:    weightedAvg(cellRows, "bu_normalized"),
-        avgEff:   simpleAvg(cellRows, "avg_efficiency"),
-        avgScrap: simpleAvg(cellRows, "avg_scrap"),
+        cellName:   name,
+        actualBus,
+        targetBus,
+        pctOfTarget: targetBus > 0 ? (actualBus / targetBus) * 100 : null,
+        avgEff:     simpleAvg(cellRows, "avg_efficiency"),
+        avgScrap:   simpleAvg(cellRows, "avg_scrap"),
       });
     }
-    stats.sort((a, b) => {
-      if (a.avgBu === null && b.avgBu === null) return 0;
-      if (a.avgBu === null) return 1;
-      if (b.avgBu === null) return -1;
-      return b.avgBu - a.avgBu;
-    });
+    // Rank by actual production output, highest first.
+    stats.sort((a, b) => b.actualBus - a.actualBus);
     return stats;
-  }, [rows, machineCellMap, cellNameMap]);
+  }, [rows, machineCellMap, cellNameMap, machineTargetMap]);
+
+  // ── Fleet totals for the header tile ──
+  const fleetTotalBu     = useMemo(() => cellStats.reduce((s, c) => s + c.actualBus, 0), [cellStats]);
+  const fleetTotalTarget = useMemo(() => cellStats.reduce((s, c) => s + c.targetBus, 0), [cellStats]);
+  const fleetPctOfTarget = fleetTotalTarget > 0 ? (fleetTotalBu / fleetTotalTarget) * 100 : null;
 
   // ── Current crew ──
   const currentCrew = useMemo(() => {
@@ -387,10 +409,7 @@ export default function LeaderboardPage() {
     };
   }, [bridge, config, machines, clock]); // clock triggers re-render every second
 
-  // ── Fleet avg divider index ──
-  const dividerIdx = fleetBu !== null
-    ? cellStats.findIndex(c => c.avgBu !== null && c.avgBu < fleetBu)
-    : -1;
+  // No fleet-average divider — ranking is by raw production now.
 
   // ── Loading state ──
   if (loading) {
@@ -524,7 +543,13 @@ export default function LeaderboardPage() {
         <div className="flex items-center gap-3">
           <i className="bi bi-trophy-fill text-yellow-400 text-2xl"></i>
           <h2 className="text-2xl font-bold text-white">Cell Ranking</h2>
-          <span className="text-sm text-gray-500 ml-2">by Avg BU Output</span>
+          <span className="text-sm text-gray-500 ml-2">by total BU production</span>
+          {fleetTotalTarget > 0 && (
+            <span className={`ml-4 text-sm font-bold tabular-nums ${progressTextColor(fleetPctOfTarget)}`}>
+              Fleet: {fmtN(fleetTotalBu, 0)} / {fmtN(fleetTotalTarget, 0)} BU
+              <span className="ml-1 text-xs font-medium">({fmtN(fleetPctOfTarget, 0)}%)</span>
+            </span>
+          )}
           <span className="ml-auto text-xs text-gray-600">
             Updated {lastLoad.toLocaleTimeString("de-CH", { hour: "2-digit", minute: "2-digit" })}
           </span>
@@ -538,20 +563,15 @@ export default function LeaderboardPage() {
           <div className="flex-1 flex flex-col gap-2 overflow-auto">
             {cellStats.map((cell, idx) => {
               const rank = idx + 1;
-              const showDivider = dividerIdx > 0 && idx === dividerIdx;
+              // Cap the visual bar at 100 % of the rail; the textual label
+              // still shows the true percentage so over-target cells are
+              // visible without breaking the layout.
+              const fillPct = cell.pctOfTarget != null
+                ? Math.min(100, Math.max(0, cell.pctOfTarget))
+                : 0;
 
               return (
-                <React.Fragment key={cell.cellId}>
-                  {showDivider && (
-                    <div className="flex items-center gap-4 px-4 py-1">
-                      <div className="flex-1 border-t-2 border-dashed border-gray-700"></div>
-                      <span className="text-xs text-gray-500 uppercase tracking-widest font-semibold whitespace-nowrap">
-                        Fleet Average  {fmtN(fleetBu, 1)} BU
-                      </span>
-                      <div className="flex-1 border-t-2 border-dashed border-gray-700"></div>
-                    </div>
-                  )}
-                  <div className={`flex items-center gap-6 px-6 py-4 rounded-xl border ${rankBg(rank)} transition-colors`}>
+                <div key={cell.cellId} className={`flex items-center gap-6 px-6 py-4 rounded-xl border ${rankBg(rank)} transition-colors`}>
                     {/* Rank */}
                     <span className={`flex items-center justify-center w-12 h-12 rounded-full text-xl font-black shrink-0 ${rankBadge(rank)}`}>
                       {rank}
@@ -562,24 +582,29 @@ export default function LeaderboardPage() {
                       {cell.cellName}
                     </span>
 
-                    {/* BU */}
+                    {/* Production vs target */}
                     <div className="flex-1 flex items-center gap-3">
                       <div className="flex-1">
                         <div className="h-3 bg-gray-800 rounded-full overflow-hidden">
                           <div
-                            className={`h-full rounded-full transition-all duration-700 ${
-                              cell.avgBu !== null && cell.avgBu >= buGood ? "bg-green-500"
-                              : cell.avgBu !== null && cell.avgBu >= buMed ? "bg-yellow-500"
-                              : "bg-red-500"
-                            }`}
-                            style={{ width: `${Math.min(100, ((cell.avgBu ?? 0) / (buGood * 1.15)) * 100)}%` }}
+                            className={`h-full rounded-full transition-all duration-700 ${progressBarColor(cell.pctOfTarget)}`}
+                            style={{ width: `${fillPct}%` }}
                           ></div>
                         </div>
                       </div>
-                      <span className={`text-3xl font-black tabular-nums min-w-[120px] text-right ${buColor(cell.avgBu, buGood, buMed)}`}>
-                        {fmtN(cell.avgBu, 1)}
-                      </span>
-                      <span className="text-sm text-gray-600 font-medium">BU</span>
+                      <div className="flex flex-col items-end leading-tight min-w-[180px]">
+                        <span className="text-3xl font-black tabular-nums text-white">
+                          {fmtN(cell.actualBus, 0)}
+                          <span className="text-sm text-gray-500 font-medium ml-2">
+                            {cell.targetBus > 0 ? `/ ${fmtN(cell.targetBus, 0)} BU` : "BU"}
+                          </span>
+                        </span>
+                        {cell.pctOfTarget != null && (
+                          <span className={`text-xs font-bold tabular-nums ${progressTextColor(cell.pctOfTarget)}`}>
+                            {fmtN(cell.pctOfTarget, 0)}% of target
+                          </span>
+                        )}
+                      </div>
                     </div>
 
                     {/* Efficiency */}
@@ -598,7 +623,6 @@ export default function LeaderboardPage() {
                       </p>
                     </div>
                   </div>
-                </React.Fragment>
               );
             })}
           </div>

@@ -6,8 +6,9 @@ import { fmtN, fmtPct, fmtH } from "@/lib/fmt";
 import {
   fetchMachineShiftSummary,
   fetchProductionCells,
+  fetchThresholds,
 } from "@/lib/supabase";
-import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell, TimeSlot, ShiftAssignment } from "@/lib/supabase";
+import type { DateRange, RegisteredMachine, MachineShiftRow, ProductionCell, TimeSlot, ShiftAssignment, Thresholds } from "@/lib/supabase";
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -153,19 +154,33 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
   const [cellFilter, setCellFilter] = useState<string | null>(null);  // null = All
   const [normalized, setNormalized] = useState(false);
   const [colorMode,  setColorMode]  = useState<ColorMode>("simple");
+  const [thresholds, setThresholds] = useState<Thresholds | null>(null);
+
+  // bu_normalized in the table is computed against available production
+  // time (shift length − planned downtime), so we need the BU thresholds
+  // to drive that. Fetched once on mount; defaults to the legacy 12 h
+  // multiplier if the fetch fails (no behavioural regression).
+  useEffect(() => {
+    fetchThresholds().then(setThresholds).catch(() => { /* keep default null */ });
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchMachineShiftSummary(dateRange, shiftSlots);
+      const data = await fetchMachineShiftSummary(dateRange, shiftSlots, {
+        shiftLengthMinutes:    thresholds?.bu.shiftLengthMinutes,
+        plannedDowntimeMinutes: thresholds?.bu.plannedDowntimeMinutes,
+      });
       setRows(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load data");
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
+    // dateRange + thresholds drive the fetch; shiftSlots is stable.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dateRange, thresholds]);
 
   useEffect(() => { load(); }, [load]);
 

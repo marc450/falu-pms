@@ -1197,9 +1197,25 @@ export interface MachineShiftRow {
   avg_scrap:      number | null;
 }
 
-export async function fetchMachineShiftSummary(range: DateRange, _slots: TimeSlot[] = slotsFromDuration(12, 7)): Promise<MachineShiftRow[]> {
+export async function fetchMachineShiftSummary(
+  range: DateRange,
+  _slots: TimeSlot[] = slotsFromDuration(12, 7),
+  config: { shiftLengthMinutes?: number; plannedDowntimeMinutes?: number } = {},
+): Promise<MachineShiftRow[]> {
   void _slots; // no longer needed: crew is stored directly by the bridge
   const sb = getSupabase();
+
+  // bu_normalized projects the machine's running pace onto a hypothetical
+  // full shift. The right multiplier is *available production time* —
+  // total shift length minus planned downtime (breaks + cleaning) — not
+  // total shift length. A machine that ran perfectly through every
+  // available minute and only paused for scheduled breaks should hit its
+  // target; multiplying by the full 12 h penalises it for downtime that
+  // wasn't its fault. Defaults preserve legacy behaviour (full 12 h shift,
+  // no planned downtime budget) so unconfigured callers don't shift.
+  const shiftMin   = config.shiftLengthMinutes      ?? 720;
+  const downtimeMin = config.plannedDowntimeMinutes ?? 0;
+  const availableHours = Math.max(0, (shiftMin - downtimeMin) / 60);
 
   // Helper: local YYYY-MM-DD string (no UTC offset shift)
   const toLocalDate = (d: Date) => {
@@ -1254,8 +1270,8 @@ export async function fetchMachineShiftSummary(range: DateRange, _slots: TimeSlo
     const machineId = key.split("|")[2];
 
     const runHours = b.prodTimeSecs > 0 ? b.prodTimeSecs / 3600 : null;
-    const buNorm   = runHours && runHours > 0
-      ? Math.round(((b.swabs / 7200) / runHours * 12) * 10) / 10
+    const buNorm   = runHours && runHours > 0 && availableHours > 0
+      ? Math.round(((b.swabs / 7200) / runHours * availableHours) * 10) / 10
       : null;
     return {
       work_day:       b.shiftDate,
