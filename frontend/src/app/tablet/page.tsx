@@ -607,6 +607,150 @@ function GuidanceBlock({ text, label }: { text: string; label: string }) {
   );
 }
 
+// PIN that gates the technical-support guidance. Intentionally simple and
+// shared across all kiosks — escalation, not authentication. The per-machine
+// kiosk login PIN (machines.tablet_pin) is unrelated to this one.
+const TECH_SUPPORT_PIN = "1234";
+
+// One card per open error. Internal state machine controls whether the
+// operator sees their guidance, the PIN pad for tech support, or the tech
+// support guidance itself. Tech entry is gated by TECH_SUPPORT_PIN every
+// time (no session memory) so a technician walking away can't leave the
+// tech view exposed to the next operator.
+function ErrorCard({ ev, info, lang }: {
+  ev:    ErrorEvent;
+  info:  PlcErrorCode | undefined;
+  lang:  TabletLang;
+}) {
+  const [mode, setMode]       = useState<"operator" | "tech-pin" | "tech">("operator");
+  const [pin,  setPin]        = useState("");
+  const [pinErr, setPinErr]   = useState(false);
+
+  const hasTech = !!info?.technical_support_guidance;
+
+  const pushDigit = (d: string) => {
+    setPinErr(false);
+    setPin(prev => {
+      const next = (prev + d).slice(0, 4);
+      if (next.length === 4) {
+        if (next === TECH_SUPPORT_PIN) {
+          setMode("tech");
+          return "";
+        }
+        setPinErr(true);
+        return "";
+      }
+      return next;
+    });
+  };
+  const backspace = () => { setPinErr(false); setPin(p => p.slice(0, -1)); };
+  const cancelPin = () => { setMode("operator"); setPin(""); setPinErr(false); };
+  const backToOp  = () => { setMode("operator"); setPin(""); setPinErr(false); };
+
+  return (
+    // gap-10 (was gap-5) puts real space between the error title and the
+    // guidance section — request from the floor: "increase the spacing
+    // between error name and the guidance instructions".
+    <article className="flex flex-col gap-10">
+      {/* Header */}
+      <div className="flex items-baseline justify-between gap-4">
+        <div>
+          <p className="text-red-300/80 text-xs uppercase tracking-[0.25em] mb-1">
+            {t(lang, "error_header")}
+          </p>
+          <h2 className="text-4xl md:text-5xl font-bold text-red-50 leading-tight">
+            {info?.description ?? ev.error_code}
+          </h2>
+        </div>
+        <span className="shrink-0 text-sm font-mono font-semibold text-red-200/70 bg-red-950/60 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
+          {ev.error_code}
+        </span>
+      </div>
+
+      {/* Body — switches by mode */}
+      {mode === "operator" && (
+        <>
+          {info?.operator_guidance && (
+            <GuidanceBlock text={info.operator_guidance} label={t(lang, "operator_guidance")} />
+          )}
+          {hasTech && (
+            <button
+              type="button"
+              onClick={() => setMode("tech-pin")}
+              className="self-start inline-flex items-center gap-2 mt-2 px-5 py-3 rounded-xl bg-red-950/40 border border-red-300/30 text-amber-200 text-base font-semibold hover:bg-red-950/60 active:scale-95 transition"
+            >
+              <i className="bi bi-shield-lock"></i>
+              {t(lang, "tech_support")}
+            </button>
+          )}
+        </>
+      )}
+
+      {mode === "tech-pin" && (
+        <TechPinPad pin={pin} err={pinErr} onDigit={pushDigit} onBackspace={backspace} onCancel={cancelPin} lang={lang} />
+      )}
+
+      {mode === "tech" && info?.technical_support_guidance && (
+        <>
+          <button
+            type="button"
+            onClick={backToOp}
+            className="self-start inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-red-950/40 border border-red-300/30 text-cyan-200 text-base font-semibold hover:bg-red-950/60 active:scale-95 transition"
+          >
+            <i className="bi bi-arrow-left"></i>
+            {t(lang, "back_to_operator")}
+          </button>
+          <GuidanceBlock text={info.technical_support_guidance} label={t(lang, "tech_support")} />
+        </>
+      )}
+    </article>
+  );
+}
+
+// Inline 10-key PIN pad that lives inside an ErrorCard. Red-themed so it
+// reads as part of the error screen rather than dropping onto a gray
+// modal. Cancel returns to operator view; the parent handles success.
+function TechPinPad({ pin, err, onDigit, onBackspace, onCancel, lang }: {
+  pin:         string;
+  err:         boolean;
+  onDigit:     (d: string) => void;
+  onBackspace: () => void;
+  onCancel:    () => void;
+  lang:        TabletLang;
+}) {
+  const dots = [0, 1, 2, 3].map(i => (
+    <span
+      key={i}
+      className={`w-5 h-5 rounded-full border-2 ${
+        i < pin.length
+          ? "bg-cyan-300 border-cyan-300"
+          : err
+            ? "border-red-300"
+            : "border-red-200/40"
+      }`}
+    />
+  ));
+  const digitBtn = "w-20 h-20 rounded-2xl text-3xl font-medium bg-red-950/50 border border-red-300/20 text-red-50 hover:bg-red-950/80 active:scale-95 transition";
+  const ghostBtn = "w-20 h-20 rounded-2xl text-xl font-medium bg-transparent border border-red-300/20 text-red-200/70 hover:bg-red-950/40 active:scale-95 transition";
+  return (
+    <div className="flex flex-col items-center gap-5 py-4">
+      <p className="text-cyan-300 text-xs uppercase tracking-[0.25em]">
+        {t(lang, "tech_support_pin")}
+      </p>
+      <div className="flex gap-4">{dots}</div>
+      {err && <p className="text-red-200 text-base">{t(lang, "invalid_pin")}</p>}
+      <div className="grid grid-cols-3 gap-3">
+        {["1", "2", "3", "4", "5", "6", "7", "8", "9"].map(d => (
+          <button key={d} type="button" onClick={() => onDigit(d)} className={digitBtn}>{d}</button>
+        ))}
+        <button type="button" onClick={onCancel} className={ghostBtn}>{t(lang, "cancel")}</button>
+        <button type="button" onClick={() => onDigit("0")} className={digitBtn}>0</button>
+        <button type="button" onClick={onBackspace} className={ghostBtn}><i className="bi bi-backspace"></i></button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Error screen ──────────────────────────────────────────────────────
 
 function ErrorScreen({
@@ -626,33 +770,9 @@ function ErrorScreen({
           <p className="text-red-200 text-xl text-center mt-20">{t(lang, "no_active_errors")}</p>
         ) : (
           <div className="flex flex-col gap-6">
-            {errors.map(ev => {
-              const info = lookup[ev.error_code];
-              return (
-                <article key={ev.id} className="flex flex-col gap-5">
-                  {/* Error name as large title; code sits as a small badge next to it. */}
-                  <div className="flex items-baseline justify-between gap-4">
-                    <div>
-                      <p className="text-red-300/80 text-xs uppercase tracking-[0.25em] mb-1">
-                        {t(lang, "error_header")}
-                      </p>
-                      <h2 className="text-4xl md:text-5xl font-bold text-red-50 leading-tight">
-                        {info?.description ?? ev.error_code}
-                      </h2>
-                    </div>
-                    <span className="shrink-0 text-sm font-mono font-semibold text-red-200/70 bg-red-950/60 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
-                      {ev.error_code}
-                    </span>
-                  </div>
-
-                  {/* OPERATOR GUIDANCE — biggest text on the screen, top-aligned, no surrounding box. */}
-                  {info?.operator_guidance && (
-                    <GuidanceBlock text={info.operator_guidance} label={t(lang, "operator_guidance")} />
-                  )}
-
-                </article>
-              );
-            })}
+            {errors.map(ev => (
+              <ErrorCard key={ev.id} ev={ev} info={lookup[ev.error_code]} lang={lang} />
+            ))}
           </div>
         )}
       </div>

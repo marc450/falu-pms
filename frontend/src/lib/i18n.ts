@@ -32,6 +32,9 @@ const STRINGS: Record<TabletLang, Dict> = {
     cause:               "Cause",
     operator_guidance:   "Operator Guidance",
     tech_support:        "Technical Support Guidance",
+    tech_support_pin:    "Enter technical support PIN",
+    back_to_operator:    "Back to Operator Guidance",
+    cancel:              "Cancel",
     no_active_errors:    "Waiting for error details…",
 
     language:            "Language",
@@ -57,6 +60,9 @@ const STRINGS: Record<TabletLang, Dict> = {
     cause:               "Causa",
     operator_guidance:   "Guía para el operador",
     tech_support:        "Guía para soporte técnico",
+    tech_support_pin:    "Ingrese el PIN de soporte técnico",
+    back_to_operator:    "Volver a la guía del operador",
+    cancel:              "Cancelar",
     no_active_errors:    "Esperando detalles del error…",
 
     language:            "Idioma",
