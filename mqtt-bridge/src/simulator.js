@@ -365,8 +365,15 @@ const ERROR_WEIGHTS = {
 // Per-machine forced error codes, keyed by UID. Machines listed here bypass
 // the weighted pool and always raise exactly the listed codes when they enter
 // an error state — used to make demo machines exhibit a specific failure mode.
+//
+// NOTE: keys are real PLC UIDs (machine_code), which is what determines a
+// machine's identity end-to-end. The simulator's internal MACHINE_UID_MAP
+// labels are *not* authoritative — users rename machines in the dashboard
+// (machines.name column) and that override is what the operator sees.
 const FORCED_ERROR_CODES = {
-  "11556": ["A190"],  // CB-37 — only ever raises A190 (Too many swabs ejected by QC).
+  // 11562 is the UID the user has renamed to "CB-37" in the dashboard
+  // (the simulator's own MACHINE_UID_MAP labels it CB-34 — ignore that).
+  "11562": ["A190"],  // CB-37 only ever raises A190 (Too many swabs ejected by QC).
 };
 
 // Weighted pool built at startup from DB codes + weight table
