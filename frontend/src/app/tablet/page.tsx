@@ -17,6 +17,27 @@ import type { TabletLang } from "@/lib/i18n";
 // ErrorScreen flip happens in <100ms instead of up to 3s.
 const POLL_MS = 3000;
 
+// Per-machine kiosk error allowlist. When a machine_code appears here, the
+// kiosk only surfaces error events whose error_code is in the matching
+// list — every other open event is hidden from the operator view. Used to
+// keep specific kiosks focused on the one alarm they're equipped to act
+// on. Machines NOT in this map see every error normally.
+const KIOSK_ERROR_ALLOWLIST: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "11562": ["A190"], // CB-37 — only show A190
+};
+
+function filterErrorsForKiosk(events: ErrorEvent[], machineCode: string): ErrorEvent[] {
+  const allowed = KIOSK_ERROR_ALLOWLIST[machineCode];
+  if (!allowed) return events;
+  return events.filter(e => allowed.includes(e.error_code));
+}
+
+function isErrorAllowedForKiosk(errorCode: string, machineCode: string): boolean {
+  const allowed = KIOSK_ERROR_ALLOWLIST[machineCode];
+  if (!allowed) return true;
+  return allowed.includes(errorCode);
+}
+
 export default function TabletKioskPage() {
   return (
     <Suspense fallback={<FullScreen><Spinner /></FullScreen>}>
@@ -372,7 +393,8 @@ function Kiosk({
         ]);
         if (cancelled) return;
         setSelfStatus((machineResult.data as { status: string | null } | null)?.status ?? null);
-        setOpenErrors(events.filter(e => e.ended_at === null));
+        const open = events.filter(e => e.ended_at === null);
+        setOpenErrors(filterErrorsForKiosk(open, session.machine_code));
       } catch { /* ignore — Realtime will catch up via subsequent pushes */ }
     })();
 
@@ -393,6 +415,12 @@ function Kiosk({
           const row = (payload.new ?? payload.old) as Partial<ErrorEvent> | null;
           const id = row?.id;
           if (id == null) return;
+          // Skip rows whose error_code is filtered out for this kiosk.
+          // A close (UPDATE with ended_at) or DELETE for a filtered code is
+          // also irrelevant since the row was never in our state.
+          if (row?.error_code && !isErrorAllowedForKiosk(row.error_code, session.machine_code)) {
+            return;
+          }
           setOpenErrors((prev) => {
             const others = prev.filter(e => e.id !== id);
             // An "open" error has ended_at === null. INSERTs and UPDATEs
