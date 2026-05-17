@@ -14,7 +14,7 @@ import type {
   Thresholds, ShiftConfig, FleetTrendRow, DateRange, MachineType,
   ErrorEvent, PlcErrorCode,
 } from "@/lib/supabase";
-import { formatMinutesToTime, getStatusColor, formatStatus } from "@/lib/utils";
+import { formatSecondsToTime, getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
 import {
   ProductionTrendSection, PeriodSelector, PRESETS,
@@ -260,10 +260,14 @@ function ProductionContent() {
     if (crew === currentCrew) {
       const s = machine?.machineStatus;
       if (!s) return undefined;
+      // Live crew error time includes the in-flight stint (currentStint) so
+      // the displayed uptime reflects an active error before it closes.
+      const activeShiftErrorSecs = activeShiftErrorMins * 60;
       return {
         Shift:                  0,
         ProductionTime:         s.ProductionTime         ?? 0,
         IdleTime:               s.IdleTime               ?? 0,
+        ErrorTime:              activeShiftErrorSecs,
         ProducedSwabs:          s.ProducedSwabs          ?? s.Swabs ?? 0,
         PackagedSwabs:          s.PackagedSwabs          ?? 0,
         DiscardedSwabs:         s.DiscardedSwabs         ?? 0,
@@ -273,7 +277,7 @@ function ProductionContent() {
         MissingSticks:          s.MissingSticks          ?? 0,
         FoultyPickups:          s.FoultyPickups          ?? 0,
         OtherErrors:            s.OtherErrors            ?? 0,
-        Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0, activeShiftErrorMins * 60),
+        Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0, activeShiftErrorSecs),
         Reject:                 s.Reject                 ?? 0,
       };
     }
@@ -283,6 +287,7 @@ function ProductionContent() {
       Shift:                  0,
       ProductionTime:         log.production_time_seconds,
       IdleTime:               log.idle_time_seconds,
+      ErrorTime:              log.error_time_seconds,
       ProducedSwabs:          log.produced_swabs,
       PackagedSwabs:          log.packaged_swabs,
       DiscardedSwabs:         log.discarded_swabs,
@@ -292,7 +297,7 @@ function ProductionContent() {
       MissingSticks:          log.missing_sticks,
       FoultyPickups:          log.faulty_pickups,
       OtherErrors:            log.other_errors,
-      Efficiency:             correctedEfficiency(log.production_time_seconds, log.idle_time_seconds),
+      Efficiency:             correctedEfficiency(log.production_time_seconds, log.idle_time_seconds, log.error_time_seconds),
       Reject:                 log.scrap_rate,
     };
   };
@@ -305,6 +310,7 @@ function ProductionContent() {
       Shift:                  0,
       ProductionTime:         acc.ProductionTime         + s.ProductionTime,
       IdleTime:               acc.IdleTime               + s.IdleTime,
+      ErrorTime:              acc.ErrorTime              + s.ErrorTime,
       ProducedSwabs:          acc.ProducedSwabs          + s.ProducedSwabs,
       PackagedSwabs:          acc.PackagedSwabs          + s.PackagedSwabs,
       DiscardedSwabs:         acc.DiscardedSwabs         + s.DiscardedSwabs,
@@ -317,8 +323,17 @@ function ProductionContent() {
       Efficiency:             0,
       Reject:                 0,
     }));
-    const totalUnplannedIdle = allCrews.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeSecs), 0);
-    const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle;
+    // Apply the per-crew planned-downtime budget independently before summing,
+    // so a crew that under-uses its break budget doesn't subsidise a crew that
+    // overruns. Match correctedEfficiency's idle/error handling exactly: strip
+    // any error time bleed-through from idle first, then apply the budget,
+    // then put error back into the denominator on its own line.
+    const totalUnplannedIdle = allCrews.reduce((acc, s) => {
+      const idleOnly = Math.max(0, s.IdleTime - s.ErrorTime);
+      return acc + Math.max(0, idleOnly - plannedDowntimeSecs);
+    }, 0);
+    const totalErrorTime     = allCrews.reduce((acc, s) => acc + s.ErrorTime, 0);
+    const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle + totalErrorTime;
     sum.Efficiency = effectiveTotalTime > 0 ? (sum.ProductionTime / effectiveTotalTime) * 100 : 0;
     sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
     return sum;
@@ -333,7 +348,7 @@ function ProductionContent() {
     const val = shift[key];
     if (val === undefined || val === null) return <span className="text-gray-600">---</span>;
     switch (format) {
-      case "time":    return formatMinutesToTime(val as number);
+      case "time":    return formatSecondsToTime(val as number);
       case "percent": return fmtPct(val as number, 1);
       default:        return fmtN(val as number);
     }

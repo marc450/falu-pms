@@ -53,6 +53,7 @@ export interface ShiftDataMessage {
   Shift: number;
   ProductionTime: number;
   IdleTime: number;
+  ErrorTime: number;
   CottonTears: number;
   MissingSticks: number;
   FoultyPickups: number;
@@ -1058,6 +1059,7 @@ export interface SavedShiftLog {
   shift_crew:               string | null;
   production_time_seconds:  number;
   idle_time_seconds:        number;
+  error_time_seconds:       number;
   cotton_tears:             number;
   missing_sticks:           number;
   faulty_pickups:           number;
@@ -1080,7 +1082,7 @@ export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShi
   const sb = getSupabase();
   const { data, error } = await sb
     .from("saved_shift_logs")
-    .select("shift_crew, production_time_seconds, idle_time_seconds, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, scrap_rate, saved_at")
+    .select("shift_crew, production_time_seconds, idle_time_seconds, error_time_seconds, cotton_tears, missing_sticks, faulty_pickups, other_errors, produced_swabs, packaged_swabs, produced_boxes, produced_boxes_layer_plus, discarded_swabs, efficiency, scrap_rate, saved_at")
     .eq("machine_code", machineCode)
     .order("saved_at", { ascending: false })
     .limit(20); // grab recent rows then deduplicate by shift_crew in JS

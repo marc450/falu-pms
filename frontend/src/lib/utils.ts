@@ -1,12 +1,14 @@
 /**
- * Format minutes to HH:MM string (matches developer's FormatMinutesToTime)
+ * Format seconds to HH:MM:SS string. Use this for PLC counters (the bridge
+ * mirrors ProductionTime / IdleTime / ErrorTime as raw seconds), so the
+ * caller doesn't have to convert before formatting.
  */
-export function formatMinutesToTime(minutes: number | undefined | null): string {
-  if (!minutes || minutes === 0) return "00:00:00";
-  const totalSeconds = Math.round(minutes * 60);
-  const h = Math.floor(totalSeconds / 3600);
-  const m = Math.floor((totalSeconds % 3600) / 60);
-  const s = totalSeconds % 60;
+export function formatSecondsToTime(seconds: number | undefined | null): string {
+  if (!seconds || seconds === 0) return "00:00:00";
+  const total = Math.round(seconds);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 

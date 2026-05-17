@@ -83,11 +83,20 @@ function calcBuRunRate(
   // makes elapsed ≈ 0 and inflates the projection to near a full shift.
   // The PLC counters are unaffected by bridge restarts and reflect actual machine time.
   // Fall back to wall clock only when no PLC shift data has arrived yet.
-  const productionTimeMins = activeShiftData?.ProductionTime ?? 0;
-  const idleTime           = activeShiftData?.IdleTime ?? 0;
-  const plcElapsed         = productionTimeMins + idleTime;
-  const elapsed            = plcElapsed > 0
-    ? plcElapsed
+  //
+  // PLC counters arrive on m.machineStatus as raw seconds (the bridge mirrors
+  // the MQTT payload verbatim — see index.js where production_time_seconds is
+  // written from data.ProductionTime). The downstream `elapsed` and downtime
+  // budget are in minutes, so convert once here. The previous version read
+  // from activeShiftData (never populated by the current bridge) and treated
+  // the value as minutes, which always silently fell back to the wall clock.
+  const productionTimeSecs = activeShiftData?.ProductionTime ?? m.machineStatus?.ProductionTime ?? 0;
+  const idleTimeSecs       = activeShiftData?.IdleTime       ?? m.machineStatus?.IdleTime       ?? 0;
+  const productionTimeMins = productionTimeSecs / 60;
+  const idleTimeMins       = idleTimeSecs       / 60;
+  const plcElapsedMins     = productionTimeMins + idleTimeMins;
+  const elapsed            = plcElapsedMins > 0
+    ? plcElapsedMins
     : (Date.now() - shiftStartedAt) / 60000;
   if (elapsed <= 0) return null;
 
@@ -111,7 +120,7 @@ function calcBuRunRate(
   // Only subtract downtime that has NOT yet been consumed — avoids double-counting
   // breaks that are already baked into elapsed time.
   // Error time is excluded: it is unplanned and should not consume the budget.
-  const remainingDowntimeBudget = Math.max(0, plannedDowntimeMinutes - idleTime);
+  const remainingDowntimeBudget = Math.max(0, plannedDowntimeMinutes - idleTimeMins);
   const remaining  = Math.max(0, shiftLengthMinutes - elapsed - remainingDowntimeBudget);
   const projected  = currentBUs + buPerMin * remaining;
   return { projected, target, rate: projected / target };
