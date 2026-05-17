@@ -239,37 +239,49 @@ function* eachDate(from, to) {
 }
 
 /**
- * Given a YYYY-MM-DD shift_date in factory TZ, return the start/end UTC
- * timestamps for the n-th slot of that day (n = 0..NUM_SHIFTS-1).
- * Factory TZ is honoured by computing the local wall clock for the start hour
- * then offsetting to UTC via the (DST-aware) named-zone lookup.
+ * Convert a local wall-clock (date in YYYY-MM-DD form + hour-of-day) in the
+ * factory timezone into a UTC instant. DST-aware: spring-forward and
+ * fall-back are handled correctly because the named-zone offset is probed
+ * for each call.
  */
-function shiftWindowUTC(dateStr, slotIdx, firstStartHour, shiftDurationHours, tzName) {
-  const startHour = (firstStartHour + slotIdx * shiftDurationHours) % 24;
-  // Build a wall-clock string in the factory TZ, then parse it back via the
-  // Intl API by iterating offsets. Simpler approach: build a Date for "midnight
-  // UTC of dateStr", shift by startHour, then correct for the TZ offset at
-  // that local moment.
+function localClockToUtcMs(dateStr, hour, tzName) {
   const baseUtc = Date.UTC(
     Number(dateStr.slice(0, 4)),
     Number(dateStr.slice(5, 7)) - 1,
     Number(dateStr.slice(8, 10)),
-    startHour,
+    hour,
   );
-  // Probe offset: format baseUtc in the target TZ, see what hour it lands on,
-  // then add the delta so the local clock reads exactly `startHour`.
   const fmt = new Intl.DateTimeFormat("en-US", {
     timeZone: tzName, hourCycle: "h23",
     year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit",
   });
-  // First pass: compute the offset (minutes) between UTC and tz at baseUtc.
   const parts = fmt.formatToParts(new Date(baseUtc));
   const get = (t) => Number(parts.find(p => p.type === t).value);
-  const localY = get("year"), localMo = get("month"), localD = get("day"), localH = get("hour"), localMi = get("minute");
-  const localAsUtc = Date.UTC(localY, localMo - 1, localD, localH, localMi);
+  const localAsUtc = Date.UTC(get("year"), get("month") - 1, get("day"), get("hour"), get("minute"));
   const offsetMs = localAsUtc - baseUtc;
-  const startUtcMs = baseUtc - offsetMs;
-  const endUtcMs   = startUtcMs + shiftDurationHours * 3600 * 1000;
+  return baseUtc - offsetMs;
+}
+
+/**
+ * Given a YYYY-MM-DD shift_date in factory TZ, return the start/end UTC
+ * timestamps for the n-th slot of that day (n = 0..NUM_SHIFTS-1).
+ *
+ * Start AND end are computed independently via localClockToUtcMs so that a
+ * shift spanning a DST transition has the correct UTC end time — naively
+ * adding `shiftDurationHours * 3600 * 1000` to startUtcMs would be ±1 h off
+ * on the two transition days per year and shove saved_at into the wrong
+ * shift label.
+ */
+function shiftWindowUTC(dateStr, slotIdx, firstStartHour, shiftDurationHours, tzName) {
+  const startHour     = (firstStartHour + slotIdx       * shiftDurationHours) % 24;
+  const endHourTotal  =  firstStartHour + (slotIdx + 1) * shiftDurationHours;
+  const endHour       = endHourTotal % 24;
+  const endDateStr    = endHourTotal >= 24
+    ? isoDate(new Date(new Date(dateStr + "T00:00:00Z").getTime() + 86400000))
+    : dateStr;
+
+  const startUtcMs = localClockToUtcMs(dateStr,    startHour, tzName);
+  const endUtcMs   = localClockToUtcMs(endDateStr, endHour,   tzName);
   return { startUtcMs, endUtcMs };
 }
 
@@ -535,7 +547,12 @@ async function main() {
       const { startUtcMs, endUtcMs } = shiftWindowUTC(
         dateStr, slot, config.firstShiftStartHour, config.shiftDurationHours, config.tz,
       );
-      const shiftMin = config.shiftDurationHours * 60;
+      // Derive shiftMin from the actual UTC window rather than a constant
+      // `shiftDurationHours * 60`. On DST-spring days a 12 h wall-clock shift
+      // is really 11 h of UTC, on DST-fall days it's 13 h. Using the wall-
+      // clock duration keeps production_time_seconds and the error-roll loop
+      // physically accurate on those two days per year.
+      const shiftMin = Math.round((endUtcMs - startUtcMs) / 60000);
 
       for (const m of targeted) {
         const pers   = personalityFor(m.machine_code);
