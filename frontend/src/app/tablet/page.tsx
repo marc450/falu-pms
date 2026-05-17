@@ -561,15 +561,6 @@ function ErrorScreen({
                     </div>
                   )}
 
-                  {/* Cause stays as a small footer line. */}
-                  {info?.cause && (
-                    <p className="text-base text-red-200/70 leading-snug">
-                      <span className="text-red-300/60 uppercase tracking-widest text-xs mr-2">
-                        {t(lang, "cause")}:
-                      </span>
-                      {info.cause}
-                    </p>
-                  )}
                 </article>
               );
             })}
