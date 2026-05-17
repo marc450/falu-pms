@@ -38,6 +38,24 @@ function isErrorAllowedForKiosk(errorCode: string, machineCode: string): boolean
   return allowed.includes(errorCode);
 }
 
+// Collapse multiple open events of the same error_code down to one — keep
+// the most recently started row. Two simultaneous A190 cards on the kiosk
+// would otherwise show up if the bridge ever ends up with two open
+// error_events rows for the same code (stale row not closed cleanly,
+// Realtime replay on reconnect, race during bridge restart, etc.). For the
+// operator "A190 is active" is one piece of information, no matter how
+// many DB rows represent it.
+function dedupeByErrorCode(events: ErrorEvent[]): ErrorEvent[] {
+  const byCode = new Map<string, ErrorEvent>();
+  for (const e of events) {
+    const prior = byCode.get(e.error_code);
+    if (!prior || new Date(e.started_at).getTime() > new Date(prior.started_at).getTime()) {
+      byCode.set(e.error_code, e);
+    }
+  }
+  return Array.from(byCode.values());
+}
+
 export default function TabletKioskPage() {
   return (
     <Suspense fallback={<FullScreen><Spinner /></FullScreen>}>
@@ -394,7 +412,7 @@ function Kiosk({
         if (cancelled) return;
         setSelfStatus((machineResult.data as { status: string | null } | null)?.status ?? null);
         const open = events.filter(e => e.ended_at === null);
-        setOpenErrors(filterErrorsForKiosk(open, session.machine_code));
+        setOpenErrors(dedupeByErrorCode(filterErrorsForKiosk(open, session.machine_code)));
       } catch { /* ignore — Realtime will catch up via subsequent pushes */ }
     })();
 
@@ -426,12 +444,15 @@ function Kiosk({
             // An "open" error has ended_at === null. INSERTs and UPDATEs
             // where ended_at is still null mean the error is active;
             // UPDATEs that set ended_at, and DELETEs, mean it's gone.
+            let next: ErrorEvent[];
             if (payload.eventType !== "DELETE" && row?.ended_at == null) {
-              const next = [...others, row as ErrorEvent];
-              next.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
-              return next;
+              next = [...others, row as ErrorEvent];
+            } else {
+              next = others;
             }
-            return others;
+            next.sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+            // Collapse multiple open events of the same code into one card.
+            return dedupeByErrorCode(next);
           });
         }
       )
