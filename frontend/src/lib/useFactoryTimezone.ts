@@ -80,3 +80,82 @@ export function getZonedParts(d: Date, tz: string): {
     minute: get("minute"),
   };
 }
+
+// ============================================
+// FACTORY-TZ DATE MATH
+// ============================================
+// All return a UTC Date whose wall clock in `tz` matches the desired
+// factory-local moment (e.g. midnight on Mar 1st as the factory sees it).
+// Implementation: pick the desired wall-clock instant assuming UTC == tz,
+// observe what wall clock that UTC instant actually produces under tz,
+// then correct by the offset. Robust across DST except for the missing/
+// doubled hour itself, which we never need (we ask for midnight).
+
+export function constructFactoryInstant(
+  tz: string,
+  year: number, month: number, day: number, hour: number, minute: number,
+): Date {
+  const wantedMs   = Date.UTC(year, month - 1, day, hour, minute);
+  const observed   = getZonedParts(new Date(wantedMs), tz);
+  const observedMs = Date.UTC(
+    observed.year, observed.month - 1, observed.day,
+    observed.hour, observed.minute,
+  );
+  return new Date(wantedMs - (observedMs - wantedMs));
+}
+
+// Factory midnight today.
+export function factoryStartOfDay(tz: string, now: Date = new Date()): Date {
+  const p = getZonedParts(now, tz);
+  return constructFactoryInstant(tz, p.year, p.month, p.day, 0, 0);
+}
+
+// 1st of the factory's current month, at factory midnight.
+export function factoryStartOfMonth(tz: string, now: Date = new Date()): Date {
+  const p = getZonedParts(now, tz);
+  return constructFactoryInstant(tz, p.year, p.month, 1, 0, 0);
+}
+
+// 1st of the first month of the factory's current quarter, at factory midnight.
+export function factoryStartOfQuarter(tz: string, now: Date = new Date()): Date {
+  const p = getZonedParts(now, tz);
+  const qFirstMonth = Math.floor((p.month - 1) / 3) * 3 + 1;  // 1, 4, 7, 10
+  return constructFactoryInstant(tz, p.year, qFirstMonth, 1, 0, 0);
+}
+
+// Jan 1 of the factory's current year, at factory midnight.
+export function factoryStartOfYear(tz: string, now: Date = new Date()): Date {
+  const p = getZonedParts(now, tz);
+  return constructFactoryInstant(tz, p.year, 1, 1, 0, 0);
+}
+
+// Step back by N factory-calendar days or months from "today at the factory",
+// then return factory midnight. For months, day-of-month is clamped down if
+// the target month is shorter (Mar 31 - 1 month → Feb 28/29).
+export function factoryDateBefore(
+  tz: string,
+  offset: { days?: number; months?: number },
+  now: Date = new Date(),
+): Date {
+  const today = getZonedParts(now, tz);
+  let { year, month, day } = today;
+
+  if (offset.months) {
+    const totalMonths = year * 12 + (month - 1) - offset.months;
+    year  = Math.floor(totalMonths / 12);
+    month = (totalMonths % 12 + 12) % 12 + 1;
+    // Clamp day to last day of target month
+    const daysInTarget = new Date(Date.UTC(year, month, 0)).getUTCDate();
+    if (day > daysInTarget) day = daysInTarget;
+  }
+
+  if (offset.days) {
+    const ms       = Date.UTC(year, month - 1, day) - offset.days * 86_400_000;
+    const fromUtc  = new Date(ms);
+    year  = fromUtc.getUTCFullYear();
+    month = fromUtc.getUTCMonth() + 1;
+    day   = fromUtc.getUTCDate();
+  }
+
+  return constructFactoryInstant(tz, year, month, day, 0, 0);
+}

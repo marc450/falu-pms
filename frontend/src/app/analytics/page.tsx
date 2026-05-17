@@ -10,6 +10,7 @@ import {
 import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 import { ProductionTrendSection, PeriodSelector, PRESETS, DEFAULT_PRESET_ID } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
+import { useFactoryTimezone } from "@/lib/useFactoryTimezone";
 import MachineAnalytics from "./MachineAnalytics";
 import ShiftAnalytics   from "./ShiftAnalytics";
 import DowntimeAnalytics from "./DowntimeAnalytics";
@@ -22,9 +23,15 @@ type AnalyticsTab = "fleet" | "machines" | "shifts" | "downtime";
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Analytics() {
+  // Factory timezone — every preset's date math is computed against the
+  // factory's calendar (see useFactoryTimezone). For viewers outside the
+  // factory's tz this is the difference between "Last 7 days" meaning
+  // their week or the factory's week.
+  const factoryTz = useFactoryTimezone();
+
   const [activePresetId, setActivePresetId] = useState<PresetId | "custom">(DEFAULT_PRESET_ID);
   const [dateRange, setDateRange]           = useState<DateRange>(() =>
-    PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange()
+    PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange(factoryTz)
   );
   const [tab, setTab]                     = useState<AnalyticsTab>("fleet");
   const [rows, setRows]                   = useState<FleetTrendRow[]>([]);
@@ -47,7 +54,7 @@ export default function Analytics() {
     // that arrive after the page first loaded.
     const effectiveRange: DateRange =
       activePresetId !== "custom"
-        ? PRESETS.find(p => p.id === activePresetId)!.getRange()
+        ? PRESETS.find(p => p.id === activePresetId)!.getRange(factoryTz)
         : dateRange;
     try {
       const rangeFrom = effectiveRange.start.toISOString().slice(0, 10);
@@ -152,7 +159,7 @@ export default function Analytics() {
 
   function handlePresetSelect(preset: Preset) {
     setActivePresetId(preset.id);
-    setDateRange(preset.getRange()); // also update custom inputs in the selector
+    setDateRange(preset.getRange(factoryTz)); // also update custom inputs in the selector
   }
 
   function handleCustomRange(range: DateRange) {
@@ -160,9 +167,18 @@ export default function Analytics() {
     setDateRange(range);
   }
 
+  // When the factory timezone resolves (or changes), recompute any
+  // preset-driven date range so it lines up with the factory calendar.
+  useEffect(() => {
+    if (activePresetId !== "custom") {
+      setDateRange(PRESETS.find(p => p.id === activePresetId)!.getRange(factoryTz));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [factoryTz]);
+
   // Period range used by sub-tab analytics (and by the fleet section internally).
   const kpiRange: DateRange = activePresetId !== "custom"
-    ? PRESETS.find(p => p.id === activePresetId)!.getRange()
+    ? PRESETS.find(p => p.id === activePresetId)!.getRange(factoryTz)
     : dateRange;
 
   return (

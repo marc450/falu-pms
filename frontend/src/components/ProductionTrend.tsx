@@ -9,13 +9,21 @@ import {
 } from "recharts";
 import {
   format, parseISO,
-  subHours, subDays, subMonths,
-  startOfDay, startOfMonth, startOfQuarter, startOfYear,
+  subHours,
 } from "date-fns";
 import { fmtPct } from "@/lib/fmt";
 import { applyEfficiencyColor, applyScrapColor } from "@/lib/supabase";
 import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
-import { useFactoryTimezone, formatHourMinute, getZonedParts } from "@/lib/useFactoryTimezone";
+import {
+  useFactoryTimezone,
+  formatHourMinute,
+  getZonedParts,
+  constructFactoryInstant,
+  factoryStartOfMonth,
+  factoryStartOfQuarter,
+  factoryStartOfYear,
+  factoryDateBefore,
+} from "@/lib/useFactoryTimezone";
 
 // ─── Chart constants ─────────────────────────────────────────────────────────
 
@@ -39,21 +47,26 @@ export type PresetId = "24h" | "7d" | "4w" | "6m" | "12m" | "mtd" | "qtd" | "ytd
 export interface Preset {
   id: PresetId;
   label: string;
-  getRange: () => DateRange;
+  // tz is the factory's IANA timezone — all day/month/year boundaries are
+  // computed at the factory's wall clock, not the browser's, so the data
+  // window matches what an operator would expect ("Last 7 days" = midnight
+  // 7 calendar days ago at the factory).
+  getRange: (tz: string) => DateRange;
 }
 
 const mkNow = () => new Date();
 
 export const PRESETS: Preset[] = [
-  { id: "24h", label: "Last 24 hours",   getRange: () => ({ start: subHours(mkNow(), 24),              end: mkNow() }) },
-  { id: "7d",  label: "Last 7 days",     getRange: () => ({ start: startOfDay(subDays(mkNow(), 7)),    end: mkNow() }) },
-  { id: "4w",  label: "Last 4 weeks",    getRange: () => ({ start: startOfDay(subDays(mkNow(), 28)),   end: mkNow() }) },
-  { id: "6m",  label: "Last 6 months",   getRange: () => ({ start: startOfDay(subMonths(mkNow(), 6)),  end: mkNow() }) },
-  { id: "12m", label: "Last 12 months",  getRange: () => ({ start: startOfDay(subMonths(mkNow(), 12)), end: mkNow() }) },
-  { id: "mtd", label: "Month to date",   getRange: () => ({ start: startOfMonth(mkNow()),              end: mkNow() }) },
-  { id: "qtd", label: "Quarter to date", getRange: () => ({ start: startOfQuarter(mkNow()),            end: mkNow() }) },
-  { id: "ytd", label: "Year to date",    getRange: () => ({ start: startOfYear(mkNow()),               end: mkNow() }) },
-  { id: "all", label: "All time",        getRange: () => ({ start: new Date(2020, 0, 1),               end: mkNow() }) },
+  // 24h is a fixed-duration window — timezone-independent.
+  { id: "24h", label: "Last 24 hours",   getRange: ()   => ({ start: subHours(mkNow(), 24),                        end: mkNow() }) },
+  { id: "7d",  label: "Last 7 days",     getRange: (tz) => ({ start: factoryDateBefore(tz, { days:   7 }),         end: mkNow() }) },
+  { id: "4w",  label: "Last 4 weeks",    getRange: (tz) => ({ start: factoryDateBefore(tz, { days:  28 }),         end: mkNow() }) },
+  { id: "6m",  label: "Last 6 months",   getRange: (tz) => ({ start: factoryDateBefore(tz, { months: 6 }),         end: mkNow() }) },
+  { id: "12m", label: "Last 12 months",  getRange: (tz) => ({ start: factoryDateBefore(tz, { months: 12 }),        end: mkNow() }) },
+  { id: "mtd", label: "Month to date",   getRange: (tz) => ({ start: factoryStartOfMonth(tz),                      end: mkNow() }) },
+  { id: "qtd", label: "Quarter to date", getRange: (tz) => ({ start: factoryStartOfQuarter(tz),                    end: mkNow() }) },
+  { id: "ytd", label: "Year to date",    getRange: (tz) => ({ start: factoryStartOfYear(tz),                       end: mkNow() }) },
+  { id: "all", label: "All time",        getRange: (tz) => ({ start: constructFactoryInstant(tz, 2020, 1, 1, 0, 0), end: mkNow() }) },
 ];
 
 export const DEFAULT_PRESET_ID: PresetId = "7d";

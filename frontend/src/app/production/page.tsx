@@ -20,6 +20,7 @@ import {
   ProductionTrendSection, PeriodSelector, PRESETS,
 } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
+import { useFactoryTimezone } from "@/lib/useFactoryTimezone";
 
 function ProductionContent() {
   const searchParams = useSearchParams();
@@ -37,14 +38,30 @@ function ProductionContent() {
   const failCount = useRef(0);
   const router = useRouter();
 
+  // Factory timezone — drives all preset date ranges so "Last 7 days" is
+  // anchored to the factory's calendar day, not the browser's.
+  const factoryTz = useFactoryTimezone();
+
   // Production Trend state — mirrors the Analytics fleet tab.
   // Defaults to 24h on the machine page (vs 7d on Analytics) to match the
   // "right now" framing of the Machine Monitor.
   const MACHINE_DEFAULT_PRESET: PresetId = "24h";
   const [trendPresetId, setTrendPresetId] = useState<PresetId | "custom">(MACHINE_DEFAULT_PRESET);
   const [trendRange, setTrendRange] = useState<DateRange>(() =>
-    PRESETS.find(p => p.id === MACHINE_DEFAULT_PRESET)!.getRange()
+    PRESETS.find(p => p.id === MACHINE_DEFAULT_PRESET)!.getRange(factoryTz)
   );
+
+  // If the factory tz resolves after first render (the hook starts with a
+  // fallback), recompute any non-custom range so it lines up with factory
+  // calendar boundaries.
+  useEffect(() => {
+    if (trendPresetId !== "custom") {
+      setTrendRange(PRESETS.find(p => p.id === trendPresetId)!.getRange(factoryTz));
+    }
+    // Intentionally only react to factoryTz changes — preset changes handle
+    // their own range update in the click handler.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [factoryTz]);
   const [trendRows, setTrendRows] = useState<FleetTrendRow[]>([]);
   const [trendGranularity, setTrendGranularity] = useState<"hour" | "day">("day");
   const [trendLoading, setTrendLoading] = useState(true);
@@ -125,7 +142,7 @@ function ProductionContent() {
     // For presets, recompute the range so `end` = now() at call time.
     const effectiveRange: DateRange =
       trendPresetId !== "custom"
-        ? PRESETS.find(p => p.id === trendPresetId)!.getRange()
+        ? PRESETS.find(p => p.id === trendPresetId)!.getRange(factoryTz)
         : trendRange;
     const isHourly = trendPresetId === "24h";
 
@@ -434,7 +451,7 @@ function ProductionContent() {
               dateRange={trendRange}
               onPresetSelect={(preset: Preset) => {
                 setTrendPresetId(preset.id);
-                setTrendRange(preset.getRange());
+                setTrendRange(preset.getRange(factoryTz));
               }}
               onCustomRange={(range) => {
                 setTrendPresetId("custom");
