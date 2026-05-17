@@ -1429,6 +1429,22 @@ export async function changePassword(newPassword: string): Promise<void> {
   if (error) throw new Error(error.message);
 }
 
+// Sends a password-reset email. The recipient gets a link to `redirectTo`
+// with a recovery token in the URL fragment; on click, the Supabase JS
+// client picks it up (detectSessionInUrl is on by default) and the page
+// at redirectTo can call `changePassword` to set a new password.
+//
+// Note: Supabase requires `redirectTo` to be in the Authentication →
+// URL Configuration → Redirect URLs allowlist or the email link errors.
+//
+// We deliberately never surface "email not found" — Supabase returns
+// success regardless to avoid leaking which addresses have accounts.
+export async function sendPasswordReset(email: string, redirectTo: string): Promise<void> {
+  const sb = getSupabase();
+  const { error } = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+  if (error) throw new Error(error.message);
+}
+
 async function extractEdgeFnError(error: { message: string; context?: unknown }): Promise<string> {
   // Supabase client puts the Response object in error.context for non-2xx
   const ctx = error.context;

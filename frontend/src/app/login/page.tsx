@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { getSupabase } from "@/lib/supabase";
 
 function FaluLogo({ className }: { className?: string }) {
@@ -68,9 +69,17 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-gray-400 mb-1.5">
-                Password
-              </label>
+              <div className="flex justify-between items-baseline mb-1.5">
+                <label className="block text-xs font-medium text-gray-400">
+                  Password
+                </label>
+                <Link
+                  href="/forgot-password"
+                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
+                >
+                  Forgot password?
+                </Link>
+              </div>
               <input
                 type="password"
                 value={password}

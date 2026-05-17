@@ -215,17 +215,25 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
   const router = useRouter();
   const [showAccount, setShowAccount] = useState(false);
 
-  const isLoginPage       = pathname === "/login";
-  const isLeaderboardPage = pathname === "/leaderboard";
-  const isSettingsPage    = pathname === "/settings";
-  const isTabletPage      = pathname?.startsWith("/tablet") ?? false;
+  const isLoginPage          = pathname === "/login";
+  const isForgotPasswordPage = pathname === "/forgot-password";
+  const isResetPasswordPage  = pathname === "/reset-password";
+  const isLeaderboardPage    = pathname === "/leaderboard";
+  const isSettingsPage       = pathname === "/settings";
+  const isTabletPage         = pathname?.startsWith("/tablet") ?? false;
+
+  // Pages accessible without a Supabase session. The reset-password page
+  // is in here even though it does have a (recovery) session once the
+  // email link is opened — Supabase parses the URL fragment asynchronously,
+  // and we don't want the redirect to fire before that lands.
+  const isPublicAuthPage = isLoginPage || isForgotPasswordPage || isResetPasswordPage;
 
   useEffect(() => {
     if (loading) return;
     // The tablet kiosk has its own per-machine token + PIN auth — skip the
     // Supabase login gate entirely.
     if (isTabletPage) return;
-    if (!session && !isLoginPage) {
+    if (!session && !isPublicAuthPage) {
       router.replace("/login");
     }
     if (session && isLoginPage) {
@@ -235,7 +243,7 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     if (session && isSettingsPage && !isAdmin) {
       router.replace("/");
     }
-  }, [loading, session, isLoginPage, isSettingsPage, isTabletPage, isAdmin, router]);
+  }, [loading, session, isLoginPage, isPublicAuthPage, isSettingsPage, isTabletPage, isAdmin, router]);
 
   // While checking auth state, show a minimal spinner
   if (loading) {
@@ -246,8 +254,9 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
     );
   }
 
-  // Login page — render without sidebar/chrome
-  if (isLoginPage) {
+  // Public auth pages (login, forgot password, reset password) — render
+  // without sidebar/chrome regardless of session state.
+  if (isPublicAuthPage) {
     return <>{children}</>;
   }
 
