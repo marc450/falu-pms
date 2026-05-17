@@ -16,14 +16,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [resetSent, setResetSent] = useState(false);
   const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
-    setResetSent(false);
 
     try {
       const sb = getSupabase();
@@ -37,28 +35,6 @@ export default function LoginPage() {
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
-    }
-  };
-
-  const handleForgotPassword = async () => {
-    setResetSent(false);
-    if (!email) {
-      setError("Enter your email above, then click Forgot password?");
-      return;
-    }
-    setError("");
-    try {
-      const sb = getSupabase();
-      const { error } = await sb.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/reset-password`,
-      });
-      if (error) {
-        setError(error.message);
-      } else {
-        setResetSent(true);
-      }
-    } catch {
-      setError("Could not send reset email. Please try again.");
     }
   };
 
@@ -93,17 +69,9 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <div className="flex justify-between items-baseline mb-1.5">
-                <label className="block text-xs font-medium text-gray-400">
-                  Password
-                </label>
-                <Link
-                  href="/forgot-password"
-                  className="text-xs text-blue-400 hover:text-blue-300 transition-colors"
-                >
-                  Forgot password?
-                </Link>
-              </div>
+              <label className="block text-xs font-medium text-gray-400 mb-1.5">
+                Password
+              </label>
               <input
                 type="password"
                 value={password}
@@ -119,13 +87,6 @@ export default function LoginPage() {
               <div className="bg-red-900/30 border border-red-700/50 text-red-400 text-sm rounded-lg px-3 py-2.5 flex items-center gap-2">
                 <i className="bi bi-exclamation-circle shrink-0"></i>
                 {error}
-              </div>
-            )}
-
-            {resetSent && (
-              <div className="bg-green-900/30 border border-green-700/50 text-green-400 text-sm rounded-lg px-3 py-2.5 flex items-center gap-2">
-                <i className="bi bi-envelope-check shrink-0"></i>
-                Password reset email sent. Check your inbox.
               </div>
             )}
 
@@ -147,13 +108,12 @@ export default function LoginPage() {
               )}
             </button>
 
-            <button
-              type="button"
-              onClick={handleForgotPassword}
-              className="w-full text-center text-xs text-gray-400 hover:text-gray-300 transition-colors"
+            <Link
+              href="/forgot-password"
+              className="block w-full text-center text-xs text-gray-400 hover:text-gray-300 transition-colors"
             >
               Forgot password?
-            </button>
+            </Link>
           </form>
         </div>
 
