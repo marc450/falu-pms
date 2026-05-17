@@ -889,7 +889,7 @@ export function ProductionTrendSection({
       {/* Trend charts — one per row so each gets full width */}
       <div className="flex flex-col gap-4 mb-4">
         <ChartCard
-          title={`Avg Uptime ${chartTitle}`}
+          title={`Total BU Output ${chartTitle}`}
           legend={
             <>
               {hasPeers && peerLabel && (
@@ -898,18 +898,28 @@ export function ProductionTrendSection({
                   {peerLabel}
                 </span>
               )}
-              <ZoneLegend color="#4ade80" label={`Good (≥${fmtPct(thresholds.efficiency.good, 1)})`} />
-              <ZoneLegend color="#eab308" label={`Mediocre (≥${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
-              <ZoneLegend color="#ef4444" label={`Poor (<${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
+              {buTargetLine !== null && (
+                <>
+                  <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTargetLine).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/day"})`} />
+                  <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
+                  <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
+                </>
+              )}
             </>
           }
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={rowsWithPeer} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
-                <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
-                <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
-                <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
+              <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+                {buTargetLine !== null && (
+                  <ReferenceArea y1={buTargetLine} y2={buMax} fill="#4ade80" fillOpacity={0.15} />
+                )}
+                {buTargetLine !== null && buMediocreLine !== null && (
+                  <ReferenceArea y1={buMediocreLine} y2={buTargetLine} fill="#eab308" fillOpacity={0.12} />
+                )}
+                {buMediocreLine !== null && (
+                  <ReferenceArea y1={0} y2={buMediocreLine} fill="#ef4444" fillOpacity={0.12} />
+                )}
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
@@ -921,23 +931,23 @@ export function ProductionTrendSection({
                   {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
                 <YAxis
-                  domain={[0, 100]}
+                  domain={[0, buMax]}
                   tick={TICK_STYLE}
                   tickLine={false}
                   axisLine={false}
-                  tickFormatter={(v) => `${v}%`}
+                  tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
                 />
                 <Tooltip
                   contentStyle={TOOLTIP_CONTENT_STYLE}
                   labelStyle={TOOLTIP_LABEL_STYLE}
                   itemStyle={TOOLTIP_ITEM_STYLE}
                   labelFormatter={(l) => fmtLabel(l as string)}
-                  formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
+                  formatter={(v, name) => [`${Number(v ?? 0).toLocaleString()} BUs`, String(name)]}
                 />
                 <Line
                   type="monotone"
-                  dataKey="avgUptime"
-                  name="Uptime"
+                  dataKey="totalBU"
+                  name="BU Output"
                   stroke="#22d3ee"
                   strokeWidth={2}
                   dot={false}
@@ -946,7 +956,7 @@ export function ProductionTrendSection({
                 {hasPeers && (
                   <Line
                     type="monotone"
-                    dataKey="peerUptime"
+                    dataKey="peerBU"
                     name={peerLabel ?? "Peers"}
                     stroke={PEER_LINE_COLOR}
                     strokeWidth={1.5}
@@ -961,7 +971,6 @@ export function ProductionTrendSection({
             </ResponsiveContainer>
           )}
         </ChartCard>
-
         <ChartCard
           title={`Avg Scrap Rate ${chartTitle}`}
           legend={
@@ -1035,106 +1044,95 @@ export function ProductionTrendSection({
             </ResponsiveContainer>
           )}
         </ChartCard>
-      </div>
-
-      <ChartCard
-        title={`Total BU Output ${chartTitle}`}
-        legend={
-          <>
-            {hasPeers && peerLabel && (
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: PEER_LINE_COLOR }} />
-                {peerLabel}
-              </span>
-            )}
-            {buTargetLine !== null && (
-              <>
-                <ZoneLegend color="#4ade80" label={`Good (≥${Math.round(buTargetLine).toLocaleString()} BUs${granularity === "hour" ? "/h" : "/day"})`} />
-                <ZoneLegend color="#eab308" label={`Mediocre (≥${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
-                <ZoneLegend color="#ef4444" label={`Poor (<${Math.round(buMediocreLine ?? 0).toLocaleString()})`} />
-              </>
-            )}
-            {showErrorStrip && (
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: ERROR_BRACKET_COLOR }} />
-                Errors
-              </span>
-            )}
-          </>
-        }
-      >
-        {!hasData ? <NoData /> : (
-          <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
-            <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
-              {buTargetLine !== null && (
-                <ReferenceArea y1={buTargetLine} y2={buMax} fill="#4ade80" fillOpacity={0.15} />
+        <ChartCard
+          title={`Avg Uptime ${chartTitle}`}
+          legend={
+            <>
+              {hasPeers && peerLabel && (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: PEER_LINE_COLOR }} />
+                  {peerLabel}
+                </span>
               )}
-              {buTargetLine !== null && buMediocreLine !== null && (
-                <ReferenceArea y1={buMediocreLine} y2={buTargetLine} fill="#eab308" fillOpacity={0.12} />
+              <ZoneLegend color="#4ade80" label={`Good (≥${fmtPct(thresholds.efficiency.good, 1)})`} />
+              <ZoneLegend color="#eab308" label={`Mediocre (≥${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
+              <ZoneLegend color="#ef4444" label={`Poor (<${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
+              {showErrorStrip && (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: ERROR_BRACKET_COLOR }} />
+                  Errors
+                </span>
               )}
-              {buMediocreLine !== null && (
-                <ReferenceArea y1={0} y2={buMediocreLine} fill="#ef4444" fillOpacity={0.12} />
-              )}
-              <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-              <XAxis
-                dataKey="date"
-                tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
-                tickLine={false}
-                axisLine={{ stroke: AXIS_COLOR }}
-                interval={0}
-                height={shouldAngle ? 56 : 36}
-                {...(explicitTicks ? { ticks: explicitTicks } : {})}
-              />
-              <YAxis
-                domain={[0, buMax]}
-                tick={TICK_STYLE}
-                tickLine={false}
-                axisLine={false}
-                tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
-              />
-              <Tooltip
-                contentStyle={TOOLTIP_CONTENT_STYLE}
-                labelStyle={TOOLTIP_LABEL_STYLE}
-                itemStyle={TOOLTIP_ITEM_STYLE}
-                labelFormatter={(l) => fmtLabel(l as string)}
-                formatter={(v, name) => [`${Number(v ?? 0).toLocaleString()} BUs`, String(name)]}
-              />
-              <Line
-                type="monotone"
-                dataKey="totalBU"
-                name="BU Output"
-                stroke="#22d3ee"
-                strokeWidth={2}
-                dot={false}
-                activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
-              />
-              {hasPeers && (
+            </>
+          }
+        >
+          {!hasData ? <NoData /> : (
+            <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
+              <LineChart data={rowsWithPeer} margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
+                <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
+                <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
+                <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
+                  tickLine={false}
+                  axisLine={{ stroke: AXIS_COLOR }}
+                  interval={0}
+                  height={shouldAngle ? 56 : 36}
+                  {...(explicitTicks ? { ticks: explicitTicks } : {})}
+                />
+                <YAxis
+                  domain={[0, 100]}
+                  tick={TICK_STYLE}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => `${v}%`}
+                />
+                <Tooltip
+                  contentStyle={TOOLTIP_CONTENT_STYLE}
+                  labelStyle={TOOLTIP_LABEL_STYLE}
+                  itemStyle={TOOLTIP_ITEM_STYLE}
+                  labelFormatter={(l) => fmtLabel(l as string)}
+                  formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
+                />
                 <Line
                   type="monotone"
-                  dataKey="peerBU"
-                  name={peerLabel ?? "Peers"}
-                  stroke={PEER_LINE_COLOR}
-                  strokeWidth={1.5}
-                  strokeDasharray="4 3"
+                  dataKey="avgUptime"
+                  name="Uptime"
+                  stroke="#22d3ee"
+                  strokeWidth={2}
                   dot={false}
-                  activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
-                  connectNulls
-                  isAnimationActive={false}
+                  activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
                 />
-              )}
-              {showErrorStrip && (
-                <ErrorBracketLayer
-                  events={errorEvents}
-                  errorLookup={errorLookup}
-                  firstBucketTime={firstBucketTime}
-                  lastBucketTime={lastBucketTime}
-                  stripTopY={220 + ERROR_STRIP_PADDING}
-                />
-              )}
-            </LineChart>
-          </ResponsiveContainer>
-        )}
-      </ChartCard>
+                {hasPeers && (
+                  <Line
+                    type="monotone"
+                    dataKey="peerUptime"
+                    name={peerLabel ?? "Peers"}
+                    stroke={PEER_LINE_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                )}
+                {showErrorStrip && (
+                  <ErrorBracketLayer
+                    events={errorEvents}
+                    errorLookup={errorLookup}
+                    firstBucketTime={firstBucketTime}
+                    lastBucketTime={lastBucketTime}
+                    stripTopY={220 + ERROR_STRIP_PADDING}
+                  />
+                )}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+      </div>
     </>
   );
 }
