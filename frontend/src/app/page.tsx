@@ -20,6 +20,7 @@ import {
   applyBuRunRateColor,
   DEFAULT_THRESHOLDS,
   DEFAULT_SHIFT_CONFIG,
+  getSupabase,
 } from "@/lib/supabase";
 import type { MachineData, RegisteredMachine, MachineLiveData, ProductionCell, Thresholds, PackingFormat, ShiftConfig, PlcErrorCode } from "@/lib/supabase";
 import { PACKING_FORMATS } from "@/lib/supabase";
@@ -1120,10 +1121,64 @@ export default function Dashboard() {
     // Config: refresh every 5 minutes to pick up setting changes.
     const configInterval = setInterval(loadConfig, 5 * 60_000);
     const clockInterval  = setInterval(() => setCurrentTime(new Date()), 1000);
+
+    // Realtime nudge: when any machines.status flips (the bridge writes this
+    // synchronously with its in-memory transition), trigger an immediate
+    // loadData() so the error pill / status color appears within ~200ms
+    // instead of waiting for the next 5s poll. The HTTP fetch to the bridge
+    // is unchanged — it remains the source of truth for live counters like
+    // idleTimeSeconds / activeErrors. We only use Realtime as the wake-up
+    // signal. machines is published via migration 087.
+    //
+    // Two things to handle carefully:
+    //
+    //  1. The bridge UPDATEs every machines row on every shift message
+    //     (~every 5s per machine, so ~240 UPDATEs/min for a 20-machine
+    //     fleet). We only want to nudge on the rare ones where `status`
+    //     actually flipped. Default REPLICA IDENTITY doesn't include the
+    //     old status in payload.old, so we compare payload.new.status
+    //     against the previous value we have locally in machinesRef.
+    //
+    //  2. Bursts (e.g. a power blip flipping several machines to error
+    //     within the same tick) coalesce via a 50ms debounce so the
+    //     dashboard issues a single HTTP refresh.
+    const sb = getSupabase();
+    let nudgeTimer: number | null = null;
+    const channel = sb.channel("dashboard-status-nudge")
+      .on(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        "postgres_changes" as any,
+        { event: "UPDATE", schema: "public", table: "machines" },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (payload: any) => {
+          const newRow      = payload.new as { machine_code?: string; status?: string } | null;
+          const newStatus   = newRow?.status?.toLowerCase();
+          const machineCode = newRow?.machine_code;
+          if (!newStatus || !machineCode) return;
+
+          // Compare against what we already have in local state — that's
+          // our "old" value, since REPLICA IDENTITY DEFAULT strips it
+          // from the WAL payload. machinesRef.current is kept up to date
+          // by loadData() so this gives an accurate before/after.
+          const prevRaw    = machinesRef.current[machineCode]?.machineStatus?.Status;
+          const prevStatus = typeof prevRaw === "string" ? prevRaw.toLowerCase() : null;
+          if (prevStatus === newStatus) return;
+
+          if (nudgeTimer != null) return;
+          nudgeTimer = window.setTimeout(() => {
+            nudgeTimer = null;
+            loadData();
+          }, 50);
+        }
+      )
+      .subscribe();
+
     return () => {
       clearInterval(dataInterval);
       clearInterval(configInterval);
       clearInterval(clockInterval);
+      if (nudgeTimer != null) window.clearTimeout(nudgeTimer);
+      sb.removeChannel(channel);
     };
   }, [loadData, loadConfig]);
 
