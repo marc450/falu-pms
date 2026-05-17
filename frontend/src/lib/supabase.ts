@@ -538,9 +538,11 @@ export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResul
 // INTRADAY TREND (24h view, sub-hour buckets read directly from shift_readings)
 // ============================================
 //
-// Bucket size for the 24h view. 15 min × 96 buckets = a smooth continuous
-// line that still aligns cleanly with every hour mark on the x-axis.
-export const INTRADAY_BUCKET_MINUTES = 15;
+// Bucket size for the 24h view. 5 min × 288 buckets — fine enough that
+// short standstills and brief errors actually dent the line instead of
+// being smoothed away. Still aligns cleanly with every hour mark on the
+// x-axis. Backed by bucket_analytics_5m (migration 083).
+export const INTRADAY_BUCKET_MINUTES = 5;
 
 // Bucket-key format: "YYYY-MM-DDTHH:MM" (16 chars, UTC).
 // The chart's parser detects sub-hour keys by length (>13 chars).
