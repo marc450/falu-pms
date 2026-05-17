@@ -362,6 +362,13 @@ const ERROR_WEIGHTS = {
   // Rare: electrical faults, encoder errors, system issues (weight 1 = default)
 };
 
+// Per-machine forced error codes, keyed by UID. Machines listed here bypass
+// the weighted pool and always raise exactly the listed codes when they enter
+// an error state — used to make demo machines exhibit a specific failure mode.
+const FORCED_ERROR_CODES = {
+  "11556": ["A190"],  // CB-37 — only ever raises A190 (Too many swabs ejected by QC).
+};
+
 // Weighted pool built at startup from DB codes + weight table
 let WEIGHTED_POOL = [];
 
@@ -390,7 +397,9 @@ async function loadErrorCodesFromDB() {
   console.log(`Built weighted error pool: ${WEIGHTED_POOL.length} entries from ${codes.length} unique codes`);
 }
 
-function pickErrorCodes() {
+function pickErrorCodes(machine) {
+  const forced = machine && FORCED_ERROR_CODES[machine.name];
+  if (forced) return [...forced];
   const pool = WEIGHTED_POOL.length > 0 ? WEIGHTED_POOL : ["A172", "A073", "A010"];
   const count = 1 + Math.floor(Math.random() * 2);  // 1 or 2 codes (3 simultaneous is rare)
   const picked = new Set();
@@ -856,7 +865,7 @@ client.on("connect", async () => {
       }
       if (prevStatus !== "error" && newStatus === "error") {
         // Assign error codes for this error event
-        machine.activeErrorCodes = pickErrorCodes();
+        machine.activeErrorCodes = pickErrorCodes(machine);
         codesToActivate = machine.activeErrorCodes;
       } else if (prevStatus === "error" && newStatus !== "error") {
         // Error resolved — record codes to clear, then reset
