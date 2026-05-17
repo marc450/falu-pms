@@ -120,19 +120,28 @@ function calcBuRunRate(
 // Recalculate uptime using the same downtime budget logic as calcBuRunRate.
 // Planned idle time (up to the budget) is excluded from the denominator so
 // scheduled breaks do not penalise the efficiency figure.
+//
+// All accumulators below are in SECONDS to match the bridge's authoritative
+// PLC counters (m.machineStatus.ProductionTime / IdleTime are raw seconds,
+// and m.errorTimeSeconds is mirrored in seconds too). plannedDowntimeMinutes
+// is normalised to seconds once at the top so the denominator is unit-clean.
+// Previously this function mixed seconds and minutes, which caused error
+// time to be undercounted ~60× and inflated uptime for machines whose
+// downtime is dominated by errors rather than scheduled idle.
 function calcCorrectedEfficiency(m: DashboardMachine, plannedDowntimeMinutes: number): number | null {
-  const activeShift    = m.machineStatus?.ActShift ?? 1;
+  const activeShift     = m.machineStatus?.ActShift ?? 1;
   const activeShiftData = activeShift === 2 ? m.shift2 : activeShift === 3 ? m.shift3 : m.shift1;
-  const productionTime  = activeShiftData?.ProductionTime ?? m.machineStatus?.ProductionTime ?? 0;
-  const idleTime        = activeShiftData?.IdleTime       ?? m.machineStatus?.IdleTime       ?? 0;
-  if (productionTime === 0 && idleTime === 0) return null;
+  const productionSecs  = activeShiftData?.ProductionTime ?? m.machineStatus?.ProductionTime ?? 0;
+  const idleSecs        = activeShiftData?.IdleTime       ?? m.machineStatus?.IdleTime       ?? 0;
+  const errorSecs       = m.errorTimeSeconds ?? 0;
+  if (productionSecs === 0 && idleSecs === 0) return null;
+  const plannedDowntimeSecs = plannedDowntimeMinutes * 60;
   // Separate error time from idle time so the downtime budget only forgives
   // genuine idle (scheduled breaks). Error time always counts against uptime.
-  const { errorMins } = calcIdleErrorTime(m, Date.now());
-  const idleOnly      = Math.max(0, idleTime - errorMins);
-  const unplannedIdle = Math.max(0, idleOnly - plannedDowntimeMinutes);
-  const effectiveTime = productionTime + unplannedIdle + errorMins;
-  return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : null;
+  const idleOnlySecs    = Math.max(0, idleSecs - errorSecs);
+  const unplannedIdleSecs = Math.max(0, idleOnlySecs - plannedDowntimeSecs);
+  const effectiveSecs   = productionSecs + unplannedIdleSecs + errorSecs;
+  return effectiveSecs > 0 ? (productionSecs / effectiveSecs) * 100 : null;
 }
 
 // The bridge accumulates idle/error time on every MQTT tick (every 5 s) and

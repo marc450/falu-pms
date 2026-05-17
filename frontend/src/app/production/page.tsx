@@ -225,11 +225,19 @@ function ProductionContent() {
   // Recalculate efficiency treating planned downtime as a budget.
   // Idle time up to the budget is expected and does not penalise uptime.
   // Error time always counts against uptime (never absorbed by the budget).
-  const correctedEfficiency = (productionTime: number, idleTime: number, errorMins: number = 0): number => {
-    const idleOnly      = Math.max(0, idleTime - errorMins);
-    const unplannedIdle = Math.max(0, idleOnly - plannedDowntimeMins);
-    const effectiveTime = productionTime + unplannedIdle + errorMins;
-    return effectiveTime > 0 ? (productionTime / effectiveTime) * 100 : 0;
+  //
+  // Everything is SECONDS — productionSecs and idleSecs come from the PLC
+  // (ProductionTime / IdleTime / production_time_seconds / idle_time_seconds)
+  // and errorSecs is m.errorTimeSeconds. plannedDowntimeMins is converted
+  // to seconds once. The earlier version mixed seconds (production/idle)
+  // with minutes (error/budget), which under-counted error time and
+  // inflated uptime for error-dominated machines.
+  const plannedDowntimeSecs = plannedDowntimeMins * 60;
+  const correctedEfficiency = (productionSecs: number, idleSecs: number, errorSecs: number = 0): number => {
+    const idleOnlySecs      = Math.max(0, idleSecs - errorSecs);
+    const unplannedIdleSecs = Math.max(0, idleOnlySecs - plannedDowntimeSecs);
+    const effectiveSecs     = productionSecs + unplannedIdleSecs + errorSecs;
+    return effectiveSecs > 0 ? (productionSecs / effectiveSecs) * 100 : 0;
   };
 
   // Derive bridge-tracked error minutes for the active shift (completed stints
@@ -265,7 +273,7 @@ function ProductionContent() {
         MissingSticks:          s.MissingSticks          ?? 0,
         FoultyPickups:          s.FoultyPickups          ?? 0,
         OtherErrors:            s.OtherErrors            ?? 0,
-        Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0, activeShiftErrorMins),
+        Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0, activeShiftErrorMins * 60),
         Reject:                 s.Reject                 ?? 0,
       };
     }
@@ -309,7 +317,7 @@ function ProductionContent() {
       Efficiency:             0,
       Reject:                 0,
     }));
-    const totalUnplannedIdle = allCrews.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeMins), 0);
+    const totalUnplannedIdle = allCrews.reduce((acc, s) => acc + Math.max(0, s.IdleTime - plannedDowntimeSecs), 0);
     const effectiveTotalTime = sum.ProductionTime + totalUnplannedIdle;
     sum.Efficiency = effectiveTotalTime > 0 ? (sum.ProductionTime / effectiveTotalTime) * 100 : 0;
     sum.Reject     = sum.ProducedSwabs > 0 ? (sum.DiscardedSwabs / sum.ProducedSwabs) * 100 : 0;
