@@ -16,12 +16,14 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resetSent, setResetSent] = useState(false);
   const router = useRouter();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
     setError("");
+    setResetSent(false);
 
     try {
       const sb = getSupabase();
@@ -35,6 +37,28 @@ export default function LoginPage() {
       setError("An unexpected error occurred. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    setResetSent(false);
+    if (!email) {
+      setError("Enter your email above, then click Forgot password?");
+      return;
+    }
+    setError("");
+    try {
+      const sb = getSupabase();
+      const { error } = await sb.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/reset-password`,
+      });
+      if (error) {
+        setError(error.message);
+      } else {
+        setResetSent(true);
+      }
+    } catch {
+      setError("Could not send reset email. Please try again.");
     }
   };
 
@@ -98,6 +122,13 @@ export default function LoginPage() {
               </div>
             )}
 
+            {resetSent && (
+              <div className="bg-green-900/30 border border-green-700/50 text-green-400 text-sm rounded-lg px-3 py-2.5 flex items-center gap-2">
+                <i className="bi bi-envelope-check shrink-0"></i>
+                Password reset email sent. Check your inbox.
+              </div>
+            )}
+
             <button
               type="submit"
               disabled={loading}
@@ -114,6 +145,14 @@ export default function LoginPage() {
                   Sign in
                 </>
               )}
+            </button>
+
+            <button
+              type="button"
+              onClick={handleForgotPassword}
+              className="w-full text-center text-xs text-gray-400 hover:text-gray-300 transition-colors"
+            >
+              Forgot password?
             </button>
           </form>
         </div>
