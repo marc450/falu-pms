@@ -370,6 +370,8 @@ const ERROR_WEIGHTS = {
 // machine's identity end-to-end. The simulator's internal MACHINE_UID_MAP
 // labels are *not* authoritative — users rename machines in the dashboard
 // (machines.name column) and that override is what the operator sees.
+// Paired with the FORCED_CYCLE entry below so the CB-37 tablet shows A190
+// on a deterministic 2-min-error / 1-min-running rhythm.
 const FORCED_ERROR_CODES = {
   // 11562 is the UID the user has renamed to "CB-37" in the dashboard
   // (the simulator's own MACHINE_UID_MAP labels it CB-34 — ignore that).
