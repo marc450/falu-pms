@@ -551,7 +551,6 @@ async function main() {
         savedLogs.push({
           machine_id:                m.id,
           machine_code:              m.machine_code,
-          shift_number:              slot + 1,
           shift_crew:                crew,
           production_time_seconds:   result.production_time_seconds,
           idle_time_seconds:         result.idle_time_seconds,
@@ -580,10 +579,10 @@ async function main() {
             duration_secs: ev.durationSec,
             shift_crew:    crew,
           });
-          const key = `${m.id}|${dateStr}|${slot + 1}|${ev.code}`;
+          const key = `${m.id}|${dateStr}|${crew}|${ev.code}`;
           const agg = summaryAgg.get(key) || {
             machine_id: m.id, machine_code: m.machine_code,
-            shift_date: dateStr, plc_shift: slot + 1, error_code: ev.code, shift_crew: crew,
+            shift_date: dateStr, shift_crew: crew, error_code: ev.code,
             occurrence_count: 0, total_duration_secs: 0,
           };
           agg.occurrence_count   += 1;
@@ -642,7 +641,7 @@ async function main() {
 
   await chunkUpsert("error_shift_summary",
     [...summaryAgg.values()],
-    "machine_id,shift_date,plc_shift,error_code");
+    "machine_id,shift_date,shift_crew,error_code");
   console.log(`  ✓ ${summaryAgg.size} error_shift_summary`);
 
   // ── Roll up daily summaries ───────────────────────────────────────────
