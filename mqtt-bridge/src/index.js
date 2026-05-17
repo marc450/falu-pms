@@ -590,16 +590,44 @@ async function handleErrorMessage(payload) {
     // Error activated
     if (!m.activeErrors.includes(code)) m.activeErrors.push(code);
 
-    // Log to error_events (detailed, 48h retention)
+    // Log to error_events (detailed, 48h retention).
+    // The JS guard below is best-effort; the real guarantee is the partial
+    // unique index error_events_open_unique_idx (migration 088) which blocks
+    // a second open row for the same (machine, code). MQTT QoS-1 redelivers
+    // messages whose ack is slow, so this code path can legitimately run
+    // twice for the same event. On the second run the INSERT fails with
+    // 23505 (unique_violation) — we then look up the existing open row
+    // and adopt it into openErrorEvents so the close-on-running path works.
     if (machineId && !m.openErrorEvents[code]) {
-      const { data: row } = await supabase.from("error_events").insert({
+      const { data: row, error: insertErr } = await supabase.from("error_events").insert({
         machine_id: machineId,
         machine_code: machineCode,
         error_code: code,
         shift_crew: crew,
         started_at: data.Timestamp ? new Date(data.Timestamp).toISOString() : new Date().toISOString(),
       }).select("id").single();
-      if (row) m.openErrorEvents[code] = row.id;
+      if (insertErr) {
+        if (insertErr.code === "23505") {
+          // Another concurrent handler already opened this event — adopt it.
+          const { data: existing } = await supabase
+            .from("error_events")
+            .select("id")
+            .eq("machine_id", machineId)
+            .eq("error_code", code)
+            .is("ended_at", null)
+            .order("started_at", { ascending: false })
+            .limit(1)
+            .maybeSingle();
+          if (existing) {
+            m.openErrorEvents[code] = existing.id;
+            logger.info(`Duplicate ErrorStatus=true for ${machineCode}/${code} — adopted existing open row ${existing.id}`);
+          }
+        } else {
+          logger.error(`Failed to insert error_events for ${machineCode}/${code}: ${insertErr.message}`);
+        }
+      } else if (row) {
+        m.openErrorEvents[code] = row.id;
+      }
     }
 
     // Increment in-memory shift aggregation count (keyed by crew)
