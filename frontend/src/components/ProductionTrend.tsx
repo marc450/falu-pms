@@ -250,6 +250,82 @@ function BuTooltipContent({
   );
 }
 
+// Custom Tooltip for the percentage charts (Uptime, Scrap). Same hit/miss
+// pattern as the BU tooltip — show the per-bucket value, the configured
+// target threshold (the boundary between "Good" and "Mediocre" zones),
+// and the signed delta in percentage points.
+//
+// `invert=false` (Uptime): higher is better → hit when actual >= target.
+// `invert=true`  (Scrap):  lower  is better → hit when actual <= target.
+// In both cases the delta sign matches actual − target; only the
+// hit-state icon and color flip.
+function PctTargetTooltipContent({
+  active, payload, label,
+  selfKey, peerKey,
+  target, invert,
+  fmtLabelFn, peerLabel,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  active?: boolean; payload?: any[]; label?: string;
+  selfKey: string;
+  peerKey: string;
+  target: number | null;
+  invert: boolean;
+  fmtLabelFn: (key: string) => string;
+  peerLabel?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const selfEntry = payload.find(p => p.dataKey === selfKey);
+  const peerEntry = payload.find(p => p.dataKey === peerKey);
+  const val      = selfEntry ? Number(selfEntry.value ?? 0) : 0;
+  const peerVal  = peerEntry?.value != null ? Number(peerEntry.value) : null;
+
+  const delta    = target != null ? val - target : null;
+  const hit      = delta != null && (invert ? delta <= 0 : delta >= 0);
+
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded-md text-xs text-gray-200 px-3 py-2 shadow-lg">
+      {label && <div className="text-gray-400 mb-1.5">{fmtLabelFn(label)}</div>}
+
+      <div className="flex items-baseline gap-2">
+        <span className="text-cyan-300 font-semibold tabular-nums">{fmtPct(val, 1)}</span>
+      </div>
+
+      {peerVal != null && (
+        <div className="flex items-baseline gap-2 mt-0.5">
+          <span className="text-amber-300 tabular-nums">{fmtPct(peerVal, 1)}</span>
+          <span className="text-gray-500">{peerLabel ?? "peers"}</span>
+        </div>
+      )}
+
+      {target != null && (
+        <div className="mt-2 pt-2 border-t border-gray-700/60">
+          <div className="flex items-baseline gap-2 text-gray-400">
+            <span>Target:</span>
+            <span className="tabular-nums">
+              {invert ? "≤ " : "≥ "}{fmtPct(target, 1)}
+            </span>
+          </div>
+          {delta != null && (
+            <div className={`flex items-baseline gap-1.5 mt-0.5 font-semibold ${hit ? "text-green-400" : "text-red-400"}`}>
+              <i className={hit ? "bi bi-check-circle-fill" : "bi bi-x-circle-fill"} />
+              <span className="tabular-nums">
+                {delta >= 0 ? "+" : ""}{delta.toFixed(1)} pp
+              </span>
+              <span className="text-gray-400 font-normal">
+                {hit
+                  ? (invert ? "below target" : "above target")
+                  : (invert ? "above target" : "below target")}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function KpiTile({ icon, label, value, sub, colorClass, borderClass }: {
@@ -1094,11 +1170,20 @@ export function ProductionTrendSection({
                   tickFormatter={(v) => `${v}%`}
                 />
                 <Tooltip
-                  contentStyle={TOOLTIP_CONTENT_STYLE}
-                  labelStyle={TOOLTIP_LABEL_STYLE}
-                  itemStyle={TOOLTIP_ITEM_STYLE}
-                  labelFormatter={(l) => fmtLabel(l as string)}
-                  formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
+                  // Custom content with target + delta + hit/miss. Scrap is
+                  // inverted: lower is better, so hit = actual <= target.
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  content={(props: any) => (
+                    <PctTargetTooltipContent
+                      {...props}
+                      selfKey="avgScrap"
+                      peerKey="peerScrap"
+                      target={thresholds.scrap.good}
+                      invert={true}
+                      fmtLabelFn={fmtLabel}
+                      peerLabel={peerLabel}
+                    />
+                  )}
                 />
                 <Line
                   type="monotone"
@@ -1173,11 +1258,20 @@ export function ProductionTrendSection({
                   tickFormatter={(v) => `${v}%`}
                 />
                 <Tooltip
-                  contentStyle={TOOLTIP_CONTENT_STYLE}
-                  labelStyle={TOOLTIP_LABEL_STYLE}
-                  itemStyle={TOOLTIP_ITEM_STYLE}
-                  labelFormatter={(l) => fmtLabel(l as string)}
-                  formatter={(v, name) => [fmtPct(Number(v ?? 0), 1), String(name)]}
+                  // Custom content with target + delta + hit/miss. Uptime
+                  // is non-inverted: higher is better, hit = actual >= target.
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  content={(props: any) => (
+                    <PctTargetTooltipContent
+                      {...props}
+                      selfKey="avgUptime"
+                      peerKey="peerUptime"
+                      target={thresholds.efficiency.good}
+                      invert={false}
+                      fmtLabelFn={fmtLabel}
+                      peerLabel={peerLabel}
+                    />
+                  )}
                 />
                 <Line
                   type="monotone"
