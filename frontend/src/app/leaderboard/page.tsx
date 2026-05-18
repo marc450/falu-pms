@@ -66,16 +66,21 @@ function rankBadge(rank: number): string {
 }
 
 // % of target → fill color for the production-vs-target bar.
+// 100 %+ gets its own brighter shade so a cell that overruns target is
+// visually distinct from one that just hit it; the bar itself stays
+// capped at the rail width so the layout doesn't shift.
 function progressBarColor(pct: number | null): string {
   if (pct === null) return "bg-gray-700";
-  if (pct >= 95) return "bg-green-500";
-  if (pct >= 75) return "bg-yellow-500";
+  if (pct >= 100) return "bg-emerald-400";
+  if (pct >= 95)  return "bg-green-500";
+  if (pct >= 75)  return "bg-yellow-500";
   return "bg-red-500";
 }
 function progressTextColor(pct: number | null): string {
   if (pct === null) return "text-gray-500";
-  if (pct >= 95) return "text-green-400";
-  if (pct >= 75) return "text-yellow-400";
+  if (pct >= 100) return "text-emerald-300";
+  if (pct >= 95)  return "text-green-400";
+  if (pct >= 75)  return "text-yellow-400";
   return "text-red-400";
 }
 
@@ -260,65 +265,63 @@ export default function LeaderboardPage() {
   }, []);
 
   // ── Maps ──
-  const machineCellMap = useMemo(() => {
-    const m = new Map<string, string>();
-    for (const mc of machines) {
-      if (mc.cell_id) m.set(mc.machine_code, mc.cell_id);
-    }
-    return m;
-  }, [machines]);
-
   const cellNameMap = useMemo(() => {
     const m = new Map<string, string>();
     for (const c of cells) m.set(c.id, c.name);
     return m;
   }, [cells]);
 
-  // ── Per-machine BU target lookup ──
-  const machineTargetMap = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const mc of machines) {
-      if (mc.bu_target != null) m.set(mc.machine_code, mc.bu_target);
-    }
-    return m;
-  }, [machines]);
-
   // ── Fleet KPIs ──
   const fleetEff   = useMemo(() => simpleAvg(rows, "avg_efficiency"), [rows]);
   const fleetScrap = useMemo(() => simpleAvg(rows, "avg_scrap"), [rows]);
 
-  // ── Cell stats — production vs target, ranked by actual output ──
+  // ── Cell stats — live in-progress shift, ranked by % of target ──
+  // The leaderboard hangs above the production floor and represents *the
+  // current shift only*, not a multi-day aggregate. Source the numbers
+  // from the bridge's in-memory state (machineStatus) so the bars tick
+  // up live as production accumulates, and divide by the per-machine
+  // single-shift bu_target so 100 % fill = shift target hit.
   const cellStats: CellStats[] = useMemo(() => {
-    const grouped = new Map<string, MachineShiftRow[]>();
-    for (const r of rows) {
-      const cellId = machineCellMap.get(r.machine_code);
-      if (!cellId) continue;
-      if (!grouped.has(cellId)) grouped.set(cellId, []);
-      grouped.get(cellId)!.push(r);
+    if (!bridge) return [];
+    const grouped = new Map<string, typeof machines>();
+    for (const mc of machines) {
+      if (!mc.cell_id) continue;
+      if (!grouped.has(mc.cell_id)) grouped.set(mc.cell_id, []);
+      grouped.get(mc.cell_id)!.push(mc);
     }
     const stats: CellStats[] = [];
-    for (const [cellId, cellRows] of grouped) {
+    for (const [cellId, cellMachines] of grouped) {
       const name = cellNameMap.get(cellId);
       if (!name) continue;
-      const actualBus = cellRows.reduce((s, r) => s + (r.swabs_produced / 7200), 0);
-      const targetBus = cellRows.reduce(
-        (s, r) => s + (machineTargetMap.get(r.machine_code) ?? 0),
-        0,
-      );
+      let actualBus = 0;
+      let targetBus = 0;
+      let effSum = 0, effCount = 0;
+      let scrapSum = 0, scrapCount = 0;
+      for (const reg of cellMachines) {
+        if (reg.bu_target && reg.bu_target > 0) targetBus += reg.bu_target;
+        const bm = bridge.machines[reg.machine_code];
+        if (!bm) continue;
+        const swabs = bm.machineStatus?.ProducedSwabs ?? bm.machineStatus?.Swabs ?? 0;
+        actualBus += swabs / 7200;
+        const eff = bm.machineStatus?.Efficiency;
+        if (typeof eff === "number" && eff > 0) { effSum += eff; effCount++; }
+        const scrap = bm.machineStatus?.Reject;
+        if (typeof scrap === "number") { scrapSum += scrap; scrapCount++; }
+      }
       stats.push({
         cellId,
         cellName:   name,
         actualBus,
         targetBus,
         pctOfTarget: targetBus > 0 ? (actualBus / targetBus) * 100 : null,
-        avgEff:     simpleAvg(cellRows, "avg_efficiency"),
-        avgScrap:   simpleAvg(cellRows, "avg_scrap"),
+        avgEff:     effCount   > 0 ? effSum   / effCount   : null,
+        avgScrap:   scrapCount > 0 ? scrapSum / scrapCount : null,
       });
     }
-    // Rank by actual production output, highest first.
-    stats.sort((a, b) => b.actualBus - a.actualBus);
+    // Rank by % of target — overrunners on top, slowest behind.
+    stats.sort((a, b) => (b.pctOfTarget ?? -1) - (a.pctOfTarget ?? -1));
     return stats;
-  }, [rows, machineCellMap, cellNameMap, machineTargetMap]);
+  }, [bridge, machines, cellNameMap, clock]);
 
   // ── Fleet totals for the header tile ──
   const fleetTotalBu     = useMemo(() => cellStats.reduce((s, c) => s + c.actualBus, 0), [cellStats]);
@@ -543,7 +546,7 @@ export default function LeaderboardPage() {
         <div className="flex items-center gap-3">
           <i className="bi bi-trophy-fill text-yellow-400 text-2xl"></i>
           <h2 className="text-2xl font-bold text-white">Cell Ranking</h2>
-          <span className="text-sm text-gray-500 ml-2">by total BU production</span>
+          <span className="text-sm text-gray-500 ml-2">by % of shift target</span>
           {fleetTotalTarget > 0 && (
             <span className={`ml-4 text-sm font-bold tabular-nums ${progressTextColor(fleetPctOfTarget)}`}>
               Fleet: {fmtN(fleetTotalBu, 0)} / {fmtN(fleetTotalTarget, 0)} BU
