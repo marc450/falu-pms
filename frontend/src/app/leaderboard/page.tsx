@@ -321,7 +321,7 @@ export default function LeaderboardPage() {
     // Rank by % of target — overrunners on top, slowest behind.
     stats.sort((a, b) => (b.pctOfTarget ?? -1) - (a.pctOfTarget ?? -1));
     return stats;
-  }, [bridge, machines, cellNameMap, clock]);
+  }, [bridge, machines, cellNameMap]);
 
   // ── Fleet totals for the header tile ──
   const fleetTotalBu     = useMemo(() => cellStats.reduce((s, c) => s + c.actualBus, 0), [cellStats]);
