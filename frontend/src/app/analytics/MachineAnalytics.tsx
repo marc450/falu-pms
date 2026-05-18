@@ -397,33 +397,50 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
           ))}
         </div>
 
-        {/* BU normalisation switch */}
-        {metric === "bu" && (
-          <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1">
-            <button
-              onClick={() => setNormalized(false)}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                !normalized
-                  ? "bg-gray-600 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-gray-700"
-              }`}
-              title="Actual BU produced during the shift"
-            >
-              Actual
-            </button>
-            <button
-              onClick={() => setNormalized(true)}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                normalized
-                  ? "bg-gray-600 text-white"
-                  : "text-gray-400 hover:text-white hover:bg-gray-700"
-              }`}
-              title="BU extrapolated to a full 12 h shift"
-            >
-              Normalized
-            </button>
-          </div>
-        )}
+        {/* BU normalisation switch + caption that names the basis */}
+        {metric === "bu" && (() => {
+          const shiftMin    = thresholds?.bu.shiftLengthMinutes ?? 720;
+          const downtimeMin = thresholds?.bu.plannedDowntimeMinutes ?? 0;
+          const availableHours = Math.max(0, (shiftMin - downtimeMin) / 60);
+          const availableLabel = `${fmtN(availableHours, availableHours % 1 === 0 ? 0 : 1)} h`;
+          return (
+            <div className="flex flex-col gap-1">
+              <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1">
+                <button
+                  onClick={() => setNormalized(false)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    !normalized
+                      ? "bg-gray-600 text-white"
+                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                  }`}
+                  title="Actual BU produced during the shift"
+                >
+                  Actual
+                </button>
+                <button
+                  onClick={() => setNormalized(true)}
+                  className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                    normalized
+                      ? "bg-gray-600 text-white"
+                      : "text-gray-400 hover:text-white hover:bg-gray-700"
+                  }`}
+                  title={`BU extrapolated to ${availableLabel} of available production time (${fmtN(shiftMin / 60, shiftMin % 60 === 0 ? 0 : 1)} h shift − ${fmtN(downtimeMin / 60, downtimeMin % 60 === 0 ? 0 : 1)} h planned downtime)`}
+                >
+                  Normalized
+                </button>
+              </div>
+              {/* Surface the normalization basis so it's not buried in a tooltip.
+                  Available production time = shift length − planned downtime,
+                  both configurable in Settings. */}
+              {normalized && (
+                <span className="text-[10px] text-gray-400 px-1 leading-tight">
+                  Normalized to <span className="text-gray-200 font-semibold">{availableLabel}</span> of available production time
+                  <span className="text-gray-500"> ({fmtN(shiftMin / 60, shiftMin % 60 === 0 ? 0 : 1)} h shift − {fmtN(downtimeMin / 60, downtimeMin % 60 === 0 ? 0 : 1)} h planned downtime)</span>
+                </span>
+              )}
+            </div>
+          );
+        })()}
 
         {/* Color mode switch */}
         <div className="flex gap-1 bg-gray-800/50 border border-gray-700 rounded-lg p-1">
