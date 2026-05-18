@@ -176,6 +176,80 @@ function RangeTick({ x, y, payload, granularity, angled, tz }: any) {
   );
 }
 
+// Custom Tooltip for the Total BU Output chart. Adds the target line, the
+// delta (actual − target), and a hit/miss indicator next to the
+// per-bucket value so a hover answers "did this day hit?" without
+// requiring the operator to mentally compare against the green/amber/red
+// zone bands. recharts passes `active`, `payload`, `label` automatically.
+function BuTooltipContent({
+  active, payload, label, target, granularity, fmtLabelFn, peerLabel,
+}: {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  active?: boolean; payload?: any[]; label?: string;
+  target: number | null;
+  granularity: "hour" | "day";
+  fmtLabelFn: (key: string) => string;
+  peerLabel?: string;
+}) {
+  if (!active || !payload || payload.length === 0) return null;
+
+  const selfEntry = payload.find(p => p.dataKey === "totalBU");
+  const peerEntry = payload.find(p => p.dataKey === "peerBU");
+  const buNum    = selfEntry ? Number(selfEntry.value ?? 0) : 0;
+  const peerNum  = peerEntry?.value != null ? Number(peerEntry.value) : null;
+  const unit     = granularity === "hour" ? "BUs/h" : "BUs";
+
+  const delta    = target != null ? buNum - target : null;
+  const pct      = target != null && target > 0 ? (buNum / target) * 100 : null;
+  const hit      = delta != null && delta >= 0;
+
+  const fmtBu = (n: number) => n.toLocaleString(undefined, { maximumFractionDigits: 1 });
+
+  return (
+    <div className="bg-gray-800 border border-gray-700 rounded-md text-xs text-gray-200 px-3 py-2 shadow-lg">
+      {label && <div className="text-gray-400 mb-1.5">{fmtLabelFn(label)}</div>}
+
+      {/* Self */}
+      <div className="flex items-baseline gap-2">
+        <span className="text-cyan-300 font-semibold tabular-nums">{fmtBu(buNum)}</span>
+        <span className="text-gray-500">{unit}</span>
+      </div>
+
+      {/* Peer comparison if present */}
+      {peerNum != null && (
+        <div className="flex items-baseline gap-2 mt-0.5">
+          <span className="text-amber-300 tabular-nums">{fmtBu(peerNum)}</span>
+          <span className="text-gray-500">{peerLabel ?? "peers"}</span>
+        </div>
+      )}
+
+      {/* Target + delta */}
+      {target != null && (
+        <div className="mt-2 pt-2 border-t border-gray-700/60">
+          <div className="flex items-baseline gap-2 text-gray-400">
+            <span>Target:</span>
+            <span className="tabular-nums">{fmtBu(target)}</span>
+            <span>{unit}</span>
+          </div>
+          {delta != null && (
+            <div className={`flex items-baseline gap-1.5 mt-0.5 font-semibold ${hit ? "text-green-400" : "text-red-400"}`}>
+              <i className={hit ? "bi bi-check-circle-fill" : "bi bi-arrow-down-circle-fill"} />
+              <span className="tabular-nums">
+                {hit ? "+" : ""}{fmtBu(delta)}
+              </span>
+              {pct != null && (
+                <span className="text-gray-400 font-normal">
+                  ({Math.round(pct)}% of target)
+                </span>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ─── Sub-components ──────────────────────────────────────────────────────────
 
 function KpiTile({ icon, label, value, sub, colorClass, borderClass }: {
@@ -938,11 +1012,20 @@ export function ProductionTrendSection({
                   tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
                 />
                 <Tooltip
-                  contentStyle={TOOLTIP_CONTENT_STYLE}
-                  labelStyle={TOOLTIP_LABEL_STYLE}
-                  itemStyle={TOOLTIP_ITEM_STYLE}
-                  labelFormatter={(l) => fmtLabel(l as string)}
-                  formatter={(v, name) => [`${Number(v ?? 0).toLocaleString()} BUs`, String(name)]}
+                  // Custom content so we can render target + delta + hit/miss
+                  // alongside the per-bucket value. The standard formatter
+                  // only sees one (value, name) tuple at a time and can't
+                  // express "actual vs target" in a single hover panel.
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  content={(props: any) => (
+                    <BuTooltipContent
+                      {...props}
+                      target={buTargetLine}
+                      granularity={granularity}
+                      fmtLabelFn={fmtLabel}
+                      peerLabel={peerLabel}
+                    />
+                  )}
                 />
                 <Line
                   type="monotone"
