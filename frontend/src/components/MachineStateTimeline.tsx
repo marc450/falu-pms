@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 // @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
 import { createPortal } from "react-dom";
 import { format } from "date-fns";
@@ -74,20 +74,13 @@ const TOOLTIP_HEIGHT_EST = 220;
 const TOOLTIP_MARGIN     = 8;
 const TOOLTIP_GAP        = 6;
 
-// Anchor the tooltip's bottom-left corner: it always renders above the
-// timeline strip and its left edge lines up with the start of the hovered
-// block. Clamps to the viewport so it never gets cut off near the top or
-// right edges.
+// Anchor the tooltip's bottom-left corner above the hovered block, with its
+// left edge lined up with the start of the block. Viewport clamping happens
+// after the tooltip mounts (in useLayoutEffect) using the real rendered
+// width, so a small tooltip near the right edge stays aligned with the
+// block instead of being yanked left by a worst-case width estimate.
 function anchor(rect: DOMRect): { x: number; y: number } {
-  let x = rect.left;
-  const maxLeft = window.innerWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN;
-  if (x > maxLeft) x = maxLeft;
-  if (x < TOOLTIP_MARGIN) x = TOOLTIP_MARGIN;
-
-  let y = rect.top - TOOLTIP_GAP;
-  const minBottom = TOOLTIP_MARGIN + TOOLTIP_HEIGHT_EST;
-  if (y < minBottom) y = minBottom;
-  return { x, y };
+  return { x: rect.left, y: rect.top - TOOLTIP_GAP };
 }
 
 function fmtSecs(s: number): string {
@@ -102,6 +95,28 @@ function fmtSecs(s: number): string {
 
 export default function MachineStateTimeline({ rows, errorEvents, errorLookup }: Props) {
   const [hover, setHover] = useState<Hover | null>(null);
+  const tooltipRef = useRef<HTMLDivElement | null>(null);
+
+  // After the tooltip mounts at its ideal anchor point, measure the real
+  // element and only shift it inward when it would actually overflow the
+  // viewport — using a worst-case 320px estimate upfront made narrow
+  // tooltips slide off the start of right-edge blocks even when they
+  // would have fit fine.
+  useLayoutEffect(() => {
+    if (!hover || !tooltipRef.current) return;
+    const w = tooltipRef.current.offsetWidth;
+    const h = tooltipRef.current.offsetHeight;
+    let newX = hover.x;
+    let newY = hover.y;
+    if (newX + w + TOOLTIP_MARGIN > window.innerWidth) {
+      newX = window.innerWidth - w - TOOLTIP_MARGIN;
+    }
+    if (newX < TOOLTIP_MARGIN) newX = TOOLTIP_MARGIN;
+    if (newY - h < TOOLTIP_MARGIN) newY = TOOLTIP_MARGIN + h;
+    if (newX !== hover.x || newY !== hover.y) {
+      setHover(prev => prev ? { ...prev, x: newX, y: newY } : null);
+    }
+  }, [hover]);
 
   const data = useMemo(() => {
     if (rows.length === 0) return null;
@@ -338,6 +353,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
 
       {hover && typeof document !== "undefined" && createPortal(
         <div
+          ref={tooltipRef}
           className="pointer-events-none fixed z-50 px-3 py-2 rounded-md shadow-lg text-xs"
           style={{
             left: hover.x,
