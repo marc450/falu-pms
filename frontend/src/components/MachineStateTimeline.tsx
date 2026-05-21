@@ -41,8 +41,22 @@ type ErrSeg = {
 };
 
 type Hover =
-  | { kind: "bucket"; seg: BucketSeg; x: number; y: number }
-  | { kind: "error";  seg: ErrSeg;    x: number; y: number };
+  | { kind: "bucket"; seg: BucketSeg; x: number; y: number; flipUp: boolean }
+  | { kind: "error";  seg: ErrSeg;    x: number; y: number; flipUp: boolean };
+
+// Worst-case tooltip height; if the strip lands near the viewport bottom we
+// anchor the tooltip above the cursor instead of below.
+const TOOLTIP_HEIGHT_EST = 220;
+const TOOLTIP_MARGIN     = 8;
+
+function anchor(rect: DOMRect): { x: number; y: number; flipUp: boolean } {
+  const x = rect.left + rect.width / 2;
+  const below = rect.bottom + 6;
+  if (below + TOOLTIP_HEIGHT_EST + TOOLTIP_MARGIN > window.innerHeight) {
+    return { x, y: rect.top - 6, flipUp: true };
+  }
+  return { x, y: below, flipUp: false };
+}
 
 function fmtSecs(s: number): string {
   if (s < 60) return `${Math.round(s)}s`;
@@ -135,12 +149,10 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
   const sharePct = (s: number) => totalSec > 0 ? (s / totalSec) * 100 : 0;
 
   const enterBucket = (seg: BucketSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setHover({ kind: "bucket", seg, x: r.left + r.width / 2, y: r.bottom + 6 });
+    setHover({ kind: "bucket", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
   const enterError = (seg: ErrSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    setHover({ kind: "error", seg, x: r.left + r.width / 2, y: r.bottom + 6 });
+    setHover({ kind: "error", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
   const leave = () => setHover(null);
 
@@ -212,7 +224,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           style={{
             left: hover.x,
             top:  hover.y,
-            transform: "translateX(-50%)",
+            transform: hover.flipUp ? "translate(-50%, -100%)" : "translateX(-50%)",
             background: "#111827",
             border: "1px solid #374151",
             color: "#e5e7eb",
