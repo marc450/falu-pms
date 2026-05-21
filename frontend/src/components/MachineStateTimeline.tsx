@@ -53,8 +53,8 @@ type ErrSeg = {
 };
 
 type Hover =
-  | { kind: "bucket"; seg: MergedSeg; x: number; y: number; flipUp: boolean }
-  | { kind: "error";  seg: ErrSeg;    x: number; y: number; flipUp: boolean };
+  | { kind: "bucket"; seg:  MergedSeg; x: number; y: number; flipUp: boolean }
+  | { kind: "error";  segs: ErrSeg[];  x: number; y: number; flipUp: boolean };
 
 const TOOLTIP_MAX_WIDTH  = 320;
 const TOOLTIP_HEIGHT_EST = 220;
@@ -206,7 +206,11 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     setHover({ kind: "bucket", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
   const enterError = (seg: ErrSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
-    setHover({ kind: "error", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
+    // Surface every error overlapping the hovered block's time range so the
+    // tooltip reflects all concurrent failures, not just the sub-lane the
+    // cursor happens to land on.
+    const segs = data.errs.filter(o => o.start < seg.end && o.end > seg.start);
+    setHover({ kind: "error", segs, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
   const leave = () => setHover(null);
 
@@ -291,7 +295,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           {hover.kind === "bucket" ? (
             <BucketTooltip seg={hover.seg} />
           ) : (
-            <ErrorTooltip seg={hover.seg} lookup={errorLookup[hover.seg.ev.error_code]} />
+            <ErrorTooltip segs={hover.segs} errorLookup={errorLookup} />
           )}
         </div>,
         document.body,
@@ -341,16 +345,27 @@ function BucketTooltip({ seg }: { seg: MergedSeg }) {
   );
 }
 
-function ErrorTooltip({ seg, lookup }: { seg: ErrSeg; lookup: PlcErrorCode | undefined }) {
+function ErrorTooltip({ segs, errorLookup }: { segs: ErrSeg[]; errorLookup: Record<string, PlcErrorCode> }) {
+  if (segs.length === 0) return null;
   return (
-    <div>
-      <div className="font-semibold text-red-400">{seg.ev.error_code}</div>
-      {lookup?.description && (
-        <div className="text-gray-200 mt-0.5">{lookup.description}</div>
+    <div className="space-y-2">
+      {segs.length > 1 && (
+        <div className="text-gray-400 text-[11px]">{segs.length} concurrent errors</div>
       )}
-      {lookup?.cause && (
-        <div className="text-gray-400 mt-1">Cause: <span className="text-gray-200">{lookup.cause}</span></div>
-      )}
+      {segs.map((s, i) => {
+        const lookup = errorLookup[s.ev.error_code];
+        return (
+          <div key={i} className={i > 0 ? "pt-2 border-t border-gray-700" : ""}>
+            <div className="font-semibold text-red-400">{s.ev.error_code}</div>
+            {lookup?.description && (
+              <div className="text-gray-200 mt-0.5">{lookup.description}</div>
+            )}
+            {lookup?.cause && (
+              <div className="text-gray-400 mt-1">Cause: <span className="text-gray-200">{lookup.cause}</span></div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
