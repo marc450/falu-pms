@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import {
   validateTabletToken, validateTabletPin,
   fetchTabletCellPeers, fetchMachineErrorEvents, fetchErrorCodeLookup,
+  fetchChecklistForCode,
   getSupabase,
 } from "@/lib/supabase";
 import type { TabletSession, TabletPeerRow, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
@@ -571,13 +572,14 @@ function parseGuidanceSteps(text: string): string[] {
     .filter(line => line.length > 0);
 }
 
-// ─── Operator how-to library ───────────────────────────────────────────
-// Maps a checklist step (matched by regex against the step text) to a
-// per-step illustrated walkthrough. The kiosk shows a "How to check" link
-// next to a step whenever its text matches one of these entries. Adding a
-// new how-to just means extending HOWTOS with a new pattern + content.
-// Image src is left as null for now so the kiosk renders a placeholder
-// frame in place of the eventual photo.
+// ─── Operator checklist types ──────────────────────────────────────────
+// A checklist item is one row in the operator's "what to check" list.
+// When an item has steps, the kiosk renders a "How to check ›" affordance
+// and the operator can tap into a step-by-step walkthrough (image + text
+// per step). Both checklist items and steps come from Supabase
+// (checklist_items + checklist_item_steps); the kiosk falls back to
+// parsing the legacy operator_guidance text when no DB rows exist for
+// the active error code.
 
 type HowToImage = {
   src: string | null;
@@ -589,71 +591,43 @@ type HowTo = {
   images: HowToImage[];
 };
 
-const HOWTOS: { match: RegExp; howto: HowTo }[] = [
-  {
-    match: /cotton.*jam|wattestau|wattest(o|ö)pf/i,
-    howto: {
-      title: "Check if there is a cotton jam",
-      images: [
-        {
-          src: null,
-          description: "Remove the side plates of the cotton feeder and remove dust.",
-        },
-        {
-          src: null,
-          description: "Press this button on the control panel to lift the cotton feeder.",
-        },
-        {
-          src: null,
-          description: "Check the underside of the cotton feeder.",
-        },
-        {
-          src: null,
-          description: "Press this button on the control panel again to lower the cotton feeder.",
-        },
-      ],
-    },
-  },
-];
+type DisplayChecklistItem = {
+  text:  string;
+  howto: HowTo | null;
+};
 
-function findHowTo(stepText: string): HowTo | null {
-  for (const entry of HOWTOS) {
-    if (entry.match.test(stepText)) return entry.howto;
-  }
-  return null;
-}
-
-// Renders the operator-guidance block. One step → plain paragraph (same look
-// as before, smaller type). Multiple steps → numbered list with a badge per
-// row, thin red divider between rows, so the eye can land on a single step
-// instead of scanning a wall of text. When a step has a matching how-to
-// entry the row becomes tappable; the parent renders the walkthrough.
+// Renders the operator-guidance block. One item → plain paragraph (same look
+// as before, smaller type). Multiple items → numbered list with a badge per
+// row, thin red divider between rows, so the eye can land on a single item
+// instead of scanning a wall of text. When an item carries a how-to (DB
+// steps), the row becomes tappable; the parent swaps the body to the
+// walkthrough view.
 function GuidanceBlock({
-  text, label, lang, onStepTap,
+  items, label, lang, onStepTap,
 }: {
-  text:       string;
+  items:      DisplayChecklistItem[];
   label:      string;
   lang:       TabletLang;
   onStepTap?: (howto: HowTo) => void;
 }) {
-  const steps = parseGuidanceSteps(text);
+  if (items.length === 0) return null;
   return (
     <div>
       <p className="text-cyan-300 text-sm uppercase tracking-[0.25em] mb-3">
         {label}
       </p>
-      {steps.length <= 1 ? (
+      {items.length === 1 ? (
         (() => {
-          const single = steps[0] ?? text;
-          const howto  = onStepTap ? findHowTo(single) : null;
-          if (howto && onStepTap) {
+          const item   = items[0];
+          const tappable = Boolean(item.howto && onStepTap);
+          if (tappable) {
             return (
               <button
                 type="button"
-                onClick={() => onStepTap(howto)}
+                onClick={() => onStepTap!(item.howto!)}
                 className="text-left flex items-start gap-4 w-full rounded-2xl px-4 py-3 -mx-4 -my-1 hover:bg-red-950/40 active:scale-[0.99] transition"
               >
-                <p className="flex-1 text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{single}</p>
+                <p className="flex-1 text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{item.text}</p>
                 <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-amber-200 mt-2">
                   {t(lang, "how_to_check")} <i className="bi bi-chevron-right"></i>
                 </span>
@@ -661,14 +635,13 @@ function GuidanceBlock({
             );
           }
           return (
-            <p className="text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{single}</p>
+            <p className="text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{item.text}</p>
           );
         })()
       ) : (
         <ol className="flex flex-col">
-          {steps.map((step, idx) => {
-            const howto    = onStepTap ? findHowTo(step) : null;
-            const tappable = Boolean(howto && onStepTap);
+          {items.map((item, idx) => {
+            const tappable = Boolean(item.howto && onStepTap);
             const rowBase  = `flex items-start gap-5 py-3 ${idx > 0 ? "border-t border-red-300/15" : ""}`;
             const inner = (
               <>
@@ -676,7 +649,7 @@ function GuidanceBlock({
                   {idx + 1}
                 </span>
                 <p className="flex-1 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
-                  {step}
+                  {item.text}
                 </p>
                 {tappable && (
                   <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-amber-200 mt-2">
@@ -689,7 +662,7 @@ function GuidanceBlock({
               <li key={idx} className={rowBase}>
                 <button
                   type="button"
-                  onClick={() => onStepTap!(howto!)}
+                  onClick={() => onStepTap!(item.howto!)}
                   className="flex-1 flex items-start gap-5 text-left rounded-2xl px-2 -mx-2 hover:bg-red-950/40 active:scale-[0.99] transition"
                 >
                   {inner}
@@ -765,9 +738,42 @@ function ErrorCard({ ev, info, lang }: {
   const [mode, setMode]       = useState<"operator" | "tech-pin" | "tech">("operator");
   const [pin,  setPin]        = useState("");
   const [pinErr, setPinErr]   = useState(false);
-  // Active how-to walkthrough, set when the operator taps a tappable step
-  // in the operator guidance list. Cleared by the back button.
+  // Active how-to walkthrough, set when the operator taps a tappable item
+  // in the operator checklist. Cleared by the back button.
   const [howtoStep, setHowtoStep] = useState<HowTo | null>(null);
+  // Operator checklist for this error code. Pulled from Supabase; falls
+  // back to parsing PlcErrorCode.operator_guidance text when no DB rows
+  // exist for the code. Null while loading.
+  const [checklist, setChecklist] = useState<DisplayChecklistItem[] | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const dbItems = await fetchChecklistForCode(ev.error_code);
+        if (!alive) return;
+        if (dbItems.length > 0) {
+          setChecklist(dbItems.map(it => ({
+            text:  it.text,
+            howto: it.steps.length > 0 ? {
+              title:  it.text,
+              images: it.steps.map(s => ({ src: s.image_url, description: s.description })),
+            } : null,
+          })));
+          return;
+        }
+      } catch { /* fall through to text parsing */ }
+      if (!alive) return;
+      const text = info?.operator_guidance ?? "";
+      const parsed = text ? parseGuidanceSteps(text) : [];
+      setChecklist(parsed.map(step => ({ text: step, howto: null })));
+    })();
+    return () => { alive = false; };
+  }, [ev.error_code, info?.operator_guidance]);
+
+  const techItems: DisplayChecklistItem[] = info?.technical_support_guidance
+    ? parseGuidanceSteps(info.technical_support_guidance).map(step => ({ text: step, howto: null }))
+    : [];
 
   const hasTech = !!info?.technical_support_guidance;
 
@@ -833,9 +839,9 @@ function ErrorCard({ ev, info, lang }: {
       )}
       {mode === "operator" && !howtoStep && (
         <>
-          {info?.operator_guidance && (
+          {checklist && checklist.length > 0 && (
             <GuidanceBlock
-              text={info.operator_guidance}
+              items={checklist}
               label={t(lang, "operator_guidance")}
               lang={lang}
               onStepTap={setHowtoStep}
@@ -868,7 +874,7 @@ function ErrorCard({ ev, info, lang }: {
             <i className="bi bi-arrow-left"></i>
             {t(lang, "back_to_operator")}
           </button>
-          <GuidanceBlock text={info.technical_support_guidance} label={t(lang, "tech_support")} lang={lang} />
+          <GuidanceBlock items={techItems} label={t(lang, "tech_support")} lang={lang} />
         </>
       )}
     </article>

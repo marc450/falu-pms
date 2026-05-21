@@ -1566,6 +1566,57 @@ export async function fetchErrorCodeLookup(): Promise<Record<string, PlcErrorCod
   return _errorCodeCache;
 }
 
+// Per-error-code operator checklist with nested how-to steps. Lives in the
+// checklist_items + checklist_item_steps tables (migration 090). When a row
+// exists for an error code the kiosk uses it; otherwise the kiosk falls back
+// to parsing PlcErrorCode.operator_guidance as a numbered text list.
+export interface ChecklistStep {
+  position:    number;
+  description: string;
+  image_url:   string | null;
+}
+
+export interface ChecklistItem {
+  id:       string;
+  position: number;
+  text:     string;
+  steps:    ChecklistStep[];
+}
+
+export async function fetchChecklistForCode(errorCode: string): Promise<ChecklistItem[]> {
+  const sb = getSupabase();
+  const { data: items, error: itemsErr } = await sb
+    .from("checklist_items")
+    .select("id, position, text")
+    .eq("error_code", errorCode)
+    .order("position");
+  if (itemsErr) throw itemsErr;
+  if (!items || items.length === 0) return [];
+
+  const itemIds = items.map((i: { id: string }) => i.id);
+  const { data: steps, error: stepsErr } = await sb
+    .from("checklist_item_steps")
+    .select("id, checklist_item_id, position, description, image_url")
+    .in("checklist_item_id", itemIds)
+    .order("position");
+  if (stepsErr) throw stepsErr;
+
+  const stepsByItem = new Map<string, ChecklistStep[]>();
+  for (const s of steps ?? []) {
+    const row = s as { checklist_item_id: string; position: number; description: string; image_url: string | null };
+    const list = stepsByItem.get(row.checklist_item_id) ?? [];
+    list.push({ position: row.position, description: row.description, image_url: row.image_url });
+    stepsByItem.set(row.checklist_item_id, list);
+  }
+
+  return items.map((item: { id: string; position: number; text: string }) => ({
+    id:       item.id,
+    position: item.position,
+    text:     item.text,
+    steps:    stepsByItem.get(item.id) ?? [],
+  }));
+}
+
 // ============================================
 // DOWNTIME ANALYTICS
 // ============================================
