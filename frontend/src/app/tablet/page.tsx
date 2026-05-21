@@ -699,46 +699,30 @@ function GuidanceBlock({
   );
 }
 
-// Per-step "how to check" walkthrough. Shown in place of the operator
-// guidance when the operator taps a tappable step. Two-column on tablet
-// orientation, single-column on narrow screens. Images fall back to a
-// labelled placeholder frame until real photos are wired in.
-function HowToView({
-  howto, lang, onBack,
-}: {
-  howto:  HowTo;
-  lang:   TabletLang;
-  onBack: () => void;
-}) {
+// Per-step "how to check" walkthrough. Renders only the stacked
+// image+text rows — the back button and title live in the ErrorCard
+// header (they replace the error description in howto mode), so the
+// whole screen reads as a focused walkthrough of the chosen checklist
+// item rather than an addendum below the error.
+function HowToView({ howto }: { howto: HowTo }) {
   return (
-    <div className="flex flex-col gap-6">
-      <button
-        type="button"
-        onClick={onBack}
-        className="self-start inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-red-950/40 border border-red-300/30 text-cyan-200 text-base font-semibold hover:bg-red-950/60 active:scale-95 transition"
-      >
-        <i className="bi bi-arrow-left"></i>
-        {t(lang, "back_to_checklist")}
-      </button>
-      <h3 className="text-3xl md:text-4xl font-bold text-cyan-50 leading-tight">
-        {howto.title}
-      </h3>
-      <ol className="grid grid-cols-1 md:grid-cols-2 gap-6">
-        {howto.images.map((img, idx) => (
-          <li key={idx} className="flex flex-col gap-3">
-            <div className="flex items-center gap-3">
-              <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-red-950/60 border border-red-300/30 text-cyan-200 text-xl font-semibold leading-none">
-                {idx + 1}
-              </span>
-              <p className="flex-1 text-xl md:text-2xl font-semibold text-cyan-50 leading-[1.25]">
-                {img.description}
-              </p>
-            </div>
+    <ol className="flex flex-col gap-6">
+      {howto.images.map((img, idx) => (
+        <li key={idx} className="flex items-center gap-6">
+          <div className="basis-1/2 shrink-0">
             <HowToImageFrame src={img.src} alt={img.description} />
-          </li>
-        ))}
-      </ol>
-    </div>
+          </div>
+          <div className="basis-1/2 flex items-start gap-4">
+            <span className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-red-950/60 border border-red-300/30 text-cyan-200 text-2xl font-semibold leading-none">
+              {idx + 1}
+            </span>
+            <p className="flex-1 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
+              {img.description}
+            </p>
+          </div>
+        </li>
+      ))}
+    </ol>
   );
 }
 
@@ -805,24 +789,46 @@ function ErrorCard({ ev, info, lang }: {
     // guidance section — request from the floor: "increase the spacing
     // between error name and the guidance instructions".
     <article className="flex flex-col gap-10">
-      {/* Header */}
-      <div className="flex items-baseline justify-between gap-4">
-        <div>
-          <p className="text-red-300/80 text-xs uppercase tracking-[0.25em] mb-1">
-            {t(lang, "error_header")}
-          </p>
-          <h2 className="text-4xl md:text-5xl font-bold text-red-50 leading-tight">
-            {info?.description ?? ev.error_code}
-          </h2>
+      {/* Header — replaced by the back button + checklist-item title
+          when the operator drills into a how-to walkthrough. */}
+      {mode === "operator" && howtoStep ? (
+        <div className="flex flex-col gap-6">
+          <button
+            type="button"
+            onClick={() => setHowtoStep(null)}
+            className="self-start inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-red-950/40 border border-red-300/30 text-cyan-200 text-base font-semibold hover:bg-red-950/60 active:scale-95 transition"
+          >
+            <i className="bi bi-arrow-left"></i>
+            {t(lang, "back_to_checklist")}
+          </button>
+          <div className="flex items-baseline justify-between gap-4">
+            <h2 className="text-4xl md:text-5xl font-bold text-cyan-50 leading-tight">
+              {howtoStep.title}
+            </h2>
+            <span className="shrink-0 text-sm font-mono font-semibold text-red-200/70 bg-red-950/60 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
+              {ev.error_code}
+            </span>
+          </div>
         </div>
-        <span className="shrink-0 text-sm font-mono font-semibold text-red-200/70 bg-red-950/60 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
-          {ev.error_code}
-        </span>
-      </div>
+      ) : (
+        <div className="flex items-baseline justify-between gap-4">
+          <div>
+            <p className="text-red-300/80 text-xs uppercase tracking-[0.25em] mb-1">
+              {t(lang, "error_header")}
+            </p>
+            <h2 className="text-4xl md:text-5xl font-bold text-red-50 leading-tight">
+              {info?.description ?? ev.error_code}
+            </h2>
+          </div>
+          <span className="shrink-0 text-sm font-mono font-semibold text-red-200/70 bg-red-950/60 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
+            {ev.error_code}
+          </span>
+        </div>
+      )}
 
       {/* Body — switches by mode */}
       {mode === "operator" && howtoStep && (
-        <HowToView howto={howtoStep} lang={lang} onBack={() => setHowtoStep(null)} />
+        <HowToView howto={howtoStep} />
       )}
       {mode === "operator" && !howtoStep && (
         <>
