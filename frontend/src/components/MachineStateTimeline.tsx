@@ -25,6 +25,10 @@ const COLORS = {
   empty:   "#1f2937",
 };
 
+// Diagonal stripe pattern used for "no signal" buckets — windows where the
+// machine sent no readings, so we can't tell whether it was running or not.
+const EMPTY_PATTERN = "repeating-linear-gradient(45deg, #4b5563 0 5px, #1f2937 5px 10px)";
+
 type State = "running" | "idle" | "empty";
 
 // A merged background segment: adjacent same-state buckets coalesce into one
@@ -200,6 +204,9 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           <Legend color={COLORS.running} label={`Running ${sharePct(summary.running).toFixed(0)}%`} />
           <Legend color={COLORS.idle}    label={`Idle ${sharePct(summary.idle).toFixed(0)}%`} />
           <Legend color={COLORS.error}   label={`Error ${sharePct(summary.error).toFixed(0)}%`} />
+          {summary.empty > 0 && (
+            <Legend pattern={EMPTY_PATTERN} label={`No signal ${sharePct(summary.empty).toFixed(0)}%`} />
+          )}
         </div>
       </div>
 
@@ -214,8 +221,8 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
             style={{
               left:  `${pct(seg.start)}%`,
               width: `${pct(seg.end) - pct(seg.start)}%`,
-              background: seg.state === "empty" ? "transparent" : COLORS[seg.state],
-              opacity: 0.9,
+              background: seg.state === "empty" ? EMPTY_PATTERN : COLORS[seg.state],
+              opacity: seg.state === "empty" ? 0.7 : 0.9,
             }}
             onMouseEnter={enterBucket(seg)}
             onMouseLeave={leave}
@@ -279,18 +286,22 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
   );
 }
 
-function Legend({ color, label }: { color: string; label: string }) {
+function Legend({ color, pattern, label }: { color?: string; pattern?: string; label: string }) {
   return (
     <span className="flex items-center gap-1.5">
-      <span className="inline-block w-2.5 h-2.5 rounded-sm" style={{ background: color }} />
+      <span
+        className="inline-block w-2.5 h-2.5 rounded-sm"
+        style={{ background: pattern ?? color, backgroundSize: pattern ? "5px 5px" : undefined }}
+      />
       {label}
     </span>
   );
 }
 
 function BucketTooltip({ seg }: { seg: MergedSeg }) {
-  const label = seg.state === "running" ? "Running" : seg.state === "idle" ? "Idle" : "No data";
-  const color = seg.state === "running" ? COLORS.running : seg.state === "idle" ? COLORS.idle : "#6b7280";
+  const isEmpty = seg.state === "empty";
+  const label = seg.state === "running" ? "Running" : seg.state === "idle" ? "Idle" : "No signal";
+  const color = seg.state === "running" ? COLORS.running : seg.state === "idle" ? COLORS.idle : "#9ca3af";
   return (
     <div>
       <div className="text-gray-400 mb-1">
@@ -298,13 +309,20 @@ function BucketTooltip({ seg }: { seg: MergedSeg }) {
         <span className="text-gray-500"> · {fmtSecs((seg.end - seg.start) / 1000)}</span>
       </div>
       <div className="font-semibold" style={{ color }}>{label}</div>
-      <div className="text-gray-400 mt-1 space-y-0.5">
-        <div>Production: <span className="text-gray-200">{fmtSecs(seg.productionSeconds)}</span></div>
-        <div>Idle: <span className="text-gray-200">{fmtSecs(Math.max(0, seg.idleSeconds - seg.errorSeconds))}</span></div>
-        {seg.errorSeconds > 0 && (
-          <div>Error: <span className="text-gray-200">{fmtSecs(seg.errorSeconds)}</span></div>
-        )}
-      </div>
+      {isEmpty ? (
+        <div className="text-gray-400 mt-1">
+          No PLC readings arrived in this window — likely a brief network or
+          bridge gap. The machine state is unknown for these minutes.
+        </div>
+      ) : (
+        <div className="text-gray-400 mt-1 space-y-0.5">
+          <div>Production: <span className="text-gray-200">{fmtSecs(seg.productionSeconds)}</span></div>
+          <div>Idle: <span className="text-gray-200">{fmtSecs(Math.max(0, seg.idleSeconds - seg.errorSeconds))}</span></div>
+          {seg.errorSeconds > 0 && (
+            <div>Error: <span className="text-gray-200">{fmtSecs(seg.errorSeconds)}</span></div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
