@@ -826,6 +826,7 @@ export function ProductionTrendSection({
   peerCount = 0,
   errorEvents = [],
   errorLookup = {},
+  showUptimeChart = true,
 }: {
   rows: FleetTrendRow[];
   granularity: "hour" | "day";
@@ -846,6 +847,10 @@ export function ProductionTrendSection({
   peerCount?: number;
   errorEvents?: ErrorEvent[];
   errorLookup?: Record<string, PlcErrorCode>;
+  // When false, the Avg Uptime line chart is suppressed. The Machine Monitor
+  // page hides it in the intraday view because the new state timeline below
+  // replaces the same information in a more actionable form.
+  showUptimeChart?: boolean;
 }) {
   // Factory timezone — used by every label/tooltip formatter on this chart
   // so the X-axis reads in the operator's wall-clock time, not the browser's.
@@ -1268,6 +1273,7 @@ export function ProductionTrendSection({
             </ResponsiveContainer>
           )}
         </ChartCard>
+        {showUptimeChart && (
         <ChartCard
           title={`Avg Uptime ${chartTitle}`}
           legend={
@@ -1365,6 +1371,7 @@ export function ProductionTrendSection({
             </ResponsiveContainer>
           )}
         </ChartCard>
+        )}
       </div>
     </>
   );

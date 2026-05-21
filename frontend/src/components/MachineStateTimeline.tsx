@@ -195,7 +195,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       </div>
 
       <div
-        className="relative h-10 rounded overflow-hidden"
+        className="relative h-24 rounded overflow-hidden"
         style={{ background: COLORS.empty }}
       >
         {data.segments.map((seg, i) => (

@@ -510,6 +510,7 @@ function ProductionContent() {
             peerCount={peerCount}
             errorEvents={errorEvents}
             errorLookup={errorLookup}
+            showUptimeChart={trendGranularity !== "hour"}
           />
 
           {trendGranularity === "hour" && trendRows.length > 0 && (
