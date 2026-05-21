@@ -261,28 +261,6 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
 
   const pct = (t: number) => ((t - data.firstMs) / data.totalMs) * 100;
 
-  // Summary breakdown across the whole window. Walk the visual list once so
-  // the legend percentages line up exactly with what's rendered on the
-  // strip — every second is accounted for in exactly one slice.
-  const summary = data.visual.reduce(
-    (acc, v) => {
-      const span = (v.seg.end - v.seg.start) / 1000;
-      if (v.kind === "error") {
-        acc.error += span;
-      } else if (v.seg.state === "empty") {
-        acc.empty += span;
-      } else if (v.seg.state === "running") {
-        acc.running += span;
-      } else {
-        acc.idle += span;
-      }
-      return acc;
-    },
-    { running: 0, idle: 0, error: 0, empty: 0 },
-  );
-  const totalSec = summary.running + summary.idle + summary.error + summary.empty;
-  const sharePct = (s: number) => totalSec > 0 ? (s / totalSec) * 100 : 0;
-
   const enterBucket = (seg: MergedSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
     setHover({ kind: "bucket", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
@@ -293,16 +271,8 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
-      <div className="flex items-baseline justify-between mb-3">
+      <div className="mb-3">
         <h3 className="text-sm font-semibold text-white">Machine State Timeline</h3>
-        <div className="flex gap-3 text-[11px] text-gray-400">
-          <Legend color={COLORS.running} label={`Running ${sharePct(summary.running).toFixed(0)}%`} />
-          <Legend color={COLORS.idle}    label={`Idle ${sharePct(summary.idle).toFixed(0)}%`} />
-          <Legend color={COLORS.error}   label={`Error ${sharePct(summary.error).toFixed(0)}%`} />
-          {summary.empty > 0 && (
-            <Legend pattern={EMPTY_PATTERN} label={`No signal ${sharePct(summary.empty).toFixed(0)}%`} />
-          )}
-        </div>
       </div>
 
       <div
@@ -385,18 +355,6 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
         document.body,
       )}
     </div>
-  );
-}
-
-function Legend({ color, pattern, label }: { color?: string; pattern?: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1.5">
-      <span
-        className="inline-block w-2.5 h-2.5 rounded-sm"
-        style={{ background: pattern ?? color, backgroundSize: pattern ? "5px 5px" : undefined }}
-      />
-      {label}
-    </span>
   );
 }
 
