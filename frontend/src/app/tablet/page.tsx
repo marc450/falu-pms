@@ -708,8 +708,11 @@ function HowToView({ howto }: { howto: HowTo }) {
 // Rewrites a public Supabase Storage URL to go through the image
 // transformation endpoint, which serves a resized + recompressed copy.
 // We clamp to roughly the rendered size (half the tablet width at 2x)
-// so we stop shipping 5+ MB camera JPGs over the wire. Non-Supabase or
-// already-transformed URLs are returned untouched.
+// so we stop shipping 5+ MB camera JPGs over the wire. format=webp
+// forces a full re-encode which, in our testing, also bakes in the
+// EXIF orientation that the default transform sometimes drops —
+// without this, landscape phone JPGs (which store raw portrait pixels
+// + an EXIF rotate-90 tag) come out rotated on the kiosk.
 const KIOSK_IMAGE_WIDTH = 1200;
 const KIOSK_IMAGE_QUALITY = 75;
 
@@ -720,7 +723,7 @@ function optimizeKioskImageUrl(url: string | null): string | null {
   if (!url.includes(objectPath)) return url;
   const rewritten = url.replace(objectPath, renderPath);
   const sep = rewritten.includes("?") ? "&" : "?";
-  return `${rewritten}${sep}width=${KIOSK_IMAGE_WIDTH}&quality=${KIOSK_IMAGE_QUALITY}`;
+  return `${rewritten}${sep}width=${KIOSK_IMAGE_WIDTH}&quality=${KIOSK_IMAGE_QUALITY}&format=webp`;
 }
 
 function HowToImageFrame({ src, alt }: { src: string | null; alt: string }) {
