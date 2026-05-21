@@ -66,31 +66,27 @@ type VisualSeg =
   | { kind: "error";  seg: ErrorSeg };
 
 type Hover =
-  | { kind: "bucket"; seg: MergedSeg; x: number; y: number; flipUp: boolean }
-  | { kind: "error";  seg: ErrorSeg; x: number; y: number; flipUp: boolean };
+  | { kind: "bucket"; seg: MergedSeg; x: number; y: number }
+  | { kind: "error";  seg: ErrorSeg;  x: number; y: number };
 
 const TOOLTIP_MAX_WIDTH  = 320;
 const TOOLTIP_HEIGHT_EST = 220;
 const TOOLTIP_MARGIN     = 8;
+const TOOLTIP_GAP        = 6;
 
-// Returns the LEFT edge of the tooltip (not the centre) so we can keep its
-// natural width even when the hovered bar is near a viewport edge. Ideal
-// centre is over the bar; if that would push the tooltip off-screen on the
-// right or left, we clamp the left edge so the whole tooltip stays visible.
-// Vertical: flip above the bar when there's no room below.
-function anchor(rect: DOMRect): { x: number; y: number; flipUp: boolean } {
-  const idealCentre = rect.left + rect.width / 2;
-  const maxLeft     = window.innerWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN;
-  const x = Math.max(
-    TOOLTIP_MARGIN,
-    Math.min(maxLeft, idealCentre - TOOLTIP_MAX_WIDTH / 2),
-  );
+// Anchor the tooltip's bottom-left corner: it always renders above the
+// timeline strip and starts at the right edge of the hovered block. Clamps
+// to the viewport so it never gets cut off near the top or right edges.
+function anchor(rect: DOMRect): { x: number; y: number } {
+  let x = rect.right + TOOLTIP_GAP;
+  const maxLeft = window.innerWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN;
+  if (x > maxLeft) x = maxLeft;
+  if (x < TOOLTIP_MARGIN) x = TOOLTIP_MARGIN;
 
-  const below = rect.bottom + 6;
-  if (below + TOOLTIP_HEIGHT_EST + TOOLTIP_MARGIN > window.innerHeight) {
-    return { x, y: rect.top - 6, flipUp: true };
-  }
-  return { x, y: below, flipUp: false };
+  let y = rect.top - TOOLTIP_GAP;
+  const minBottom = TOOLTIP_MARGIN + TOOLTIP_HEIGHT_EST;
+  if (y < minBottom) y = minBottom;
+  return { x, y };
 }
 
 function fmtSecs(s: number): string {
@@ -345,7 +341,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           style={{
             left: hover.x,
             top:  hover.y,
-            transform: hover.flipUp ? "translateY(-100%)" : undefined,
+            transform: "translateY(-100%)",
             background: "#111827",
             border: "1px solid #374151",
             color: "#e5e7eb",
