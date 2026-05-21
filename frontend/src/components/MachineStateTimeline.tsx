@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 // @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
 import { createPortal } from "react-dom";
 import { format } from "date-fns";
@@ -25,11 +25,6 @@ const COLORS = {
   empty:   "#1f2937",
 };
 
-const LABEL_LANE_HEIGHT = 14;
-const LABEL_CHAR_PX     = 6.5;
-const LABEL_PADDING_PX  = 8;
-const MIN_LANE_GAP_PX   = 4;
-
 type State = "running" | "idle" | "empty";
 
 // A merged background segment: adjacent same-state buckets coalesce into one
@@ -47,13 +42,6 @@ type ErrSeg = {
   ev: ErrorEvent;
   start: number;
   end: number;
-};
-
-type PackedLabel = {
-  ev: ErrorEvent;
-  centerPx: number;
-  widthPx: number;
-  lane: number;
 };
 
 type Hover =
@@ -82,57 +70,8 @@ function fmtSecs(s: number): string {
   return mm > 0 ? `${h}h ${mm}m` : `${h}h`;
 }
 
-// Place labels in horizontal lanes so adjacent ones don't overlap. Lower lane
-// index = closer to the strip (= shorter leader line). Mirrors the bracket
-// packing logic in ProductionTrend.tsx, simplified for percent-based input.
-function packLabels(events: ErrSeg[], firstMs: number, totalMs: number, containerPx: number): { items: PackedLabel[]; laneCount: number } {
-  if (containerPx <= 0 || events.length === 0) return { items: [], laneCount: 0 };
-  const sorted = [...events].sort((a, b) => a.start - b.start);
-  const lanes: number[] = [];
-  const items: PackedLabel[] = [];
-  for (const e of sorted) {
-    const centerMs = (e.start + e.end) / 2;
-    const centerPx = ((centerMs - firstMs) / totalMs) * containerPx;
-    const widthPx  = e.ev.error_code.length * LABEL_CHAR_PX + LABEL_PADDING_PX;
-    const startPx  = centerPx - widthPx / 2;
-    const endPx    = centerPx + widthPx / 2;
-    let lane = -1;
-    for (let i = 0; i < lanes.length; i++) {
-      if (lanes[i] + MIN_LANE_GAP_PX <= startPx) {
-        lane = i;
-        lanes[i] = endPx;
-        break;
-      }
-    }
-    if (lane === -1) {
-      lanes.push(endPx);
-      lane = lanes.length - 1;
-    }
-    items.push({ ev: e.ev, centerPx, widthPx, lane });
-  }
-  return { items, laneCount: lanes.length };
-}
-
-// Hook: returns the live pixel width of the referenced element.
-function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
-  const ref = useRef<T | null>(null);
-  const [w, setW] = useState(0);
-  useLayoutEffect(() => {
-    if (!ref.current) return;
-    const el = ref.current;
-    const update = () => setW(el.getBoundingClientRect().width);
-    update();
-    if (typeof ResizeObserver === "undefined") return;
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
-  return [ref, w];
-}
-
 export default function MachineStateTimeline({ rows, errorEvents, errorLookup }: Props) {
   const [hover, setHover] = useState<Hover | null>(null);
-  const [stripRef, stripWidthPx] = useElementWidth<HTMLDivElement>();
 
   const data = useMemo(() => {
     if (rows.length === 0) return null;
@@ -144,7 +83,6 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     const endMs   = lastMs + bucketMs;
     const totalMs = endMs - firstMs;
 
-    // Classify each raw bucket, then merge consecutive same-state buckets.
     const raw = rows.map(r => {
       const start = parseBucketKey(r.date).getTime();
       const end   = start + bucketMs;
@@ -183,8 +121,6 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       })
       .filter(s => s.end > s.start);
 
-    // Top-of-hour ticks (factory wall clock — bucket keys are stored UTC-naive
-    // so getUTCMinutes()===0 lands on factory hour boundaries).
     const hourTicks = rows
       .map(r => parseBucketKey(r.date).getTime())
       .filter(t => new Date(t).getUTCMinutes() === 0);
@@ -192,33 +128,14 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     const tickStep = Math.max(1, Math.ceil(hourTicks.length / MAX_LABELS));
     const tickPositions = hourTicks.filter((_, i) => i % tickStep === 0);
 
-    // Rank errors by total downtime for the chip summary.
-    const byCode = new Map<string, { code: string; count: number; totalSec: number }>();
-    for (const e of errs) {
-      const code = e.ev.error_code;
-      const cur  = byCode.get(code) ?? { code, count: 0, totalSec: 0 };
-      cur.count    += 1;
-      cur.totalSec += (e.end - e.start) / 1000;
-      byCode.set(code, cur);
-    }
-    const errorRanking = Array.from(byCode.values()).sort((a, b) => b.totalSec - a.totalSec);
-
-    return { firstMs, endMs, totalMs, segments: merged, errs, tickPositions, errorRanking };
+    return { firstMs, endMs, totalMs, segments: merged, errs, tickPositions };
   }, [rows, errorEvents]);
-
-  // Per-render pack: depends on container width, so it has to live outside the
-  // data useMemo (or take width as an input). Keep cheap; runs on every resize.
-  const labelPack = useMemo(() => {
-    if (!data) return { items: [], laneCount: 0 };
-    return packLabels(data.errs, data.firstMs, data.totalMs, stripWidthPx);
-  }, [data, stripWidthPx]);
 
   if (!data) {
     return <div className="text-gray-500 text-sm py-4">No state data for this period.</div>;
   }
 
   const pct = (t: number) => ((t - data.firstMs) / data.totalMs) * 100;
-  const pxToPct = (px: number) => stripWidthPx > 0 ? (px / stripWidthPx) * 100 : 0;
 
   const summary = data.segments.reduce(
     (acc, s) => {
@@ -246,10 +163,6 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
   };
   const leave = () => setHover(null);
 
-  const labelAreaHeight = labelPack.laneCount > 0
-    ? labelPack.laneCount * LABEL_LANE_HEIGHT + 6
-    : 0;
-
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
       <div className="flex items-baseline justify-between mb-3">
@@ -261,49 +174,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
         </div>
       </div>
 
-      {/* Error code labels above the strip, packed into lanes with leader
-          lines down to each error block. Only renders once we've measured
-          the container width (so packing has real pixel widths to work with). */}
-      {labelAreaHeight > 0 && stripWidthPx > 0 && (
-        <div
-          className="relative"
-          style={{ height: labelAreaHeight, marginBottom: 2 }}
-        >
-          {labelPack.items.map((item, i) => {
-            const labelBottomPx = (item.lane + 1) * LABEL_LANE_HEIGHT;
-            const leaderHeight  = labelAreaHeight - labelBottomPx;
-            return (
-              <span key={`lbl-${i}`}>
-                <span
-                  className="absolute text-[10px] font-semibold text-red-400 whitespace-nowrap select-none"
-                  style={{
-                    left: `${pxToPct(item.centerPx)}%`,
-                    top:  item.lane * LABEL_LANE_HEIGHT,
-                    transform: "translateX(-50%)",
-                    lineHeight: `${LABEL_LANE_HEIGHT}px`,
-                  }}
-                >
-                  {item.ev.error_code}
-                </span>
-                <span
-                  className="absolute"
-                  style={{
-                    left: `${pxToPct(item.centerPx)}%`,
-                    top:  labelBottomPx,
-                    width: 1,
-                    height: leaderHeight,
-                    background: "rgba(239, 68, 68, 0.55)",
-                  }}
-                />
-              </span>
-            );
-          })}
-        </div>
-      )}
-
-      {/* The strip itself. */}
       <div
-        ref={stripRef}
         className="relative h-10 rounded overflow-hidden"
         style={{ background: COLORS.empty }}
       >
@@ -339,7 +210,6 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
         })}
       </div>
 
-      {/* Hour ticks. */}
       <div className="relative h-4 mt-1 text-[10px] text-gray-500">
         {data.tickPositions.map((t, i) => (
           <span
@@ -351,28 +221,6 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           </span>
         ))}
       </div>
-
-      {/* Ranked error summary — turns the colored blocks into an action list. */}
-      {data.errorRanking.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-2">
-          {data.errorRanking.map(r => {
-            const desc = errorLookup[r.code]?.description;
-            return (
-              <span
-                key={r.code}
-                className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-red-100"
-                style={{ background: "rgba(220, 38, 38, 0.18)", border: "1px solid rgba(220, 38, 38, 0.4)" }}
-                title={desc ?? ""}
-              >
-                <span className="font-semibold">{r.code}</span>
-                {desc && <span className="text-red-200/80 truncate max-w-[180px]">{desc}</span>}
-                <span className="text-red-200/70">× {r.count}</span>
-                <span className="text-red-200/70">· {fmtSecs(r.totalSec)}</span>
-              </span>
-            );
-          })}
-        </div>
-      )}
 
       {hover && typeof document !== "undefined" && createPortal(
         <div
@@ -430,23 +278,14 @@ function BucketTooltip({ seg }: { seg: MergedSeg }) {
 }
 
 function ErrorTooltip({ seg, lookup }: { seg: ErrSeg; lookup: PlcErrorCode | undefined }) {
-  const ongoing = !seg.ev.ended_at;
-  const durSec  = Math.max(0, (seg.end - seg.start) / 1000);
   return (
     <div>
       <div className="font-semibold text-red-400">{seg.ev.error_code}</div>
       {lookup?.description && (
         <div className="text-gray-200 mt-0.5">{lookup.description}</div>
       )}
-      <div className="text-gray-400 mt-1">
-        {format(new Date(seg.start), "HH:mm:ss")} – {ongoing ? "ongoing" : format(new Date(seg.end), "HH:mm:ss")}
-      </div>
-      <div className="text-gray-400">Duration: <span className="text-gray-200">{fmtSecs(durSec)}</span></div>
       {lookup?.cause && (
         <div className="text-gray-400 mt-1">Cause: <span className="text-gray-200">{lookup.cause}</span></div>
-      )}
-      {lookup?.operator_guidance && (
-        <div className="text-gray-400 mt-1">Operator: <span className="text-gray-200">{lookup.operator_guidance}</span></div>
       )}
     </div>
   );
