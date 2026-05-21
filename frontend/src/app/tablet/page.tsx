@@ -708,18 +708,16 @@ function HowToView({ howto }: { howto: HowTo }) {
   return (
     <ol className="flex flex-col gap-6">
       {howto.images.map((img, idx) => (
-        <li key={idx} className="flex items-center gap-6">
-          <div className="basis-1/2 shrink-0">
+        <li key={idx} className="flex items-start gap-6">
+          <div className="basis-1/2 shrink-0 relative">
             <HowToImageFrame src={img.src} alt={img.description} />
-          </div>
-          <div className="basis-1/2 flex items-start gap-4">
-            <span className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-red-950/60 border border-red-300/30 text-cyan-200 text-2xl font-semibold leading-none">
+            <span className="absolute top-3 left-3 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-red-950/80 border border-red-300/40 text-cyan-200 text-2xl font-semibold leading-none shadow-lg">
               {idx + 1}
             </span>
-            <p className="flex-1 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
-              {img.description}
-            </p>
           </div>
+          <p className="basis-1/2 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
+            {img.description}
+          </p>
         </li>
       ))}
     </ol>
@@ -801,14 +799,9 @@ function ErrorCard({ ev, info, lang }: {
             <i className="bi bi-arrow-left"></i>
             {t(lang, "back_to_checklist")}
           </button>
-          <div className="flex items-baseline justify-between gap-4">
-            <h2 className="text-4xl md:text-5xl font-bold text-cyan-50 leading-tight">
-              {howtoStep.title}
-            </h2>
-            <span className="shrink-0 text-sm font-mono font-semibold text-red-200/70 bg-red-950/60 border border-red-300/30 rounded-full px-3 py-1 tracking-wider">
-              {ev.error_code}
-            </span>
-          </div>
+          <h2 className="text-4xl md:text-5xl font-bold text-cyan-50 leading-tight">
+            {howtoStep.title}
+          </h2>
         </div>
       ) : (
         <div className="flex items-baseline justify-between gap-4">
