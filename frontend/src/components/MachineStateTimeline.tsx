@@ -42,6 +42,8 @@ type ErrSeg = {
   ev: ErrorEvent;
   start: number;
   end: number;
+  lane: number;       // sub-lane within the strip (0 = topmost)
+  laneCount: number;  // total lanes needed across the whole strip
 };
 
 type Hover =
@@ -113,13 +115,31 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       }
     }
 
-    const errs: ErrSeg[] = errorEvents
+    // Time-overlap lane packing so two errors active at the same time render
+    // as stacked sub-strips instead of one painting over the other — same
+    // intent as the existing error-bracket layer below the line chart.
+    const rawErrs = errorEvents
       .map(ev => {
         const s = new Date(ev.started_at).getTime();
         const e = ev.ended_at ? new Date(ev.ended_at).getTime() : Date.now();
         return { ev, start: Math.max(firstMs, s), end: Math.min(endMs, e) };
       })
-      .filter(s => s.end > s.start);
+      .filter(s => s.end > s.start)
+      .sort((a, b) => a.start - b.start);
+    const laneEnds: number[] = [];
+    const placed: { ev: ErrorEvent; start: number; end: number; lane: number }[] = [];
+    for (const e of rawErrs) {
+      let lane = laneEnds.findIndex(end => end <= e.start);
+      if (lane === -1) {
+        laneEnds.push(e.end);
+        lane = laneEnds.length - 1;
+      } else {
+        laneEnds[lane] = e.end;
+      }
+      placed.push({ ...e, lane });
+    }
+    const laneCount = Math.max(1, laneEnds.length);
+    const errs: ErrSeg[] = placed.map(p => ({ ...p, laneCount }));
 
     const hourTicks = rows
       .map(r => parseBucketKey(r.date).getTime())
@@ -193,14 +213,17 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           />
         ))}
         {data.errs.map((seg, i) => {
-          const w = pct(seg.end) - pct(seg.start);
+          const w        = pct(seg.end) - pct(seg.start);
+          const laneFrac = 1 / seg.laneCount;
           return (
             <div
               key={`e-${i}`}
-              className="absolute top-0 bottom-0 cursor-pointer"
+              className="absolute cursor-pointer"
               style={{
-                left:  `${pct(seg.start)}%`,
-                width: `${Math.max(w, 0.15)}%`,
+                left:   `${pct(seg.start)}%`,
+                width:  `${Math.max(w, 0.15)}%`,
+                top:    `${seg.lane * laneFrac * 100}%`,
+                height: `${laneFrac * 100}%`,
                 background: COLORS.error,
               }}
               onMouseEnter={enterError(seg)}
