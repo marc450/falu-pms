@@ -434,20 +434,36 @@ function ProductionContent() {
   return (
     <div>
       {/* Header */}
-      <div className="flex justify-between items-center mb-6">
-        <div className="flex items-center gap-3">
-          <button
-            onClick={() => router.push("/")}
-            className="px-3 py-1.5 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors text-sm"
-          >
-            <i className="bi bi-arrow-left mr-1"></i> Back
-          </button>
-          <h2 className="text-xl font-bold text-white">
-            Machine Monitor — <span className="text-cyan-400">{displayName ?? machineName}</span>
-            {displayName && (
-              <span className="text-gray-500 text-sm font-normal ml-2">({machineName})</span>
-            )}
-          </h2>
+      <div className="flex justify-between items-start mb-6 gap-6">
+        <div className="flex flex-col gap-3">
+          <div className="flex items-center gap-3">
+            <button
+              onClick={() => router.push("/")}
+              className="px-3 py-1.5 bg-gray-700 text-gray-300 rounded-lg hover:bg-gray-600 transition-colors text-sm"
+            >
+              <i className="bi bi-arrow-left mr-1"></i> Back
+            </button>
+            <h2 className="text-xl font-bold text-white">
+              Machine Monitor — <span className="text-cyan-400">{displayName ?? machineName}</span>
+              {displayName && (
+                <span className="text-gray-500 text-sm font-normal ml-2">({machineName})</span>
+              )}
+            </h2>
+          </div>
+          {thresholds && (
+            <PeriodSelector
+              activePresetId={trendPresetId}
+              dateRange={trendRange}
+              onPresetSelect={(preset: Preset) => {
+                setTrendPresetId(preset.id);
+                setTrendRange(preset.getRange(factoryTz));
+              }}
+              onCustomRange={(range) => {
+                setTrendPresetId("custom");
+                setTrendRange(range);
+              }}
+            />
+          )}
         </div>
         <span className="bg-cyan-900/30 text-cyan-400 text-xs px-3 py-1.5 rounded-full">
           Live Data
@@ -467,21 +483,7 @@ function ProductionContent() {
       {/* ── Production Trend (per-machine history) ── */}
       {thresholds && (
         <div className="mt-8">
-          <div className="flex justify-between items-center mb-4 gap-4">
-            <h3 className="text-lg font-semibold text-white">Production Trend</h3>
-            <PeriodSelector
-              activePresetId={trendPresetId}
-              dateRange={trendRange}
-              onPresetSelect={(preset: Preset) => {
-                setTrendPresetId(preset.id);
-                setTrendRange(preset.getRange(factoryTz));
-              }}
-              onCustomRange={(range) => {
-                setTrendPresetId("custom");
-                setTrendRange(range);
-              }}
-            />
-          </div>
+          <h3 className="text-lg font-semibold text-white mb-4">Production Trend</h3>
           <ProductionTrendSection
             rows={trendRows}
             granularity={trendGranularity}
