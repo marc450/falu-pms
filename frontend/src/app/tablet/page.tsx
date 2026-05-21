@@ -605,7 +605,7 @@ const HOWTOS: { match: RegExp; howto: HowTo }[] = [
         },
         {
           src: null,
-          description: "Check underneath the cotton feeder and remove the side plates to check the inside.",
+          description: "Check the underside of the cotton feeder.",
         },
         {
           src: null,
