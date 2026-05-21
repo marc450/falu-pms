@@ -275,61 +275,68 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
         <h3 className="text-sm font-semibold text-white">Machine State Timeline</h3>
       </div>
 
-      <div
-        className="relative h-24 rounded overflow-hidden"
-        style={{ background: COLORS.empty }}
-      >
-        {data.visual.map((v, i) => {
-          const start = v.seg.start;
-          const end   = v.seg.end;
-          const w     = pct(end) - pct(start);
-          if (v.kind === "error") {
+      {/* The recharts LineChart below uses margin.left: -18 + a YAxis with the
+          default 60px width, so its plot area starts ~42px from the chart
+          card's inner left and ends 8px from the right (margin.right: 8).
+          Mirror those offsets here so the timeline's 23:00 lines up with
+          the chart's 23:00 below. */}
+      <div style={{ paddingLeft: 42, paddingRight: 8 }}>
+        <div
+          className="relative h-24 rounded overflow-hidden"
+          style={{ background: COLORS.empty }}
+        >
+          {data.visual.map((v, i) => {
+            const start = v.seg.start;
+            const end   = v.seg.end;
+            const w     = pct(end) - pct(start);
+            if (v.kind === "error") {
+              return (
+                <div
+                  key={`v-${i}`}
+                  className="absolute top-0 bottom-0 cursor-pointer"
+                  style={{
+                    left:  `${pct(start)}%`,
+                    // Floor a sub-pixel error to a hairline so brief codes
+                    // (a few seconds) still register visually and remain
+                    // hoverable. Bucket slices don't need this — they're at
+                    // least a 5-min wide chunk after the carve.
+                    width: `${Math.max(w, 0.15)}%`,
+                    background: COLORS.error,
+                    opacity: 0.4,
+                  }}
+                  onMouseEnter={enterError(v.seg)}
+                  onMouseLeave={leave}
+                />
+              );
+            }
             return (
               <div
                 key={`v-${i}`}
                 className="absolute top-0 bottom-0 cursor-pointer"
                 style={{
                   left:  `${pct(start)}%`,
-                  // Floor a sub-pixel error to a hairline so brief codes
-                  // (a few seconds) still register visually and remain
-                  // hoverable. Bucket slices don't need this — they're at
-                  // least a 5-min wide chunk after the carve.
-                  width: `${Math.max(w, 0.15)}%`,
-                  background: COLORS.error,
-                  opacity: 0.9,
+                  width: `${w}%`,
+                  background: v.seg.state === "empty" ? EMPTY_PATTERN : COLORS[v.seg.state],
+                  opacity: v.seg.state === "empty" ? 0.45 : 0.4,
                 }}
-                onMouseEnter={enterError(v.seg)}
+                onMouseEnter={enterBucket(v.seg)}
                 onMouseLeave={leave}
               />
             );
-          }
-          return (
-            <div
-              key={`v-${i}`}
-              className="absolute top-0 bottom-0 cursor-pointer"
-              style={{
-                left:  `${pct(start)}%`,
-                width: `${w}%`,
-                background: v.seg.state === "empty" ? EMPTY_PATTERN : COLORS[v.seg.state],
-                opacity: v.seg.state === "empty" ? 0.7 : 0.9,
-              }}
-              onMouseEnter={enterBucket(v.seg)}
-              onMouseLeave={leave}
-            />
-          );
-        })}
-      </div>
+          })}
+        </div>
 
-      <div className="relative h-4 mt-1 text-[10px] text-gray-500">
-        {data.tickPositions.map((t, i) => (
-          <span
-            key={i}
-            className="absolute"
-            style={{ left: `${pct(t)}%`, transform: "translateX(-50%)" }}
-          >
-            {format(new Date(t), "HH:mm")}
-          </span>
-        ))}
+        <div className="relative h-4 mt-1 text-[10px] text-gray-500">
+          {data.tickPositions.map((t, i) => (
+            <span
+              key={i}
+              className="absolute"
+              style={{ left: `${pct(t)}%`, transform: "translateX(-50%)" }}
+            >
+              {format(new Date(t), "HH:mm")}
+            </span>
+          ))}
+        </div>
       </div>
 
       {hover && typeof document !== "undefined" && createPortal(
