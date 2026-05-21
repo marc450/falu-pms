@@ -20,6 +20,7 @@ import {
   ProductionTrendSection, PeriodSelector, PRESETS,
 } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
+import MachineStateTimeline from "@/components/MachineStateTimeline";
 import { useFactoryTimezone } from "@/lib/useFactoryTimezone";
 
 function ProductionContent() {
@@ -510,6 +511,16 @@ function ProductionContent() {
             errorEvents={errorEvents}
             errorLookup={errorLookup}
           />
+
+          {trendGranularity === "hour" && trendRows.length > 0 && (
+            <div className="mt-6">
+              <MachineStateTimeline
+                rows={trendRows}
+                errorEvents={errorEvents}
+                errorLookup={errorLookup}
+              />
+            </div>
+          )}
         </div>
       )}
     </div>
