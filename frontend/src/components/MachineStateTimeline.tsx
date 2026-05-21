@@ -350,6 +350,14 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
             background: "#111827",
             border: "1px solid #374151",
             color: "#e5e7eb",
+            // width:max-content gives the tooltip its natural width (up to
+            // max-width) regardless of how little room is left to the right
+            // of the anchor. The useLayoutEffect above then shifts it
+            // leftward when it would overflow the viewport — so blocks near
+            // the right edge end up with the tooltip flowing into the open
+            // space on the left instead of being squished into a one-word-
+            // per-line column.
+            width:    "max-content",
             maxWidth: TOOLTIP_MAX_WIDTH,
           }}
         >
