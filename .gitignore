@@ -44,3 +44,7 @@ next-env.d.ts
 # Misc
 *.pem
 coverage/
+
+# Claude Code session artifacts (worktrees, locks)
+.claude/worktrees/
+.claude/scheduled_tasks.lock
