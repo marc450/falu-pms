@@ -13,11 +13,6 @@ interface Props {
   errorLookup: Record<string, PlcErrorCode>;
 }
 
-// A bucket counts as "running" when at least this share of its non-error time
-// was production. Errors are overlaid precisely from error_events, so the
-// bucket-level split only needs to decide running vs idle.
-const RUNNING_THRESHOLD = 0.5;
-
 // Match the Good / Mediocre / Poor zone tints used by the Avg Scrap and Avg
 // Uptime charts above so the timeline reads as the same colour family.
 const COLORS = {
@@ -128,22 +123,38 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     const endMs   = lastMs + bucketMs;
     const totalMs = endMs - firstMs;
 
-    const raw = rows.map(r => {
-      const start = parseBucketKey(r.date).getTime();
-      const end   = start + bucketMs;
-      const prod  = r.productionSeconds ?? 0;
-      const idle  = r.idleSeconds       ?? 0;
-      const err   = r.errorSeconds      ?? 0;
-      // PLC idle already includes error time, so the running-share denominator
-      // strips the double-count the same way the corrected-uptime formula does.
-      const idleOnlySecs = Math.max(0, idle - err);
-      const knownSecs    = prod + idleOnlySecs;
-      let state: State;
-      if (knownSecs <= 0)                              state = "empty";
-      else if (prod / knownSecs >= RUNNING_THRESHOLD)  state = "running";
-      else                                             state = "idle";
-      return { start, end, state, productionSeconds: prod, idleSeconds: idle, errorSeconds: err };
-    });
+    // Each 5-min bucket is split proportionally into a running sub-segment and
+    // an idle sub-segment based on its production / pure-idle seconds. We
+    // don't know the actual chronological order inside the bucket, so we put
+    // production first and idle second — but this guarantees that *any* idle
+    // time, no matter how small, renders as its own visible amber strip
+    // instead of getting hidden inside a "mostly running" classification.
+    const raw: MergedSeg[] = [];
+    for (const r of rows) {
+      const bStart = parseBucketKey(r.date).getTime();
+      const bEnd   = bStart + bucketMs;
+      const prod   = r.productionSeconds ?? 0;
+      const idle   = r.idleSeconds       ?? 0;
+      const err    = r.errorSeconds      ?? 0;
+      // PLC idle already includes error time; subtract so the same second
+      // doesn't pull both the idle and the error strips wider.
+      const idleOnly   = Math.max(0, idle - err);
+      const totalKnown = prod + idleOnly;
+
+      if (totalKnown <= 0) {
+        raw.push({ start: bStart, end: bEnd, state: "empty", productionSeconds: 0, idleSeconds: 0, errorSeconds: 0 });
+        continue;
+      }
+
+      const prodMs = (prod      / totalKnown) * bucketMs;
+      const idleMs = (idleOnly  / totalKnown) * bucketMs;
+      if (prodMs > 0) {
+        raw.push({ start: bStart, end: bStart + prodMs, state: "running", productionSeconds: prod, idleSeconds: 0, errorSeconds: 0 });
+      }
+      if (idleMs > 0) {
+        raw.push({ start: bStart + prodMs, end: bEnd, state: "idle", productionSeconds: 0, idleSeconds: idleOnly, errorSeconds: 0 });
+      }
+    }
 
     const merged: MergedSeg[] = [];
     for (const r of raw) {
@@ -400,20 +411,10 @@ function BucketTooltip({ seg }: { seg: MergedSeg }) {
         <span className="text-gray-500"> · {fmtSecs((seg.end - seg.start) / 1000)}</span>
       </div>
       <div className="font-semibold" style={{ color }}>{label}</div>
-      {isEmpty ? (
+      {isEmpty && (
         <div className="text-gray-400 mt-1">
           No PLC readings arrived in this window — likely a brief network or
           bridge gap. The machine state is unknown for these minutes.
-        </div>
-      ) : (
-        // Bucket slices have had their error time carved out into their
-        // own segments, so errorSeconds is always 0 here. The breakdown is
-        // production + idle, scaled to this slice's share of the parent
-        // bucket merge (so a 3-min slice of a 5-min bucket shows ~60% of
-        // that bucket's production).
-        <div className="text-gray-400 mt-1 space-y-0.5">
-          <div>Production: <span className="text-gray-200">{fmtSecs(seg.productionSeconds)}</span></div>
-          <div>Idle: <span className="text-gray-200">{fmtSecs(seg.idleSeconds)}</span></div>
         </div>
       )}
     </div>
