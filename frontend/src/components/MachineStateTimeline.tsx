@@ -44,17 +44,30 @@ type MergedSeg = {
   errorSeconds: number;
 };
 
-type ErrSeg = {
-  ev: ErrorEvent;
+// An error block in the timeline. Carries every ErrorEvent active during
+// its time range so the tooltip can list concurrent codes. Errors are
+// rendered IN the same band as bucket segments (no overlay) and CARVE the
+// adjacent running/idle stretches around them — so what you see on the
+// strip is the actual machine state at every moment, not a "running stretch
+// with errors painted on top".
+type ErrorSeg = {
   start: number;
   end: number;
-  lane: number;       // sub-lane within the strip (0 = topmost)
-  laneCount: number;  // total lanes needed across the whole strip
+  events: ErrorEvent[];
 };
 
+// One visual block in the timeline band. Either a bucket-derived
+// running/idle/empty segment, or an error span carved from an underlying
+// bucket. Bucket segments here have already had their time inside any
+// error span removed; their production/idle counts are scaled
+// proportionally from the parent bucket merge.
+type VisualSeg =
+  | { kind: "bucket"; seg: MergedSeg }
+  | { kind: "error";  seg: ErrorSeg };
+
 type Hover =
-  | { kind: "bucket"; seg:  MergedSeg; x: number; y: number; flipUp: boolean }
-  | { kind: "error";  segs: ErrSeg[];  x: number; y: number; flipUp: boolean };
+  | { kind: "bucket"; seg: MergedSeg; x: number; y: number; flipUp: boolean }
+  | { kind: "error";  seg: ErrorSeg; x: number; y: number; flipUp: boolean };
 
 const TOOLTIP_MAX_WIDTH  = 320;
 const TOOLTIP_HEIGHT_EST = 220;
@@ -133,10 +146,11 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       }
     }
 
-    // Time-overlap lane packing so two errors active at the same time render
-    // as stacked sub-strips instead of one painting over the other — same
-    // intent as the existing error-bracket layer below the line chart.
-    const rawErrs = errorEvents
+    // Build error spans from error_events (precise PLC-reported timing). Clip
+    // each event to the chart window, drop empty ones, then merge time-
+    // overlapping events so concurrent codes land in one combined ErrorSeg —
+    // the tooltip lists every code active during the hovered range.
+    const clippedErrs = errorEvents
       .map(ev => {
         const s = new Date(ev.started_at).getTime();
         const e = ev.ended_at ? new Date(ev.ended_at).getTime() : Date.now();
@@ -144,29 +158,69 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       })
       .filter(s => s.end > s.start)
       .sort((a, b) => a.start - b.start);
-    const laneEnds: number[] = [];
-    const placed: { ev: ErrorEvent; start: number; end: number; lane: number }[] = [];
-    for (const e of rawErrs) {
-      let lane = laneEnds.findIndex(end => end <= e.start);
-      if (lane === -1) {
-        laneEnds.push(e.end);
-        lane = laneEnds.length - 1;
+
+    const errorSpans: ErrorSeg[] = [];
+    for (const e of clippedErrs) {
+      const last = errorSpans[errorSpans.length - 1];
+      if (last && e.start <= last.end) {
+        last.end = Math.max(last.end, e.end);
+        last.events.push(e.ev);
       } else {
-        laneEnds[lane] = e.end;
+        errorSpans.push({ start: e.start, end: e.end, events: [e.ev] });
       }
-      placed.push({ ...e, lane });
     }
-    // Per-error LOCAL divisor: only count how deep the overlap actually is in
-    // this error's time range. A lone error keeps lane 0 and divisor 1 →
-    // renders full height. Global lane indices stay consistent so neighbouring
-    // overlapping errors never paint into the same vertical band.
-    const errs: ErrSeg[] = placed.map(p => {
-      let maxLane = p.lane;
-      for (const o of placed) {
-        if (o.start < p.end && o.end > p.start && o.lane > maxLane) maxLane = o.lane;
+
+    // Carve error spans out of the bucket-merged timeline. For each merged
+    // bucket, walk the error spans that overlap it: emit a pre-error bucket
+    // slice, an error slice, and a post-error bucket slice as appropriate.
+    // The bucket slices carry production/idle/error counts scaled to their
+    // share of the parent merged segment — so what you see on the strip
+    // really is what those minutes contained, no overlay.
+    const visual: VisualSeg[] = [];
+    let errIdx = 0;
+    const slicedBucket = (parent: MergedSeg, start: number, end: number): MergedSeg => {
+      const portion = (end - start) / (parent.end - parent.start);
+      return {
+        start,
+        end,
+        state: parent.state,
+        productionSeconds: parent.productionSeconds * portion,
+        // Errors are now their own segments; the bucket slice's idle excludes
+        // the error time that's been carved out, so we keep the (idle − error)
+        // portion that remains as actual idle within this slice.
+        idleSeconds:       Math.max(0, parent.idleSeconds - parent.errorSeconds) * portion,
+        errorSeconds:      0,
+      };
+    };
+    for (const bucket of merged) {
+      let cursor = bucket.start;
+      // Skip error spans that ended before this bucket started.
+      while (errIdx < errorSpans.length && errorSpans[errIdx].end <= cursor) errIdx++;
+      // Process every error span overlapping this bucket. An error span can
+      // extend past the bucket end (errors cross bucket boundaries); we clip
+      // and re-visit it via errIdx in the next bucket iteration.
+      let i = errIdx;
+      while (i < errorSpans.length && errorSpans[i].start < bucket.end) {
+        const err = errorSpans[i];
+        if (err.start > cursor) {
+          visual.push({ kind: "bucket", seg: slicedBucket(bucket, cursor, err.start) });
+        }
+        const sliceStart = Math.max(err.start, cursor);
+        const sliceEnd   = Math.min(err.end, bucket.end);
+        visual.push({
+          kind: "error",
+          seg: { start: sliceStart, end: sliceEnd, events: err.events },
+        });
+        cursor = sliceEnd;
+        if (err.end > bucket.end) break;  // remainder belongs to the next bucket
+        i++;
       }
-      return { ...p, laneCount: maxLane + 1 };
-    });
+      // Advance errIdx past everything fully consumed by this bucket.
+      errIdx = i;
+      if (cursor < bucket.end) {
+        visual.push({ kind: "bucket", seg: slicedBucket(bucket, cursor, bucket.end) });
+      }
+    }
 
     const hourTicks = rows
       .map(r => parseBucketKey(r.date).getTime())
@@ -175,7 +229,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     const tickStep = Math.max(1, Math.ceil(hourTicks.length / MAX_LABELS));
     const tickPositions = hourTicks.filter((_, i) => i % tickStep === 0);
 
-    return { firstMs, endMs, totalMs, segments: merged, errs, tickPositions };
+    return { firstMs, endMs, totalMs, visual, tickPositions };
   }, [rows, errorEvents]);
 
   if (!data) {
@@ -184,17 +238,21 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
 
   const pct = (t: number) => ((t - data.firstMs) / data.totalMs) * 100;
 
-  const summary = data.segments.reduce(
-    (acc, s) => {
-      const span = (s.end - s.start) / 1000;
-      const prod = Math.min(span, s.productionSeconds);
-      const err  = Math.min(span, s.errorSeconds);
-      const idle = Math.max(0, Math.min(span - prod, s.idleSeconds - s.errorSeconds));
-      const empty = Math.max(0, span - prod - idle - err);
-      acc.running += prod;
-      acc.idle    += idle;
-      acc.error   += err;
-      acc.empty   += empty;
+  // Summary breakdown across the whole window. Walk the visual list once so
+  // the legend percentages line up exactly with what's rendered on the
+  // strip — every second is accounted for in exactly one slice.
+  const summary = data.visual.reduce(
+    (acc, v) => {
+      const span = (v.seg.end - v.seg.start) / 1000;
+      if (v.kind === "error") {
+        acc.error += span;
+      } else if (v.seg.state === "empty") {
+        acc.empty += span;
+      } else if (v.seg.state === "running") {
+        acc.running += span;
+      } else {
+        acc.idle += span;
+      }
       return acc;
     },
     { running: 0, idle: 0, error: 0, empty: 0 },
@@ -205,12 +263,8 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
   const enterBucket = (seg: MergedSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
     setHover({ kind: "bucket", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
-  const enterError = (seg: ErrSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
-    // Surface every error overlapping the hovered block's time range so the
-    // tooltip reflects all concurrent failures, not just the sub-lane the
-    // cursor happens to land on.
-    const segs = data.errs.filter(o => o.start < seg.end && o.end > seg.start);
-    setHover({ kind: "error", segs, ...anchor(e.currentTarget.getBoundingClientRect()) });
+  const enterError = (seg: ErrorSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
+    setHover({ kind: "error", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
   const leave = () => setHover(null);
 
@@ -232,35 +286,41 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
         className="relative h-24 rounded overflow-hidden"
         style={{ background: COLORS.empty }}
       >
-        {data.segments.map((seg, i) => (
-          <div
-            key={`b-${i}`}
-            className="absolute top-0 bottom-0 cursor-pointer"
-            style={{
-              left:  `${pct(seg.start)}%`,
-              width: `${pct(seg.end) - pct(seg.start)}%`,
-              background: seg.state === "empty" ? EMPTY_PATTERN : COLORS[seg.state],
-              opacity: seg.state === "empty" ? 0.7 : 0.9,
-            }}
-            onMouseEnter={enterBucket(seg)}
-            onMouseLeave={leave}
-          />
-        ))}
-        {data.errs.map((seg, i) => {
-          const w        = pct(seg.end) - pct(seg.start);
-          const laneFrac = 1 / seg.laneCount;
+        {data.visual.map((v, i) => {
+          const start = v.seg.start;
+          const end   = v.seg.end;
+          const w     = pct(end) - pct(start);
+          if (v.kind === "error") {
+            return (
+              <div
+                key={`v-${i}`}
+                className="absolute top-0 bottom-0 cursor-pointer"
+                style={{
+                  left:  `${pct(start)}%`,
+                  // Floor a sub-pixel error to a hairline so brief codes
+                  // (a few seconds) still register visually and remain
+                  // hoverable. Bucket slices don't need this — they're at
+                  // least a 5-min wide chunk after the carve.
+                  width: `${Math.max(w, 0.15)}%`,
+                  background: COLORS.error,
+                  opacity: 0.9,
+                }}
+                onMouseEnter={enterError(v.seg)}
+                onMouseLeave={leave}
+              />
+            );
+          }
           return (
             <div
-              key={`e-${i}`}
-              className="absolute cursor-pointer"
+              key={`v-${i}`}
+              className="absolute top-0 bottom-0 cursor-pointer"
               style={{
-                left:   `${pct(seg.start)}%`,
-                width:  `${Math.max(w, 0.15)}%`,
-                top:    `${seg.lane * laneFrac * 100}%`,
-                height: `${laneFrac * 100}%`,
-                background: COLORS.error,
+                left:  `${pct(start)}%`,
+                width: `${w}%`,
+                background: v.seg.state === "empty" ? EMPTY_PATTERN : COLORS[v.seg.state],
+                opacity: v.seg.state === "empty" ? 0.7 : 0.9,
               }}
-              onMouseEnter={enterError(seg)}
+              onMouseEnter={enterBucket(v.seg)}
               onMouseLeave={leave}
             />
           );
@@ -295,7 +355,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           {hover.kind === "bucket" ? (
             <BucketTooltip seg={hover.seg} />
           ) : (
-            <ErrorTooltip segs={hover.segs} errorLookup={errorLookup} />
+            <ErrorTooltip seg={hover.seg} errorLookup={errorLookup} />
           )}
         </div>,
         document.body,
@@ -333,39 +393,57 @@ function BucketTooltip({ seg }: { seg: MergedSeg }) {
           bridge gap. The machine state is unknown for these minutes.
         </div>
       ) : (
+        // Bucket slices have had their error time carved out into their
+        // own segments, so errorSeconds is always 0 here. The breakdown is
+        // production + idle, scaled to this slice's share of the parent
+        // bucket merge (so a 3-min slice of a 5-min bucket shows ~60% of
+        // that bucket's production).
         <div className="text-gray-400 mt-1 space-y-0.5">
           <div>Production: <span className="text-gray-200">{fmtSecs(seg.productionSeconds)}</span></div>
-          <div>Idle: <span className="text-gray-200">{fmtSecs(Math.max(0, seg.idleSeconds - seg.errorSeconds))}</span></div>
-          {seg.errorSeconds > 0 && (
-            <div>Error: <span className="text-gray-200">{fmtSecs(seg.errorSeconds)}</span></div>
-          )}
+          <div>Idle: <span className="text-gray-200">{fmtSecs(seg.idleSeconds)}</span></div>
         </div>
       )}
     </div>
   );
 }
 
-function ErrorTooltip({ segs, errorLookup }: { segs: ErrSeg[]; errorLookup: Record<string, PlcErrorCode> }) {
-  if (segs.length === 0) return null;
+function ErrorTooltip({ seg, errorLookup }: { seg: ErrorSeg; errorLookup: Record<string, PlcErrorCode> }) {
+  if (seg.events.length === 0) return null;
+  // Deduplicate by error_code — a long error span can carry multiple
+  // ErrorEvent rows for the same code (e.g. one per occurrence merged
+  // into the span). Show each unique code once in the tooltip.
+  const seen = new Set<string>();
+  const uniqueEvents = seg.events.filter(ev => {
+    if (seen.has(ev.error_code)) return false;
+    seen.add(ev.error_code);
+    return true;
+  });
   return (
-    <div className="space-y-2">
-      {segs.length > 1 && (
-        <div className="text-gray-400 text-[11px]">{segs.length} concurrent errors</div>
+    <div>
+      <div className="text-gray-400 mb-1">
+        {format(new Date(seg.start), "HH:mm")} – {format(new Date(seg.end), "HH:mm")}
+        <span className="text-gray-500"> · {fmtSecs((seg.end - seg.start) / 1000)}</span>
+      </div>
+      <div className="font-semibold text-red-400 mb-1">Error</div>
+      {uniqueEvents.length > 1 && (
+        <div className="text-gray-400 text-[11px] mb-1">{uniqueEvents.length} concurrent codes</div>
       )}
-      {segs.map((s, i) => {
-        const lookup = errorLookup[s.ev.error_code];
-        return (
-          <div key={i} className={i > 0 ? "pt-2 border-t border-gray-700" : ""}>
-            <div className="font-semibold text-red-400">{s.ev.error_code}</div>
-            {lookup?.description && (
-              <div className="text-gray-200 mt-0.5">{lookup.description}</div>
-            )}
-            {lookup?.cause && (
-              <div className="text-gray-400 mt-1">Cause: <span className="text-gray-200">{lookup.cause}</span></div>
-            )}
-          </div>
-        );
-      })}
+      <div className="space-y-2">
+        {uniqueEvents.map((ev, i) => {
+          const lookup = errorLookup[ev.error_code];
+          return (
+            <div key={i} className={i > 0 ? "pt-2 border-t border-gray-700" : ""}>
+              <div className="font-mono text-red-300">{ev.error_code}</div>
+              {lookup?.description && (
+                <div className="text-gray-200 mt-0.5">{lookup.description}</div>
+              )}
+              {lookup?.cause && (
+                <div className="text-gray-400 mt-1">Cause: <span className="text-gray-200">{lookup.cause}</span></div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
