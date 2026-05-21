@@ -726,15 +726,22 @@ function optimizeKioskImageUrl(url: string | null): string | null {
 function HowToImageFrame({ src, alt }: { src: string | null; alt: string }) {
   const optimized = optimizeKioskImageUrl(src);
   if (optimized) {
-    // eslint-disable-next-line @next/next/no-img-element
+    // Force a consistent 4:3 frame regardless of source orientation —
+    // portrait phone photos would otherwise stretch the row to the
+    // photo's native height and crowd the description text. object-
+    // contain keeps the full image visible with letterboxing on the
+    // sides; a dark backdrop hides the bars.
     return (
-      <img
-        src={optimized}
-        alt={alt}
-        loading="eager"
-        decoding="async"
-        className="w-full rounded-2xl border border-red-300/20"
-      />
+      <div className="w-full aspect-[4/3] rounded-2xl overflow-hidden border border-red-300/20 bg-red-950/40">
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src={optimized}
+          alt={alt}
+          loading="eager"
+          decoding="async"
+          className="w-full h-full object-contain"
+        />
+      </div>
     );
   }
   return (
