@@ -4,13 +4,18 @@
     "allow": [
       "Bash(git fetch)",
       "Bash(git fetch *)",
+      "Bash(npx eslint *)",
+      "Bash(railway list *)",
+      "Bash(railway status *)",
       "mcp__Claude_Preview__preview_logs",
       "mcp__Claude_Preview__preview_screenshot",
       "mcp__Claude_Preview__preview_resize",
       "mcp__Claude_Preview__preview_inspect",
       "mcp__Claude_Preview__preview_snapshot",
       "mcp__Claude_Preview__preview_console_logs",
-      "mcp__Claude_Preview__preview_list"
+      "mcp__Claude_Preview__preview_list",
+      "mcp__railway__list-deployments",
+      "mcp__railway__get-logs"
     ],
     "deny": [
       "Bash(rm -rf*)",
