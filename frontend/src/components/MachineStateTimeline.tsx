@@ -424,26 +424,24 @@ function ErrorTooltip({ seg, errorLookup }: { seg: ErrorSeg; errorLookup: Record
         {format(new Date(seg.start), "HH:mm")} – {format(new Date(seg.end), "HH:mm")}
         <span className="text-gray-500"> · {fmtSecs((seg.end - seg.start) / 1000)}</span>
       </div>
-      <div className="font-semibold text-red-400 mb-1">Error</div>
-      {uniqueEvents.length > 1 && (
-        <div className="text-gray-400 text-[11px] mb-1">{uniqueEvents.length} concurrent codes</div>
-      )}
-      <div className="space-y-2">
-        {uniqueEvents.map((ev, i) => {
-          const lookup = errorLookup[ev.error_code];
-          return (
-            <div key={i} className={i > 0 ? "pt-2 border-t border-gray-700" : ""}>
-              <div className="font-mono text-red-300">{ev.error_code}</div>
-              {lookup?.description && (
-                <div className="text-gray-200 mt-0.5">{lookup.description}</div>
-              )}
-              {lookup?.cause && (
-                <div className="text-gray-400 mt-1">Cause: <span className="text-gray-200">{lookup.cause}</span></div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      <div className="font-semibold text-red-400">Error</div>
+      {uniqueEvents.map((ev, i) => {
+        const lookup = errorLookup[ev.error_code];
+        return (
+          <div
+            key={i}
+            className={`text-gray-400 mt-1 space-y-0.5 ${i > 0 ? "pt-2 border-t border-gray-700" : ""}`}
+          >
+            <div>Code: <span className="text-gray-200">{ev.error_code}</span></div>
+            {lookup?.description && (
+              <div>Reason: <span className="text-gray-200">{lookup.description}</span></div>
+            )}
+            {lookup?.cause && (
+              <div>Cause: <span className="text-gray-200">{lookup.cause}</span></div>
+            )}
+          </div>
+        );
+      })}
     </div>
   );
 }
