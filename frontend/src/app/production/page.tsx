@@ -506,6 +506,7 @@ function ProductionContent() {
             showTotalSwabs={false}
             peerRows={peerRows}
             peerLabel={peerType ? `Peers (${peerType}, ${peerCount})` : undefined}
+            peerCount={peerCount}
             errorEvents={errorEvents}
             errorLookup={errorLookup}
           />

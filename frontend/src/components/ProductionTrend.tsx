@@ -789,6 +789,24 @@ function ErrorBracketLayer(props: ErrorBracketLayerProps) {
 
 // ─── Production Trend section ────────────────────────────────────────────────
 
+// Recompute uptime from summed raw seconds the same way calcCorrectedEfficiency
+// does in app/page.tsx. The PLC's IdleTime counter already includes ErrorTime,
+// so (idle − error) un-duplicates them before the planned-downtime budget gets
+// to forgive any pure-idle leftover. Returns null when there's no production
+// AND no idle (machine never reported in the window).
+function correctedUptimeFromSeconds(
+  productionSecs: number,
+  idleSecs: number,
+  errorSecs: number,
+  plannedDowntimeSecs: number,
+): number | null {
+  if (productionSecs === 0 && idleSecs === 0) return null;
+  const idleOnlySecs      = Math.max(0, idleSecs - errorSecs);
+  const unplannedIdleSecs = Math.max(0, idleOnlySecs - plannedDowntimeSecs);
+  const effectiveSecs     = productionSecs + unplannedIdleSecs + errorSecs;
+  return effectiveSecs > 0 ? (productionSecs / effectiveSecs) * 100 : null;
+}
+
 const PEER_LINE_COLOR = "#fbbf24"; // amber-400
 
 export function ProductionTrendSection({
@@ -805,6 +823,7 @@ export function ProductionTrendSection({
   chartTitleSuffix,
   peerRows = [],
   peerLabel,
+  peerCount = 0,
   errorEvents = [],
   errorLookup = {},
 }: {
@@ -821,6 +840,10 @@ export function ProductionTrendSection({
   chartTitleSuffix?: string;
   peerRows?: FleetTrendRow[];
   peerLabel?: string;
+  // Distinct peer machines aggregated into peerRows. Used by the corrected
+  // Avg Uptime formula to size the planned-downtime budget (per-shift budget
+  // × shifts in window × peer count). 0 when no peer comparison is shown.
+  peerCount?: number;
   errorEvents?: ErrorEvent[];
   errorLookup?: Record<string, PlcErrorCode>;
 }) {
@@ -829,13 +852,34 @@ export function ProductionTrendSection({
   const factoryTz = useFactoryTimezone();
 
   const hasData    = rows.length > 0;
-  const avgUptime  = hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null;
   const avgScrap   = hasData ? rows.reduce((s, d) => s + d.avgScrap,  0) / rows.length : null;
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
   const totalBUs   = Math.round(totalSwabs / 7200);
 
   const shiftHours   = thresholds.bu.shiftLengthMinutes / 60 || 8;
   const shiftsPerDay = Math.max(1, Math.round(24 / shiftHours));
+
+  // Corrected uptime over the whole window — mirrors calcCorrectedEfficiency
+  // in app/page.tsx (the formula behind the park-overview Uptime column). The
+  // PLC's IdleTime already includes ErrorTime, so the (idle − error) step
+  // strips the double-count; the planned-downtime budget then forgives
+  // scheduled breaks from the pure-idle remainder only — never from error
+  // time. Used by the KPI tile so a single machine reads the same way here
+  // as it does on the park overview, just summed over whatever window the
+  // user picked instead of the current shift.
+  const windowHours      = Math.max(0, (dateRange.end.getTime() - dateRange.start.getTime()) / 3_600_000);
+  const shiftsInWindow   = shiftHours > 0 ? windowHours / shiftHours : 0;
+  const plannedSecsBudget = (thresholds.bu.plannedDowntimeMinutes || 0) * 60 * shiftsInWindow;
+
+  const hasCounters = rows.some(r => r.productionSeconds !== undefined);
+  const avgUptime: number | null = hasCounters
+    ? correctedUptimeFromSeconds(
+        rows.reduce((s, r) => s + (r.productionSeconds ?? 0), 0),
+        rows.reduce((s, r) => s + (r.idleSeconds       ?? 0), 0),
+        rows.reduce((s, r) => s + (r.errorSeconds      ?? 0), 0),
+        plannedSecsBudget,
+      )
+    : (hasData ? rows.reduce((s, d) => s + d.avgUptime, 0) / rows.length : null);
 
   // Detect the sub-daily bucket size from the first two rows so the BU chart
   // can rate-normalise its y-axis to "BUs/hour" regardless of bucket length
@@ -851,7 +895,20 @@ export function ProductionTrendSection({
   // buckets render as line breaks (recharts skips null y-values with monotone).
   const hasPeers = peerRows.length > 0;
   const peerByDate = new Map(peerRows.map(r => [r.date, r]));
-  const peerAvgUptime = hasPeers ? peerRows.reduce((s, d) => s + d.avgUptime, 0) / peerRows.length : null;
+  // Peer planned-downtime budget scales with peer count: each peer machine
+  // gets its own per-shift break allowance, so summing peer seconds and
+  // applying the corrected formula needs N × the per-machine budget for the
+  // ratio to come out as the per-peer average.
+  const peerHasCounters    = peerRows.some(r => r.productionSeconds !== undefined);
+  const peerPlannedSecs    = plannedSecsBudget * Math.max(1, peerCount);
+  const peerAvgUptime = peerHasCounters
+    ? correctedUptimeFromSeconds(
+        peerRows.reduce((s, r) => s + (r.productionSeconds ?? 0), 0),
+        peerRows.reduce((s, r) => s + (r.idleSeconds       ?? 0), 0),
+        peerRows.reduce((s, r) => s + (r.errorSeconds      ?? 0), 0),
+        peerPlannedSecs,
+      )
+    : (hasPeers ? peerRows.reduce((s, d) => s + d.avgUptime, 0) / peerRows.length : null);
   const peerAvgScrap  = hasPeers ? peerRows.reduce((s, d) => s + d.avgScrap,  0) / peerRows.length : null;
   // Peer fetchers already return per-peer averages, so summing into BUs gives
   // "BUs per peer in this period" — directly comparable to the machine's own.
@@ -883,10 +940,9 @@ export function ProductionTrendSection({
     ? (granularity === "hour" ? buMediocrePerShift / shiftHours : buMediocrePerShift * shiftsPerDay)
     : null;
 
-  const periodHours = Math.max(1, (dateRange.end.getTime() - dateRange.start.getTime()) / 3_600_000);
   const expectedShiftsInPeriod = granularity === "day"
     ? buRows.reduce((s, r) => s + Math.max(1, r.shiftCount), 0)
-    : Math.max(1, periodHours / shiftHours);
+    : Math.max(1, windowHours / shiftHours);
   const buKpiGood     = buTargetPerShift !== null ? buTargetPerShift * expectedShiftsInPeriod : null;
   const buKpiMediocre = buMediocrePerShift !== null ? buMediocrePerShift * expectedShiftsInPeriod : null;
 

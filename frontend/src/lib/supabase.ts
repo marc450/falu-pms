@@ -483,6 +483,15 @@ export interface FleetTrendRow {
   machineCount: number;// unique machines with readings in bucket
   readingCount: number;// total readings in bucket
   shiftCount: number;  // distinct shift_crews with data in this bucket
+  // Raw seconds summed across the machines in this bucket. Lets the KPI tile
+  // recompute corrected uptime over the whole window with the same formula
+  // the park overview uses (production / (production + max(0, idle-error) -
+  // planned + error)), instead of averaging per-bucket avgUptime values.
+  // Optional because daily_fleet_summary doesn't carry them yet — when
+  // absent, the tile falls back to the unweighted bucket mean.
+  productionSeconds?: number;
+  idleSeconds?:       number;
+  errorSeconds?:      number;
 }
 
 export interface FleetTrendResult {
@@ -569,6 +578,9 @@ interface IntradayBucketRow {
   machine_count: number;
   reading_count: number;
   shift_count:   number;
+  total_production_seconds?: number;  // added by migration 089
+  total_idle_seconds?:       number;
+  total_error_seconds?:      number;
 }
 
 // Shared workhorse: calls get_fleet_trend_minute, gap-fills the requested
@@ -604,19 +616,23 @@ async function fetchIntradayTrend(
     const b   = bucketMap.get(key);
     if (b) {
       filledRows.push({
-        date:         key,
-        avgUptime:    Number(b.avg_uptime)    || 0,
-        avgScrap:     Number(b.avg_scrap)     || 0,
-        totalBoxes:   Number(b.total_boxes)   || 0,
-        totalSwabs:   Number(b.total_swabs)   || 0,
-        machineCount: Number(b.machine_count) || 0,
-        readingCount: Number(b.reading_count) || 0,
-        shiftCount:   Number(b.shift_count)   || 0,
+        date:             key,
+        avgUptime:        Number(b.avg_uptime)    || 0,
+        avgScrap:         Number(b.avg_scrap)     || 0,
+        totalBoxes:       Number(b.total_boxes)   || 0,
+        totalSwabs:       Number(b.total_swabs)   || 0,
+        machineCount:     Number(b.machine_count) || 0,
+        readingCount:     Number(b.reading_count) || 0,
+        shiftCount:       Number(b.shift_count)   || 0,
+        productionSeconds: Number(b.total_production_seconds) || 0,
+        idleSeconds:       Number(b.total_idle_seconds)       || 0,
+        errorSeconds:      Number(b.total_error_seconds)      || 0,
       });
     } else {
       filledRows.push({
         date: key, avgUptime: 0, avgScrap: 0, totalBoxes: 0, totalSwabs: 0,
         machineCount: 0, readingCount: 0, shiftCount: 0,
+        productionSeconds: 0, idleSeconds: 0, errorSeconds: 0,
       });
     }
     cursor.setTime(cursor.getTime() + bucketMs);
@@ -642,7 +658,7 @@ export async function fetchMachineDailyTrend(machineCode: string, range: DateRan
 
   const { data, error } = await sb
     .from("daily_machine_summary")
-    .select("summary_date, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate")
+    .select("summary_date, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate, production_time_seconds, idle_time_seconds, error_time_seconds")
     .eq("machine_code", machineCode)
     .gte("summary_date", fmtDate(range.start))
     .lt("summary_date",  fmtDate(new Date()))
@@ -663,12 +679,15 @@ export async function fetchMachineDailyTrend(machineCode: string, range: DateRan
     effSum:     number;  // sum of avg_efficiency across shifts (for unweighted day-average)
     effCount:   number;
     shiftCount: number;
+    prodSecs:   number;
+    idleSecs:   number;
+    errorSecs:  number;
   };
   const byDate = new Map<string, DayAcc>();
   for (const r of data as Record<string, unknown>[]) {
     const date = String(r.summary_date);
     if (!byDate.has(date)) {
-      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, shiftCount: 0 });
+      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, shiftCount: 0, prodSecs: 0, idleSecs: 0, errorSecs: 0 });
     }
     const b = byDate.get(date)!;
     b.swabs     += Number(r.swabs_produced)  || 0;
@@ -678,19 +697,25 @@ export async function fetchMachineDailyTrend(machineCode: string, range: DateRan
     const eff = Number(r.avg_efficiency);
     if (!isNaN(eff)) { b.effSum += eff; b.effCount += 1; }
     b.shiftCount += 1;
+    b.prodSecs  += Number(r.production_time_seconds) || 0;
+    b.idleSecs  += Number(r.idle_time_seconds)       || 0;
+    b.errorSecs += Number(r.error_time_seconds)      || 0;
   }
 
   const rows: FleetTrendRow[] = Array.from(byDate.entries())
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([date, b]) => ({
       date,
-      avgUptime:    b.effCount > 0 ? b.effSum / b.effCount : 0,
-      avgScrap:     b.swabs > 0 ? Math.round((b.discarded / b.swabs) * 1000) / 10 : 0,
-      totalBoxes:   b.boxes,
-      totalSwabs:   b.swabs,
-      machineCount: 1,
-      readingCount: b.readings,
-      shiftCount:   b.shiftCount,
+      avgUptime:        b.effCount > 0 ? b.effSum / b.effCount : 0,
+      avgScrap:         b.swabs > 0 ? Math.round((b.discarded / b.swabs) * 1000) / 10 : 0,
+      totalBoxes:       b.boxes,
+      totalSwabs:       b.swabs,
+      machineCount:     1,
+      readingCount:     b.readings,
+      shiftCount:       b.shiftCount,
+      productionSeconds: b.prodSecs,
+      idleSeconds:       b.idleSecs,
+      errorSeconds:      b.errorSecs,
     }));
   return { rows, granularity: "day", totalReadings: rows.reduce((s, r) => s + r.readingCount, 0) };
 }
@@ -763,7 +788,7 @@ export async function fetchPeersDailyTrend(peerCodes: string[], range: DateRange
 
   const { data, error } = await sb
     .from("daily_machine_summary")
-    .select("summary_date, machine_code, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate")
+    .select("summary_date, machine_code, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate, production_time_seconds, idle_time_seconds, error_time_seconds")
     .in("machine_code", peerCodes)
     .gte("summary_date", fmtDate(range.start))
     .lt("summary_date",  fmtDate(new Date()))
@@ -783,12 +808,15 @@ export async function fetchPeersDailyTrend(peerCodes: string[], range: DateRange
     effSum:    number;
     effCount:  number;
     machineIds: Set<string>;
+    prodSecs:  number;
+    idleSecs:  number;
+    errorSecs: number;
   };
   const byDate = new Map<string, DayAcc>();
   for (const r of data as Record<string, unknown>[]) {
     const date = String(r.summary_date);
     if (!byDate.has(date)) {
-      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, machineIds: new Set() });
+      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, machineIds: new Set(), prodSecs: 0, idleSecs: 0, errorSecs: 0 });
     }
     const b = byDate.get(date)!;
     b.swabs     += Number(r.swabs_produced)  || 0;
@@ -798,6 +826,9 @@ export async function fetchPeersDailyTrend(peerCodes: string[], range: DateRange
     const eff = Number(r.avg_efficiency);
     if (!isNaN(eff)) { b.effSum += eff; b.effCount += 1; }
     b.machineIds.add(String(r.machine_code));
+    b.prodSecs  += Number(r.production_time_seconds) || 0;
+    b.idleSecs  += Number(r.idle_time_seconds)       || 0;
+    b.errorSecs += Number(r.error_time_seconds)      || 0;
   }
 
   const rows: FleetTrendRow[] = Array.from(byDate.entries())
@@ -816,6 +847,12 @@ export async function fetchPeersDailyTrend(peerCodes: string[], range: DateRange
         machineCount: b.machineIds.size,
         readingCount: b.readings,
         shiftCount:   1, // shift normalisation already baked into per-peer average
+        // Raw seconds carry the peer-aggregate totals; the KPI tile divides
+        // by peer count (in its planned-budget multiplier) so the corrected
+        // uptime represents the per-peer average.
+        productionSeconds: b.prodSecs,
+        idleSeconds:       b.idleSecs,
+        errorSeconds:      b.errorSecs,
       };
     });
   return { rows, granularity: "day", totalReadings: rows.reduce((s, r) => s + r.readingCount, 0) };
