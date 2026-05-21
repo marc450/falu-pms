@@ -466,9 +466,6 @@ function ProductionContent() {
             />
           )}
         </div>
-        <span className="bg-cyan-900/30 text-cyan-400 text-xs px-3 py-1.5 rounded-full">
-          Live Data
-        </span>
       </div>
 
       {(offline || !machine) && (
