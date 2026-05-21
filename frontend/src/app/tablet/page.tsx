@@ -705,11 +705,36 @@ function HowToView({ howto }: { howto: HowTo }) {
   );
 }
 
+// Rewrites a public Supabase Storage URL to go through the image
+// transformation endpoint, which serves a resized + recompressed copy.
+// We clamp to roughly the rendered size (half the tablet width at 2x)
+// so we stop shipping 5+ MB camera JPGs over the wire. Non-Supabase or
+// already-transformed URLs are returned untouched.
+const KIOSK_IMAGE_WIDTH = 1200;
+const KIOSK_IMAGE_QUALITY = 75;
+
+function optimizeKioskImageUrl(url: string | null): string | null {
+  if (!url) return url;
+  const objectPath = "/storage/v1/object/public/";
+  const renderPath = "/storage/v1/render/image/public/";
+  if (!url.includes(objectPath)) return url;
+  const rewritten = url.replace(objectPath, renderPath);
+  const sep = rewritten.includes("?") ? "&" : "?";
+  return `${rewritten}${sep}width=${KIOSK_IMAGE_WIDTH}&quality=${KIOSK_IMAGE_QUALITY}`;
+}
+
 function HowToImageFrame({ src, alt }: { src: string | null; alt: string }) {
-  if (src) {
+  const optimized = optimizeKioskImageUrl(src);
+  if (optimized) {
     // eslint-disable-next-line @next/next/no-img-element
     return (
-      <img src={src} alt={alt} className="w-full rounded-2xl border border-red-300/20" />
+      <img
+        src={optimized}
+        alt={alt}
+        loading="eager"
+        decoding="async"
+        className="w-full rounded-2xl border border-red-300/20"
+      />
     );
   }
   return (
@@ -753,6 +778,20 @@ function ErrorCard({ ev, info, lang }: {
         const dbItems = await fetchChecklistForCode(ev.error_code);
         if (!alive) return;
         if (dbItems.length > 0) {
+          // Preload every step image (at the same transformed URL the
+          // <img> tag will request) so the operator's first tap shows
+          // the image instantly instead of fetching it on demand.
+          if (typeof window !== "undefined") {
+            for (const it of dbItems) {
+              for (const s of it.steps) {
+                const url = optimizeKioskImageUrl(s.image_url);
+                if (url) {
+                  const preloader = new window.Image();
+                  preloader.src = url;
+                }
+              }
+            }
+          }
           setChecklist(dbItems.map(it => ({
             text:  it.text,
             howto: it.steps.length > 0 ? {
