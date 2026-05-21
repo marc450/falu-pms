@@ -75,10 +75,11 @@ const TOOLTIP_MARGIN     = 8;
 const TOOLTIP_GAP        = 6;
 
 // Anchor the tooltip's bottom-left corner: it always renders above the
-// timeline strip and starts at the right edge of the hovered block. Clamps
-// to the viewport so it never gets cut off near the top or right edges.
+// timeline strip and its left edge lines up with the start of the hovered
+// block. Clamps to the viewport so it never gets cut off near the top or
+// right edges.
 function anchor(rect: DOMRect): { x: number; y: number } {
-  let x = rect.right + TOOLTIP_GAP;
+  let x = rect.left;
   const maxLeft = window.innerWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN;
   if (x > maxLeft) x = maxLeft;
   if (x < TOOLTIP_MARGIN) x = TOOLTIP_MARGIN;
