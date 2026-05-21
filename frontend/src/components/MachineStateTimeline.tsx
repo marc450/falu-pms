@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 // @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
 import { createPortal } from "react-dom";
 import { format } from "date-fns";
@@ -13,8 +13,8 @@ interface Props {
   errorLookup: Record<string, PlcErrorCode>;
 }
 
-// A bucket is classified as "running" when at least this share of its non-error
-// time was production. Errors are overlaid precisely from error_events, so the
+// A bucket counts as "running" when at least this share of its non-error time
+// was production. Errors are overlaid precisely from error_events, so the
 // bucket-level split only needs to decide running vs idle.
 const RUNNING_THRESHOLD = 0.5;
 
@@ -25,10 +25,19 @@ const COLORS = {
   empty:   "#1f2937",
 };
 
-type BucketSeg = {
+const LABEL_LANE_HEIGHT = 14;
+const LABEL_CHAR_PX     = 6.5;
+const LABEL_PADDING_PX  = 8;
+const MIN_LANE_GAP_PX   = 4;
+
+type State = "running" | "idle" | "empty";
+
+// A merged background segment: adjacent same-state buckets coalesce into one
+// rectangle so the strip reads as continuous intervals, not 5-min ticks.
+type MergedSeg = {
   start: number;
   end: number;
-  state: "running" | "idle" | "empty";
+  state: State;
   productionSeconds: number;
   idleSeconds: number;
   errorSeconds: number;
@@ -40,12 +49,17 @@ type ErrSeg = {
   end: number;
 };
 
+type PackedLabel = {
+  ev: ErrorEvent;
+  centerPx: number;
+  widthPx: number;
+  lane: number;
+};
+
 type Hover =
-  | { kind: "bucket"; seg: BucketSeg; x: number; y: number; flipUp: boolean }
+  | { kind: "bucket"; seg: MergedSeg; x: number; y: number; flipUp: boolean }
   | { kind: "error";  seg: ErrSeg;    x: number; y: number; flipUp: boolean };
 
-// Worst-case tooltip height; if the strip lands near the viewport bottom we
-// anchor the tooltip above the cursor instead of below.
 const TOOLTIP_HEIGHT_EST = 220;
 const TOOLTIP_MARGIN     = 8;
 
@@ -68,8 +82,57 @@ function fmtSecs(s: number): string {
   return mm > 0 ? `${h}h ${mm}m` : `${h}h`;
 }
 
+// Place labels in horizontal lanes so adjacent ones don't overlap. Lower lane
+// index = closer to the strip (= shorter leader line). Mirrors the bracket
+// packing logic in ProductionTrend.tsx, simplified for percent-based input.
+function packLabels(events: ErrSeg[], firstMs: number, totalMs: number, containerPx: number): { items: PackedLabel[]; laneCount: number } {
+  if (containerPx <= 0 || events.length === 0) return { items: [], laneCount: 0 };
+  const sorted = [...events].sort((a, b) => a.start - b.start);
+  const lanes: number[] = [];
+  const items: PackedLabel[] = [];
+  for (const e of sorted) {
+    const centerMs = (e.start + e.end) / 2;
+    const centerPx = ((centerMs - firstMs) / totalMs) * containerPx;
+    const widthPx  = e.ev.error_code.length * LABEL_CHAR_PX + LABEL_PADDING_PX;
+    const startPx  = centerPx - widthPx / 2;
+    const endPx    = centerPx + widthPx / 2;
+    let lane = -1;
+    for (let i = 0; i < lanes.length; i++) {
+      if (lanes[i] + MIN_LANE_GAP_PX <= startPx) {
+        lane = i;
+        lanes[i] = endPx;
+        break;
+      }
+    }
+    if (lane === -1) {
+      lanes.push(endPx);
+      lane = lanes.length - 1;
+    }
+    items.push({ ev: e.ev, centerPx, widthPx, lane });
+  }
+  return { items, laneCount: lanes.length };
+}
+
+// Hook: returns the live pixel width of the referenced element.
+function useElementWidth<T extends HTMLElement>(): [React.RefObject<T | null>, number] {
+  const ref = useRef<T | null>(null);
+  const [w, setW] = useState(0);
+  useLayoutEffect(() => {
+    if (!ref.current) return;
+    const el = ref.current;
+    const update = () => setW(el.getBoundingClientRect().width);
+    update();
+    if (typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  return [ref, w];
+}
+
 export default function MachineStateTimeline({ rows, errorEvents, errorLookup }: Props) {
   const [hover, setHover] = useState<Hover | null>(null);
+  const [stripRef, stripWidthPx] = useElementWidth<HTMLDivElement>();
 
   const data = useMemo(() => {
     if (rows.length === 0) return null;
@@ -81,7 +144,8 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     const endMs   = lastMs + bucketMs;
     const totalMs = endMs - firstMs;
 
-    const segments: BucketSeg[] = rows.map(r => {
+    // Classify each raw bucket, then merge consecutive same-state buckets.
+    const raw = rows.map(r => {
       const start = parseBucketKey(r.date).getTime();
       const end   = start + bucketMs;
       const prod  = r.productionSeconds ?? 0;
@@ -89,15 +153,27 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       const err   = r.errorSeconds      ?? 0;
       // PLC idle already includes error time, so the running-share denominator
       // strips the double-count the same way the corrected-uptime formula does.
-      const runningSecs = prod;
       const idleOnlySecs = Math.max(0, idle - err);
-      const knownSecs    = runningSecs + idleOnlySecs;
-      let state: BucketSeg["state"];
-      if (knownSecs <= 0)                                    state = "empty";
-      else if (runningSecs / knownSecs >= RUNNING_THRESHOLD) state = "running";
-      else                                                   state = "idle";
+      const knownSecs    = prod + idleOnlySecs;
+      let state: State;
+      if (knownSecs <= 0)                              state = "empty";
+      else if (prod / knownSecs >= RUNNING_THRESHOLD)  state = "running";
+      else                                             state = "idle";
       return { start, end, state, productionSeconds: prod, idleSeconds: idle, errorSeconds: err };
     });
+
+    const merged: MergedSeg[] = [];
+    for (const r of raw) {
+      const last = merged[merged.length - 1];
+      if (last && last.state === r.state && last.end === r.start) {
+        last.end = r.end;
+        last.productionSeconds += r.productionSeconds;
+        last.idleSeconds       += r.idleSeconds;
+        last.errorSeconds      += r.errorSeconds;
+      } else {
+        merged.push({ ...r });
+      }
+    }
 
     const errs: ErrSeg[] = errorEvents
       .map(ev => {
@@ -107,29 +183,43 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       })
       .filter(s => s.end > s.start);
 
-    // Top-of-hour tick marks. Bucket keys are factory-wall-clock-as-UTC, so
-    // `getUTCMinutes() === 0` already lands on factory hour boundaries for
-    // whole-hour-offset zones — same convention the line chart uses.
+    // Top-of-hour ticks (factory wall clock — bucket keys are stored UTC-naive
+    // so getUTCMinutes()===0 lands on factory hour boundaries).
     const hourTicks = rows
       .map(r => parseBucketKey(r.date).getTime())
       .filter(t => new Date(t).getUTCMinutes() === 0);
-    // Downsample so labels don't overlap on narrow screens.
     const MAX_LABELS = 12;
-    const step = Math.max(1, Math.ceil(hourTicks.length / MAX_LABELS));
-    const tickPositions = hourTicks.filter((_, i) => i % step === 0);
+    const tickStep = Math.max(1, Math.ceil(hourTicks.length / MAX_LABELS));
+    const tickPositions = hourTicks.filter((_, i) => i % tickStep === 0);
 
-    return { firstMs, endMs, totalMs, segments, errs, tickPositions };
+    // Rank errors by total downtime for the chip summary.
+    const byCode = new Map<string, { code: string; count: number; totalSec: number }>();
+    for (const e of errs) {
+      const code = e.ev.error_code;
+      const cur  = byCode.get(code) ?? { code, count: 0, totalSec: 0 };
+      cur.count    += 1;
+      cur.totalSec += (e.end - e.start) / 1000;
+      byCode.set(code, cur);
+    }
+    const errorRanking = Array.from(byCode.values()).sort((a, b) => b.totalSec - a.totalSec);
+
+    return { firstMs, endMs, totalMs, segments: merged, errs, tickPositions, errorRanking };
   }, [rows, errorEvents]);
 
+  // Per-render pack: depends on container width, so it has to live outside the
+  // data useMemo (or take width as an input). Keep cheap; runs on every resize.
+  const labelPack = useMemo(() => {
+    if (!data) return { items: [], laneCount: 0 };
+    return packLabels(data.errs, data.firstMs, data.totalMs, stripWidthPx);
+  }, [data, stripWidthPx]);
+
   if (!data) {
-    return (
-      <div className="text-gray-500 text-sm py-4">No state data for this period.</div>
-    );
+    return <div className="text-gray-500 text-sm py-4">No state data for this period.</div>;
   }
 
   const pct = (t: number) => ((t - data.firstMs) / data.totalMs) * 100;
+  const pxToPct = (px: number) => stripWidthPx > 0 ? (px / stripWidthPx) * 100 : 0;
 
-  // Aggregate state summary across the window (for the legend strip).
   const summary = data.segments.reduce(
     (acc, s) => {
       const span = (s.end - s.start) / 1000;
@@ -148,13 +238,17 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
   const totalSec = summary.running + summary.idle + summary.error + summary.empty;
   const sharePct = (s: number) => totalSec > 0 ? (s / totalSec) * 100 : 0;
 
-  const enterBucket = (seg: BucketSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
+  const enterBucket = (seg: MergedSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
     setHover({ kind: "bucket", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
   const enterError = (seg: ErrSeg) => (e: React.MouseEvent<HTMLDivElement>) => {
     setHover({ kind: "error", seg, ...anchor(e.currentTarget.getBoundingClientRect()) });
   };
   const leave = () => setHover(null);
+
+  const labelAreaHeight = labelPack.laneCount > 0
+    ? labelPack.laneCount * LABEL_LANE_HEIGHT + 6
+    : 0;
 
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
@@ -167,8 +261,52 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
         </div>
       </div>
 
-      {/* The strip itself: full-width container, percent-positioned children. */}
-      <div className="relative h-12 rounded overflow-hidden" style={{ background: COLORS.empty }}>
+      {/* Error code labels above the strip, packed into lanes with leader
+          lines down to each error block. Only renders once we've measured
+          the container width (so packing has real pixel widths to work with). */}
+      {labelAreaHeight > 0 && stripWidthPx > 0 && (
+        <div
+          className="relative"
+          style={{ height: labelAreaHeight, marginBottom: 2 }}
+        >
+          {labelPack.items.map((item, i) => {
+            const labelBottomPx = (item.lane + 1) * LABEL_LANE_HEIGHT;
+            const leaderHeight  = labelAreaHeight - labelBottomPx;
+            return (
+              <span key={`lbl-${i}`}>
+                <span
+                  className="absolute text-[10px] font-semibold text-red-400 whitespace-nowrap select-none"
+                  style={{
+                    left: `${pxToPct(item.centerPx)}%`,
+                    top:  item.lane * LABEL_LANE_HEIGHT,
+                    transform: "translateX(-50%)",
+                    lineHeight: `${LABEL_LANE_HEIGHT}px`,
+                  }}
+                >
+                  {item.ev.error_code}
+                </span>
+                <span
+                  className="absolute"
+                  style={{
+                    left: `${pxToPct(item.centerPx)}%`,
+                    top:  labelBottomPx,
+                    width: 1,
+                    height: leaderHeight,
+                    background: "rgba(239, 68, 68, 0.55)",
+                  }}
+                />
+              </span>
+            );
+          })}
+        </div>
+      )}
+
+      {/* The strip itself. */}
+      <div
+        ref={stripRef}
+        className="relative h-10 rounded overflow-hidden"
+        style={{ background: COLORS.empty }}
+      >
         {data.segments.map((seg, i) => (
           <div
             key={`b-${i}`}
@@ -177,7 +315,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
               left:  `${pct(seg.start)}%`,
               width: `${pct(seg.end) - pct(seg.start)}%`,
               background: seg.state === "empty" ? "transparent" : COLORS[seg.state],
-              opacity: 0.85,
+              opacity: 0.9,
             }}
             onMouseEnter={enterBucket(seg)}
             onMouseLeave={leave}
@@ -188,24 +326,20 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           return (
             <div
               key={`e-${i}`}
-              className="absolute top-0 bottom-0 flex items-center justify-center text-[10px] font-bold text-white cursor-pointer"
+              className="absolute top-0 bottom-0 cursor-pointer"
               style={{
                 left:  `${pct(seg.start)}%`,
                 width: `${Math.max(w, 0.15)}%`,
                 background: COLORS.error,
-                borderLeft:  "1px solid rgba(0,0,0,0.4)",
-                borderRight: "1px solid rgba(0,0,0,0.4)",
               }}
               onMouseEnter={enterError(seg)}
               onMouseLeave={leave}
-            >
-              {w > 2.5 ? seg.ev.error_code : ""}
-            </div>
+            />
           );
         })}
       </div>
 
-      {/* X-axis tick labels — top of factory hour, downsampled. */}
+      {/* Hour ticks. */}
       <div className="relative h-4 mt-1 text-[10px] text-gray-500">
         {data.tickPositions.map((t, i) => (
           <span
@@ -217,6 +351,28 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           </span>
         ))}
       </div>
+
+      {/* Ranked error summary — turns the colored blocks into an action list. */}
+      {data.errorRanking.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {data.errorRanking.map(r => {
+            const desc = errorLookup[r.code]?.description;
+            return (
+              <span
+                key={r.code}
+                className="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] text-red-100"
+                style={{ background: "rgba(220, 38, 38, 0.18)", border: "1px solid rgba(220, 38, 38, 0.4)" }}
+                title={desc ?? ""}
+              >
+                <span className="font-semibold">{r.code}</span>
+                {desc && <span className="text-red-200/80 truncate max-w-[180px]">{desc}</span>}
+                <span className="text-red-200/70">× {r.count}</span>
+                <span className="text-red-200/70">· {fmtSecs(r.totalSec)}</span>
+              </span>
+            );
+          })}
+        </div>
+      )}
 
       {hover && typeof document !== "undefined" && createPortal(
         <div
@@ -252,13 +408,14 @@ function Legend({ color, label }: { color: string; label: string }) {
   );
 }
 
-function BucketTooltip({ seg }: { seg: BucketSeg }) {
+function BucketTooltip({ seg }: { seg: MergedSeg }) {
   const label = seg.state === "running" ? "Running" : seg.state === "idle" ? "Idle" : "No data";
   const color = seg.state === "running" ? COLORS.running : seg.state === "idle" ? COLORS.idle : "#6b7280";
   return (
     <div>
       <div className="text-gray-400 mb-1">
         {format(new Date(seg.start), "HH:mm")} – {format(new Date(seg.end), "HH:mm")}
+        <span className="text-gray-500"> · {fmtSecs((seg.end - seg.start) / 1000)}</span>
       </div>
       <div className="font-semibold" style={{ color }}>{label}</div>
       <div className="text-gray-400 mt-1 space-y-0.5">
