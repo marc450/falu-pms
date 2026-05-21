@@ -571,11 +571,63 @@ function parseGuidanceSteps(text: string): string[] {
     .filter(line => line.length > 0);
 }
 
+// ─── Operator how-to library ───────────────────────────────────────────
+// Maps a checklist step (matched by regex against the step text) to a
+// per-step illustrated walkthrough. The kiosk shows a "How to check" link
+// next to a step whenever its text matches one of these entries. Adding a
+// new how-to just means extending HOWTOS with a new pattern + content.
+// Image src is left as null for now so the kiosk renders a placeholder
+// frame in place of the eventual photo.
+
+type HowToImage = {
+  src: string | null;
+  description: string;
+};
+
+type HowTo = {
+  title: string;
+  images: HowToImage[];
+};
+
+const HOWTOS: { match: RegExp; howto: HowTo }[] = [
+  {
+    match: /cotton.*jam|wattestau|wattest(o|ö)pf/i,
+    howto: {
+      title: "Check if there is a cotton jam",
+      images: [
+        {
+          src: null,
+          description: "Press this button on the HMI to lift the cotton feeder.",
+        },
+        {
+          src: null,
+          description: "Check underneath the cotton feeder and remove the side plates to check the inside.",
+        },
+      ],
+    },
+  },
+];
+
+function findHowTo(stepText: string): HowTo | null {
+  for (const entry of HOWTOS) {
+    if (entry.match.test(stepText)) return entry.howto;
+  }
+  return null;
+}
+
 // Renders the operator-guidance block. One step → plain paragraph (same look
 // as before, smaller type). Multiple steps → numbered list with a badge per
 // row, thin red divider between rows, so the eye can land on a single step
-// instead of scanning a wall of text.
-function GuidanceBlock({ text, label }: { text: string; label: string }) {
+// instead of scanning a wall of text. When a step has a matching how-to
+// entry the row becomes tappable; the parent renders the walkthrough.
+function GuidanceBlock({
+  text, label, lang, onStepTap,
+}: {
+  text:       string;
+  label:      string;
+  lang:       TabletLang;
+  onStepTap?: (howto: HowTo) => void;
+}) {
   const steps = parseGuidanceSteps(text);
   return (
     <div>
@@ -583,26 +635,124 @@ function GuidanceBlock({ text, label }: { text: string; label: string }) {
         {label}
       </p>
       {steps.length <= 1 ? (
-        <p className="text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">
-          {steps[0] ?? text}
-        </p>
+        (() => {
+          const single = steps[0] ?? text;
+          const howto  = onStepTap ? findHowTo(single) : null;
+          if (howto && onStepTap) {
+            return (
+              <button
+                type="button"
+                onClick={() => onStepTap(howto)}
+                className="text-left flex items-start gap-4 w-full rounded-2xl px-4 py-3 -mx-4 -my-1 hover:bg-red-950/40 active:scale-[0.99] transition"
+              >
+                <p className="flex-1 text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{single}</p>
+                <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-amber-200 mt-2">
+                  {t(lang, "how_to_check")} <i className="bi bi-chevron-right"></i>
+                </span>
+              </button>
+            );
+          }
+          return (
+            <p className="text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{single}</p>
+          );
+        })()
       ) : (
         <ol className="flex flex-col">
-          {steps.map((step, idx) => (
-            <li
-              key={idx}
-              className={`flex items-start gap-5 py-3 ${idx > 0 ? "border-t border-red-300/15" : ""}`}
-            >
-              <span className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-red-950/60 border border-red-300/30 text-cyan-200 text-2xl font-semibold leading-none">
-                {idx + 1}
-              </span>
-              <p className="flex-1 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
-                {step}
-              </p>
-            </li>
-          ))}
+          {steps.map((step, idx) => {
+            const howto    = onStepTap ? findHowTo(step) : null;
+            const tappable = Boolean(howto && onStepTap);
+            const rowBase  = `flex items-start gap-5 py-3 ${idx > 0 ? "border-t border-red-300/15" : ""}`;
+            const inner = (
+              <>
+                <span className="shrink-0 inline-flex items-center justify-center w-12 h-12 rounded-xl bg-red-950/60 border border-red-300/30 text-cyan-200 text-2xl font-semibold leading-none">
+                  {idx + 1}
+                </span>
+                <p className="flex-1 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
+                  {step}
+                </p>
+                {tappable && (
+                  <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-amber-200 mt-2">
+                    {t(lang, "how_to_check")} <i className="bi bi-chevron-right"></i>
+                  </span>
+                )}
+              </>
+            );
+            return tappable ? (
+              <li key={idx} className={rowBase}>
+                <button
+                  type="button"
+                  onClick={() => onStepTap!(howto!)}
+                  className="flex-1 flex items-start gap-5 text-left rounded-2xl px-2 -mx-2 hover:bg-red-950/40 active:scale-[0.99] transition"
+                >
+                  {inner}
+                </button>
+              </li>
+            ) : (
+              <li key={idx} className={rowBase}>
+                {inner}
+              </li>
+            );
+          })}
         </ol>
       )}
+    </div>
+  );
+}
+
+// Per-step "how to check" walkthrough. Shown in place of the operator
+// guidance when the operator taps a tappable step. Two-column on tablet
+// orientation, single-column on narrow screens. Images fall back to a
+// labelled placeholder frame until real photos are wired in.
+function HowToView({
+  howto, lang, onBack,
+}: {
+  howto:  HowTo;
+  lang:   TabletLang;
+  onBack: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-6">
+      <button
+        type="button"
+        onClick={onBack}
+        className="self-start inline-flex items-center gap-2 px-5 py-3 rounded-xl bg-red-950/40 border border-red-300/30 text-cyan-200 text-base font-semibold hover:bg-red-950/60 active:scale-95 transition"
+      >
+        <i className="bi bi-arrow-left"></i>
+        {t(lang, "back_to_checklist")}
+      </button>
+      <h3 className="text-3xl md:text-4xl font-bold text-cyan-50 leading-tight">
+        {howto.title}
+      </h3>
+      <ol className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {howto.images.map((img, idx) => (
+          <li key={idx} className="flex flex-col gap-3">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-red-950/60 border border-red-300/30 text-cyan-200 text-xl font-semibold leading-none">
+                {idx + 1}
+              </span>
+              <p className="flex-1 text-xl md:text-2xl font-semibold text-cyan-50 leading-[1.25]">
+                {img.description}
+              </p>
+            </div>
+            <HowToImageFrame src={img.src} alt={img.description} />
+          </li>
+        ))}
+      </ol>
+    </div>
+  );
+}
+
+function HowToImageFrame({ src, alt }: { src: string | null; alt: string }) {
+  if (src) {
+    // eslint-disable-next-line @next/next/no-img-element
+    return (
+      <img src={src} alt={alt} className="w-full rounded-2xl border border-red-300/20" />
+    );
+  }
+  return (
+    <div className="w-full aspect-[4/3] rounded-2xl border-2 border-dashed border-red-300/30 bg-red-950/30 flex flex-col items-center justify-center gap-2 text-red-200/70">
+      <i className="bi bi-image text-5xl"></i>
+      <p className="text-sm uppercase tracking-[0.2em]">Image placeholder</p>
     </div>
   );
 }
@@ -625,6 +775,9 @@ function ErrorCard({ ev, info, lang }: {
   const [mode, setMode]       = useState<"operator" | "tech-pin" | "tech">("operator");
   const [pin,  setPin]        = useState("");
   const [pinErr, setPinErr]   = useState(false);
+  // Active how-to walkthrough, set when the operator taps a tappable step
+  // in the operator guidance list. Cleared by the back button.
+  const [howtoStep, setHowtoStep] = useState<HowTo | null>(null);
 
   const hasTech = !!info?.technical_support_guidance;
 
@@ -668,10 +821,18 @@ function ErrorCard({ ev, info, lang }: {
       </div>
 
       {/* Body — switches by mode */}
-      {mode === "operator" && (
+      {mode === "operator" && howtoStep && (
+        <HowToView howto={howtoStep} lang={lang} onBack={() => setHowtoStep(null)} />
+      )}
+      {mode === "operator" && !howtoStep && (
         <>
           {info?.operator_guidance && (
-            <GuidanceBlock text={info.operator_guidance} label={t(lang, "operator_guidance")} />
+            <GuidanceBlock
+              text={info.operator_guidance}
+              label={t(lang, "operator_guidance")}
+              lang={lang}
+              onStepTap={setHowtoStep}
+            />
           )}
           {hasTech && (
             <button
@@ -700,7 +861,7 @@ function ErrorCard({ ev, info, lang }: {
             <i className="bi bi-arrow-left"></i>
             {t(lang, "back_to_operator")}
           </button>
-          <GuidanceBlock text={info.technical_support_guidance} label={t(lang, "tech_support")} />
+          <GuidanceBlock text={info.technical_support_guidance} label={t(lang, "tech_support")} lang={lang} />
         </>
       )}
     </article>

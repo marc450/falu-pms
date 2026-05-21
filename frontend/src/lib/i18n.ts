@@ -34,6 +34,8 @@ const STRINGS: Record<TabletLang, Dict> = {
     tech_support:        "Technical Support Guidance",
     tech_support_pin:    "Enter technical support PIN",
     back_to_operator:    "Back to Operator Guidance",
+    back_to_checklist:   "Back to checklist",
+    how_to_check:        "How to check",
     cancel:              "Cancel",
     no_active_errors:    "Waiting for error details…",
 
@@ -62,6 +64,8 @@ const STRINGS: Record<TabletLang, Dict> = {
     tech_support:        "Guía para soporte técnico",
     tech_support_pin:    "Ingrese el PIN de soporte técnico",
     back_to_operator:    "Volver a la guía del operador",
+    back_to_checklist:   "Volver a la lista",
+    how_to_check:        "Cómo verificar",
     cancel:              "Cancelar",
     no_active_errors:    "Esperando detalles del error…",
 
