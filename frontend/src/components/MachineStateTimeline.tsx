@@ -18,10 +18,12 @@ interface Props {
 // bucket-level split only needs to decide running vs idle.
 const RUNNING_THRESHOLD = 0.5;
 
+// Match the Good / Mediocre / Poor zone tints used by the Avg Scrap and Avg
+// Uptime charts above so the timeline reads as the same colour family.
 const COLORS = {
-  running: "#16a34a",
+  running: "#4ade80",
   idle:    "#eab308",
-  error:   "#dc2626",
+  error:   "#ef4444",
   empty:   "#1f2937",
 };
 
