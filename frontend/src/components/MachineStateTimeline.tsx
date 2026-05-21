@@ -138,8 +138,17 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
       }
       placed.push({ ...e, lane });
     }
-    const laneCount = Math.max(1, laneEnds.length);
-    const errs: ErrSeg[] = placed.map(p => ({ ...p, laneCount }));
+    // Per-error LOCAL divisor: only count how deep the overlap actually is in
+    // this error's time range. A lone error keeps lane 0 and divisor 1 →
+    // renders full height. Global lane indices stay consistent so neighbouring
+    // overlapping errors never paint into the same vertical band.
+    const errs: ErrSeg[] = placed.map(p => {
+      let maxLane = p.lane;
+      for (const o of placed) {
+        if (o.start < p.end && o.end > p.start && o.lane > maxLane) maxLane = o.lane;
+      }
+      return { ...p, laneCount: maxLane + 1 };
+    });
 
     const hourTicks = rows
       .map(r => parseBucketKey(r.date).getTime())
