@@ -827,6 +827,7 @@ export function ProductionTrendSection({
   errorEvents = [],
   errorLookup = {},
   showUptimeChart = true,
+  afterKpis,
 }: {
   rows: FleetTrendRow[];
   granularity: "hour" | "day";
@@ -851,6 +852,10 @@ export function ProductionTrendSection({
   // page hides it in the intraday view because the new state timeline below
   // replaces the same information in a more actionable form.
   showUptimeChart?: boolean;
+  // Optional slot rendered between the KPI tile row and the trend charts.
+  // The Machine Monitor uses this to position its state timeline directly
+  // under the KPIs without leaking layout details into this component.
+  afterKpis?: React.ReactNode;
 }) {
   // Factory timezone — used by every label/tooltip formatter on this chart
   // so the X-axis reads in the operator's wall-clock time, not the browser's.
@@ -1096,6 +1101,8 @@ export function ProductionTrendSection({
           />
         )}
       </div>
+
+      {afterKpis && <div className="mb-5">{afterKpis}</div>}
 
       {/* Trend charts — one per row so each gets full width */}
       <div className="flex flex-col gap-4 mb-4">

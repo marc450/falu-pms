@@ -486,20 +486,6 @@ function ProductionContent() {
         <div className="mt-8">
           <h3 className="text-lg font-semibold text-white mb-4">Production Trend</h3>
 
-          {/* Timeline first — the at-a-glance "what state was the machine
-              in, when" panel reads better above the KPI tiles and trend
-              charts that quantify it. Only on the 24h preset; daily/weekly
-              presets don't have the sub-hour resolution it needs. */}
-          {trendGranularity === "hour" && trendRows.length > 0 && (
-            <div className="mb-6">
-              <MachineStateTimeline
-                rows={trendRows}
-                errorEvents={errorEvents}
-                errorLookup={errorLookup}
-              />
-            </div>
-          )}
-
           <ProductionTrendSection
             rows={trendRows}
             granularity={trendGranularity}
@@ -526,6 +512,15 @@ function ProductionContent() {
             errorEvents={errorEvents}
             errorLookup={errorLookup}
             showUptimeChart={trendGranularity !== "hour"}
+            afterKpis={
+              trendGranularity === "hour" && trendRows.length > 0 ? (
+                <MachineStateTimeline
+                  rows={trendRows}
+                  errorEvents={errorEvents}
+                  errorLookup={errorLookup}
+                />
+              ) : null
+            }
           />
         </div>
       )}
