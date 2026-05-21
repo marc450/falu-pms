@@ -597,11 +597,19 @@ const HOWTOS: { match: RegExp; howto: HowTo }[] = [
       images: [
         {
           src: null,
-          description: "Press this button on the HMI to lift the cotton feeder.",
+          description: "Remove the side plates of the cotton feeder and remove dust.",
+        },
+        {
+          src: null,
+          description: "Press this button on the control panel to lift the cotton feeder.",
         },
         {
           src: null,
           description: "Check underneath the cotton feeder and remove the side plates to check the inside.",
+        },
+        {
+          src: null,
+          description: "Press this button on the control panel again to lower the cotton feeder.",
         },
       ],
     },
