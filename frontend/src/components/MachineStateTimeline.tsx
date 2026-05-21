@@ -56,11 +56,23 @@ type Hover =
   | { kind: "bucket"; seg: MergedSeg; x: number; y: number; flipUp: boolean }
   | { kind: "error";  seg: ErrSeg;    x: number; y: number; flipUp: boolean };
 
+const TOOLTIP_MAX_WIDTH  = 320;
 const TOOLTIP_HEIGHT_EST = 220;
 const TOOLTIP_MARGIN     = 8;
 
+// Returns the LEFT edge of the tooltip (not the centre) so we can keep its
+// natural width even when the hovered bar is near a viewport edge. Ideal
+// centre is over the bar; if that would push the tooltip off-screen on the
+// right or left, we clamp the left edge so the whole tooltip stays visible.
+// Vertical: flip above the bar when there's no room below.
 function anchor(rect: DOMRect): { x: number; y: number; flipUp: boolean } {
-  const x = rect.left + rect.width / 2;
+  const idealCentre = rect.left + rect.width / 2;
+  const maxLeft     = window.innerWidth - TOOLTIP_MAX_WIDTH - TOOLTIP_MARGIN;
+  const x = Math.max(
+    TOOLTIP_MARGIN,
+    Math.min(maxLeft, idealCentre - TOOLTIP_MAX_WIDTH / 2),
+  );
+
   const below = rect.bottom + 6;
   if (below + TOOLTIP_HEIGHT_EST + TOOLTIP_MARGIN > window.innerHeight) {
     return { x, y: rect.top - 6, flipUp: true };
@@ -269,11 +281,11 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           style={{
             left: hover.x,
             top:  hover.y,
-            transform: hover.flipUp ? "translate(-50%, -100%)" : "translateX(-50%)",
+            transform: hover.flipUp ? "translateY(-100%)" : undefined,
             background: "#111827",
             border: "1px solid #374151",
             color: "#e5e7eb",
-            maxWidth: 320,
+            maxWidth: TOOLTIP_MAX_WIDTH,
           }}
         >
           {hover.kind === "bucket" ? (
