@@ -843,22 +843,31 @@ function ErrorCard({ ev, info, lang }: {
 
   useEffect(() => {
     let alive = true;
+    // Track <link rel="preload"> nodes we insert so we can clean them up
+    // when the error code changes or the card unmounts.
+    const preloadLinks: HTMLLinkElement[] = [];
     (async () => {
       try {
         const dbItems = await fetchChecklistForCode(ev.error_code, lang);
         if (!alive) return;
         if (dbItems.length > 0) {
-          // Preload every step image (at the same transformed URL the
-          // <img> tag will request) so the operator's first tap shows
-          // the image instantly instead of fetching it on demand.
-          if (typeof window !== "undefined") {
+          // Browser-prioritised preload: inject <link rel="preload"> for
+          // every step image as soon as the checklist returns from the DB.
+          // The browser fetches them at high priority and primes the HTTP
+          // cache before the operator taps anything. (The persistent
+          // hidden HowToView further down also keeps them in memory once
+          // the page renders, so re-entering a step is instant.)
+          if (typeof document !== "undefined") {
             for (const it of dbItems) {
               for (const s of it.steps) {
                 const url = optimizeKioskImageUrl(s.image_url);
-                if (url) {
-                  const preloader = new window.Image();
-                  preloader.src = url;
-                }
+                if (!url) continue;
+                const link = document.createElement("link");
+                link.rel  = "preload";
+                link.as   = "image";
+                link.href = url;
+                document.head.appendChild(link);
+                preloadLinks.push(link);
               }
             }
           }
@@ -877,7 +886,10 @@ function ErrorCard({ ev, info, lang }: {
       const parsed = text ? parseGuidanceSteps(text) : [];
       setChecklist(parsed.map(step => ({ text: step, howto: null })));
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+      for (const link of preloadLinks) link.remove();
+    };
   }, [ev.error_code, info?.operator_guidance, lang]);
 
   const techItems: DisplayChecklistItem[] = info?.technical_support_guidance
