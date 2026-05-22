@@ -1,6 +1,6 @@
 "use client";
 
-import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 // @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
@@ -840,6 +840,11 @@ function ErrorCard({ ev, info, lang }: {
   // back to parsing PlcErrorCode.operator_guidance text when no DB rows
   // exist for the code. Null while loading.
   const [checklist, setChecklist] = useState<DisplayChecklistItem[] | null>(null);
+  // Holds decoded Image() instances alive for the lifetime of this card.
+  // .decode() forces the browser to do the JPG→pixels conversion now (not
+  // when the operator taps), and the ref keeps the objects from being GC'd
+  // so the decoded bytes stay in the image cache.
+  const imageCache = useRef<HTMLImageElement[]>([]);
 
   useEffect(() => {
     let alive = true;
@@ -858,6 +863,11 @@ function ErrorCard({ ev, info, lang }: {
           // hidden HowToView further down also keeps them in memory once
           // the page renders, so re-entering a step is instant.)
           if (typeof document !== "undefined") {
+            // 1) <link rel="preload"> — high-priority browser preload signal
+            // 2) Image() + decode() — forces an actual decode that we hold a
+            //    reference to (via the imageCache ref) so it persists in the
+            //    image cache for as long as this card is mounted.
+            imageCache.current = [];
             for (const it of dbItems) {
               for (const s of it.steps) {
                 const url = optimizeKioskImageUrl(s.image_url);
@@ -868,6 +878,14 @@ function ErrorCard({ ev, info, lang }: {
                 link.href = url;
                 document.head.appendChild(link);
                 preloadLinks.push(link);
+
+                const el = new window.Image();
+                el.src = url;
+                // decode() returns a promise; ignore errors (offline, 404, etc.)
+                if (typeof el.decode === "function") {
+                  el.decode().catch(() => {});
+                }
+                imageCache.current.push(el);
               }
             }
           }
@@ -987,7 +1005,16 @@ function ErrorCard({ ev, info, lang }: {
       {mode === "operator" && checklist?.map(item => item.howto && (
         <div
           key={`howto-${item.text}`}
-          style={{ display: howtoStep === item.howto ? "block" : "none" }}
+          // Off-screen positioning instead of display:none — Chrome evicts
+          // decoded image data from display:none subtrees under memory
+          // pressure, which is exactly what was causing the re-load
+          // perception. Keep the elements laid out somewhere the browser
+          // can see them so they stay decoded and ready.
+          style={howtoStep === item.howto
+            ? undefined
+            : { position: "absolute", left: -99999, top: 0, width: "1px", height: "1px", overflow: "hidden", pointerEvents: "none", opacity: 0 }
+          }
+          aria-hidden={howtoStep !== item.howto}
         >
           <HowToView howto={item.howto} />
         </div>
