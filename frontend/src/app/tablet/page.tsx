@@ -876,6 +876,9 @@ function ErrorCard({ ev, info, lang }: {
                 link.rel  = "preload";
                 link.as   = "image";
                 link.href = url;
+                // fetchpriority tells the browser this is critical and
+                // should be loaded ahead of other resources.
+                link.setAttribute("fetchpriority", "high");
                 document.head.appendChild(link);
                 preloadLinks.push(link);
 
@@ -991,6 +994,7 @@ function ErrorCard({ ev, info, lang }: {
               aria-hidden="true"
               loading="eager"
               decoding="async"
+              fetchPriority="high"
               style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
             />
           )) ?? []
