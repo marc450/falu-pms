@@ -291,8 +291,13 @@ function LangPicker({
   const [open, setOpen] = useState(false);
   const current = TABLET_LANGS.find(l => l.code === lang) ?? TABLET_LANGS[0];
 
-  const wrapper = absolute ? "absolute top-4 right-4 z-50" : "relative";
-  const menu    = dropUp   ? "absolute bottom-full right-0 mb-2" : "absolute top-full right-0 mt-2";
+  // end-* / start-* are logical positions: end means "trailing edge of the
+  // reading direction" (right in LTR, left in RTL). Without these, the
+  // dropdown anchors to the physical right edge of its button and lands
+  // off-screen in Arabic mode because the bottom bar's flex layout has
+  // already moved the picker to the screen's left side.
+  const wrapper = absolute ? "absolute top-4 end-4 z-50" : "relative";
+  const menu    = dropUp   ? "absolute bottom-full end-0 mb-2" : "absolute top-full end-0 mt-2";
 
   return (
     <div className={wrapper}>
@@ -300,7 +305,7 @@ function LangPicker({
         onClick={() => setOpen(o => !o)}
         className="flex items-center gap-2 bg-gray-900/80 hover:bg-gray-800 border border-gray-700 rounded-full px-4 py-2 text-base"
       >
-        <span className="text-xl">{current.flag}</span>
+        {current.flag && <span className="text-xl">{current.flag}</span>}
         <span className="text-gray-300">{current.label}</span>
       </button>
       {open && (
@@ -309,9 +314,9 @@ function LangPicker({
             <button
               key={l.code}
               onClick={() => { onChange(l.code); setOpen(false); }}
-              className={`w-full text-left flex items-center gap-3 px-4 py-3 hover:bg-gray-800 ${l.code === lang ? "bg-cyan-950/40 text-cyan-300" : "text-gray-300"}`}
+              className={`w-full text-start flex items-center gap-3 px-4 py-3 hover:bg-gray-800 ${l.code === lang ? "bg-cyan-950/40 text-cyan-300" : "text-gray-300"}`}
             >
-              <span className="text-xl">{l.flag}</span>
+              {l.flag && <span className="text-xl">{l.flag}</span>}
               <span>{l.label}</span>
             </button>
           ))}
