@@ -1,6 +1,8 @@
 "use client";
 
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
+// @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
+import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import {
   validateTabletToken, validateTabletPin,
@@ -718,14 +720,39 @@ function optimizeKioskImageUrl(url: string | null): string | null {
 
 function HowToImageFrame({ src, alt }: { src: string | null; alt: string }) {
   const optimized = optimizeKioskImageUrl(src);
-  if (optimized) {
-    // Force a consistent 4:3 frame regardless of source orientation —
-    // portrait phone photos would otherwise stretch the row to the
-    // photo's native height and crowd the description text. object-
-    // contain keeps the full image visible with letterboxing on the
-    // sides; a dark backdrop hides the bars.
+  const [zoomed, setZoomed] = useState(false);
+
+  // Block body scroll while the lightbox is open so a stray tap-drag on
+  // the overlay can't move the kiosk view behind it.
+  useEffect(() => {
+    if (!zoomed) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = prev; };
+  }, [zoomed]);
+
+  if (!optimized) {
     return (
-      <div className="w-full aspect-[4/3] rounded-2xl overflow-hidden border border-red-300/20 bg-red-950/40">
+      <div className="w-full aspect-[4/3] rounded-2xl border-2 border-dashed border-red-300/30 bg-red-950/30 flex flex-col items-center justify-center gap-2 text-red-200/70">
+        <i className="bi bi-image text-5xl"></i>
+        <p className="text-sm uppercase tracking-[0.2em]">Image placeholder</p>
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setZoomed(true)}
+        aria-label={alt}
+        // Force a consistent 4:3 frame regardless of source orientation —
+        // portrait phone photos would otherwise stretch the row to the
+        // photo's native height and crowd the description text. object-
+        // contain keeps the full image visible with letterboxing on the
+        // sides; a dark backdrop hides the bars.
+        className="block w-full aspect-[4/3] rounded-2xl overflow-hidden border border-red-300/20 bg-red-950/40 active:scale-[0.98] transition"
+      >
         {/* eslint-disable-next-line @next/next/no-img-element */}
         <img
           src={optimized}
@@ -734,14 +761,33 @@ function HowToImageFrame({ src, alt }: { src: string | null; alt: string }) {
           decoding="async"
           className="w-full h-full object-contain"
         />
-      </div>
-    );
-  }
-  return (
-    <div className="w-full aspect-[4/3] rounded-2xl border-2 border-dashed border-red-300/30 bg-red-950/30 flex flex-col items-center justify-center gap-2 text-red-200/70">
-      <i className="bi bi-image text-5xl"></i>
-      <p className="text-sm uppercase tracking-[0.2em]">Image placeholder</p>
-    </div>
+      </button>
+
+      {zoomed && typeof document !== "undefined" && createPortal(
+        <div
+          role="dialog"
+          aria-modal="true"
+          onClick={() => setZoomed(false)}
+          className="fixed inset-0 z-[100] bg-black/90 flex items-center justify-center p-4 cursor-zoom-out"
+        >
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={optimized}
+            alt={alt}
+            className="max-w-full max-h-full object-contain"
+          />
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setZoomed(false); }}
+            aria-label="Close"
+            className="absolute top-6 right-6 w-14 h-14 rounded-full bg-white/10 backdrop-blur text-white text-2xl flex items-center justify-center hover:bg-white/20 active:scale-95 transition"
+          >
+            <i className="bi bi-x-lg"></i>
+          </button>
+        </div>,
+        document.body,
+      )}
+    </>
   );
 }
 
