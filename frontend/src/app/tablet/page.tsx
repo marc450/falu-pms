@@ -954,6 +954,30 @@ function ErrorCard({ ev, info, lang }: {
         </div>
       )}
 
+      {/* Dedicated preload sink: a naked 1px <img> per step image, eager,
+          rendered immediately when the checklist loads. Samsung's tablet
+          browser sometimes ignores `<link rel="preload">` and skips
+          loading images inside display:none subtrees, so this guarantees
+          the bytes are fetched and decoded the moment the checklist
+          renders, regardless of whether the operator ever opens a
+          walkthrough. */}
+      {mode === "operator" && checklist?.flatMap(item =>
+        item.howto?.images
+          .filter(img => !!img.src)
+          .map((img, i) => (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              key={`pre-${item.text}-${i}`}
+              src={img.src!}
+              alt=""
+              aria-hidden="true"
+              loading="eager"
+              decoding="async"
+              style={{ position: "absolute", width: 1, height: 1, opacity: 0, pointerEvents: "none" }}
+            />
+          )) ?? []
+      )}
+
       {/* Body — switches by mode.
           Every walkthrough mounts once and stays in the DOM with its
           <img> elements alive; only the visibility toggles when the
