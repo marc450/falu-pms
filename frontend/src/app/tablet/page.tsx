@@ -942,10 +942,20 @@ function ErrorCard({ ev, info, lang }: {
         </div>
       )}
 
-      {/* Body — switches by mode */}
-      {mode === "operator" && howtoStep && (
-        <HowToView howto={howtoStep} />
-      )}
+      {/* Body — switches by mode.
+          Every walkthrough mounts once and stays in the DOM with its
+          <img> elements alive; only the visibility toggles when the
+          operator drills in and out. Without this, each back-and-forth
+          tap-cycle re-mounted the images and re-decoded them from cache,
+          giving the impression that the images were loading fresh. */}
+      {mode === "operator" && checklist?.map(item => item.howto && (
+        <div
+          key={`howto-${item.text}`}
+          style={{ display: howtoStep === item.howto ? "block" : "none" }}
+        >
+          <HowToView howto={item.howto} />
+        </div>
+      ))}
       {mode === "operator" && !howtoStep && (
         <>
           {checklist && checklist.length > 0 && (
