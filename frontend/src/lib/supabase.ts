@@ -1550,20 +1550,48 @@ export interface PlcErrorCode {
   technical_support_guidance: string | null;
 }
 
-let _errorCodeCache: Record<string, PlcErrorCode> | null = null;
+// Kiosk languages that have dedicated translation columns on the error /
+// checklist tables. English is the base ("description"); every other entry
+// reads from a "<base>_<suffix>" column with fallback to the base when the
+// translation is NULL.
+const TRANSLATION_SUFFIX: Record<string, string | null> = {
+  en: null,
+  es: null,   // es content not localised at the DB level yet — falls back to English
+  ar: "ar",
+};
 
-export async function fetchErrorCodeLookup(): Promise<Record<string, PlcErrorCode>> {
-  if (_errorCodeCache) return _errorCodeCache;
+function pick<T>(translated: T | null | undefined, base: T): T {
+  return translated == null || translated === "" ? base : translated;
+}
+
+const _errorCodeCache = new Map<string, Record<string, PlcErrorCode>>();
+
+export async function fetchErrorCodeLookup(lang: string = "en"): Promise<Record<string, PlcErrorCode>> {
+  const cached = _errorCodeCache.get(lang);
+  if (cached) return cached;
   const sb = getSupabase();
-  const { data, error } = await sb
-    .from("plc_error_codes")
-    .select("code, severity, description, cause, operator_guidance, technical_support_guidance");
+  const suffix = TRANSLATION_SUFFIX[lang] ?? null;
+  const baseCols = ["code", "severity", "description", "cause", "operator_guidance", "technical_support_guidance"];
+  const transCols = suffix
+    ? ["description", "cause", "operator_guidance", "technical_support_guidance"].map(c => `${c}_${suffix}`)
+    : [];
+  const select = [...baseCols, ...transCols].join(", ");
+  const { data, error } = await sb.from("plc_error_codes").select(select);
   if (error || !data) return {};
-  _errorCodeCache = {};
-  for (const row of data) {
-    _errorCodeCache[row.code] = row as PlcErrorCode;
+  const map: Record<string, PlcErrorCode> = {};
+  for (const r of data) {
+    const row = r as unknown as Record<string, unknown>;
+    map[row.code as string] = {
+      code:                       row.code as string,
+      severity:                   row.severity as string,
+      description:                pick(suffix ? row[`description_${suffix}`]                as string | null : null, row.description as string),
+      cause:                      pick(suffix ? row[`cause_${suffix}`]                      as string | null : null, row.cause as string | null),
+      operator_guidance:          pick(suffix ? row[`operator_guidance_${suffix}`]          as string | null : null, row.operator_guidance as string | null),
+      technical_support_guidance: pick(suffix ? row[`technical_support_guidance_${suffix}`] as string | null : null, row.technical_support_guidance as string | null),
+    };
   }
-  return _errorCodeCache;
+  _errorCodeCache.set(lang, map);
+  return map;
 }
 
 // Per-error-code operator checklist with nested how-to steps. Lives in the
@@ -1583,37 +1611,47 @@ export interface ChecklistItem {
   steps:    ChecklistStep[];
 }
 
-export async function fetchChecklistForCode(errorCode: string): Promise<ChecklistItem[]> {
+export async function fetchChecklistForCode(errorCode: string, lang: string = "en"): Promise<ChecklistItem[]> {
   const sb = getSupabase();
+  const suffix = TRANSLATION_SUFFIX[lang] ?? null;
+
+  const itemCols = suffix ? `id, position, text, text_${suffix}` : "id, position, text";
   const { data: items, error: itemsErr } = await sb
     .from("checklist_items")
-    .select("id, position, text")
+    .select(itemCols)
     .eq("error_code", errorCode)
     .order("position");
   if (itemsErr) throw itemsErr;
   if (!items || items.length === 0) return [];
 
-  const itemIds = items.map((i: { id: string }) => i.id);
+  const itemIds = (items as unknown as { id: string }[]).map(i => i.id);
+  const stepCols = suffix
+    ? `id, checklist_item_id, position, description, description_${suffix}, image_url`
+    : "id, checklist_item_id, position, description, image_url";
   const { data: steps, error: stepsErr } = await sb
     .from("checklist_item_steps")
-    .select("id, checklist_item_id, position, description, image_url")
+    .select(stepCols)
     .in("checklist_item_id", itemIds)
     .order("position");
   if (stepsErr) throw stepsErr;
 
   const stepsByItem = new Map<string, ChecklistStep[]>();
   for (const s of steps ?? []) {
-    const row = s as { checklist_item_id: string; position: number; description: string; image_url: string | null };
-    const list = stepsByItem.get(row.checklist_item_id) ?? [];
-    list.push({ position: row.position, description: row.description, image_url: row.image_url });
-    stepsByItem.set(row.checklist_item_id, list);
+    const row = s as unknown as Record<string, unknown>;
+    const list = stepsByItem.get(row.checklist_item_id as string) ?? [];
+    list.push({
+      position:    row.position as number,
+      description: pick(suffix ? row[`description_${suffix}`] as string | null : null, row.description as string),
+      image_url:   row.image_url as string | null,
+    });
+    stepsByItem.set(row.checklist_item_id as string, list);
   }
 
-  return items.map((item: { id: string; position: number; text: string }) => ({
-    id:       item.id,
-    position: item.position,
-    text:     item.text,
-    steps:    stepsByItem.get(item.id) ?? [],
+  return (items as unknown as Record<string, unknown>[]).map(item => ({
+    id:       item.id as string,
+    position: item.position as number,
+    text:     pick(suffix ? item[`text_${suffix}`] as string | null : null, item.text as string),
+    steps:    stepsByItem.get(item.id as string) ?? [],
   }));
 }
 

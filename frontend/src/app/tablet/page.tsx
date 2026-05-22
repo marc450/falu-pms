@@ -11,7 +11,7 @@ import {
   getSupabase,
 } from "@/lib/supabase";
 import type { TabletSession, TabletPeerRow, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
-import { TABLET_LANGS, t } from "@/lib/i18n";
+import { TABLET_LANGS, t, isRtl } from "@/lib/i18n";
 import type { TabletLang } from "@/lib/i18n";
 
 // Peer status (other machines in the cell) still polls — it's a cell-wide
@@ -105,6 +105,23 @@ function TabletKioskInner() {
       localStorage.setItem(`tablet_lang_${token}`, next);
     }
   }, [token]);
+
+  // Mirror the document layout when the active language reads right-to-left.
+  // Sets dir + lang on <html> so flexbox auto-flips and Tailwind's rtl:
+  // variants kick in. Reverts to "ltr" on cleanup so navigating away from
+  // the kiosk doesn't leave the rest of the app mirrored.
+  useEffect(() => {
+    if (typeof document === "undefined") return;
+    const html = document.documentElement;
+    const prevDir  = html.getAttribute("dir");
+    const prevLang = html.getAttribute("lang");
+    html.setAttribute("dir",  isRtl(lang) ? "rtl" : "ltr");
+    html.setAttribute("lang", lang);
+    return () => {
+      if (prevDir  !== null) html.setAttribute("dir",  prevDir);  else html.removeAttribute("dir");
+      if (prevLang !== null) html.setAttribute("lang", prevLang); else html.removeAttribute("lang");
+    };
+  }, [lang]);
 
   const onPinSuccess = useCallback(() => {
     setPinUnlocked(true);
@@ -346,10 +363,12 @@ function Kiosk({
   const [errorLookup, setErrorLookup] = useState<Record<string, PlcErrorCode>>({});
   const [cellName, setCellName] = useState<string | null>(null);
 
-  // Static lookup table — cached after first load via the helper.
+  // Static lookup table — cached per language via the helper. Refetches
+  // when lang changes so a switch to Arabic immediately pulls Arabic
+  // description / cause / guidance rows.
   useEffect(() => {
-    fetchErrorCodeLookup().then(setErrorLookup).catch(() => {});
-  }, []);
+    fetchErrorCodeLookup(lang).then(setErrorLookup).catch(() => {});
+  }, [lang]);
 
   // Cell name (rarely changes — fetch once on mount).
   useEffect(() => {
@@ -821,7 +840,7 @@ function ErrorCard({ ev, info, lang }: {
     let alive = true;
     (async () => {
       try {
-        const dbItems = await fetchChecklistForCode(ev.error_code);
+        const dbItems = await fetchChecklistForCode(ev.error_code, lang);
         if (!alive) return;
         if (dbItems.length > 0) {
           // Preload every step image (at the same transformed URL the
@@ -854,7 +873,7 @@ function ErrorCard({ ev, info, lang }: {
       setChecklist(parsed.map(step => ({ text: step, howto: null })));
     })();
     return () => { alive = false; };
-  }, [ev.error_code, info?.operator_guidance]);
+  }, [ev.error_code, info?.operator_guidance, lang]);
 
   const techItems: DisplayChecklistItem[] = info?.technical_support_guidance
     ? parseGuidanceSteps(info.technical_support_guidance).map(step => ({ text: step, howto: null }))
