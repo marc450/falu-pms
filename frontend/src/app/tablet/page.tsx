@@ -598,6 +598,23 @@ type DisplayChecklistItem = {
   howto: HowTo | null;
 };
 
+// Render a checklist or step description, highlighting any segment wrapped in
+// **double asterisks** as bold amber. Keeps the database text plain and human-
+// editable while letting authors emphasise critical words (e.g. tool names,
+// safety constraints) without HTML.
+function renderEmphasized(text: string): React.ReactNode[] {
+  return text.split(/(\*\*[^*]+\*\*)/).map((part, i) => {
+    if (part.startsWith("**") && part.endsWith("**")) {
+      return (
+        <span key={i} className="text-amber-300 font-bold">
+          {part.slice(2, -2)}
+        </span>
+      );
+    }
+    return <span key={i}>{part}</span>;
+  });
+}
+
 // Renders the operator-guidance block. One item → plain paragraph (same look
 // as before, smaller type). Multiple items → numbered list with a badge per
 // row, thin red divider between rows, so the eye can land on a single item
@@ -629,7 +646,7 @@ function GuidanceBlock({
                 onClick={() => onStepTap!(item.howto!)}
                 className="text-left flex items-start gap-4 w-full rounded-2xl px-4 py-3 -mx-4 -my-1 hover:bg-red-950/40 active:scale-[0.99] transition"
               >
-                <p className="flex-1 text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{item.text}</p>
+                <p className="flex-1 text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{renderEmphasized(item.text)}</p>
                 <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-amber-200 mt-2">
                   {t(lang, "how_to_check")} <i className="bi bi-chevron-right"></i>
                 </span>
@@ -637,7 +654,7 @@ function GuidanceBlock({
             );
           }
           return (
-            <p className="text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{item.text}</p>
+            <p className="text-3xl md:text-4xl font-semibold text-cyan-50 leading-[1.2]">{renderEmphasized(item.text)}</p>
           );
         })()
       ) : (
@@ -651,7 +668,7 @@ function GuidanceBlock({
                   {idx + 1}
                 </span>
                 <p className="flex-1 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
-                  {item.text}
+                  {renderEmphasized(item.text)}
                 </p>
                 {tappable && (
                   <span className="shrink-0 inline-flex items-center gap-1.5 text-sm font-semibold text-amber-200 mt-2">
@@ -699,7 +716,7 @@ function HowToView({ howto }: { howto: HowTo }) {
             </span>
           </div>
           <p className="basis-1/2 text-2xl md:text-3xl font-semibold text-cyan-50 leading-[1.25]">
-            {img.description}
+            {renderEmphasized(img.description)}
           </p>
         </li>
       ))}
