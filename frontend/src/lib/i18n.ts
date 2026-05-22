@@ -3,13 +3,12 @@
 
 export type TabletLang = "en" | "es" | "ar";
 
-// `flag` is optional — Arabic has no single country flag (the language is
-// spoken across 20+ countries), so we show its native script-only label
-// rather than choose a politically loaded country marker.
+// `flag` stays optional in the type (Arabic has no universal flag), but for
+// the visiting demo audience we surface the Egyptian flag next to العربية.
 export const TABLET_LANGS: { code: TabletLang; label: string; flag: string | null }[] = [
   { code: "en", label: "English",  flag: "🇬🇧" },
   { code: "es", label: "Español", flag: "🇪🇸" },
-  { code: "ar", label: "العربية", flag: null  },
+  { code: "ar", label: "العربية", flag: "🇪🇬" },
 ];
 
 // Languages that read right-to-left. The kiosk flips its layout (dir="rtl")
