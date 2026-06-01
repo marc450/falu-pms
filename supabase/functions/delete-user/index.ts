@@ -74,15 +74,40 @@ Deno.serve(async (req) => {
       );
     }
 
-    // Delete the auth user (CASCADE removes user_profiles row)
+    // Delete the auth user (CASCADE removes user_profiles row).
+    // If the auth user was already deleted manually, Supabase returns a
+    // "User not found" / 404 error. Treat that as non-fatal so we can still
+    // clean up an orphaned user_profiles row below.
     const { error: deleteError } =
       await supabase.auth.admin.deleteUser(userId);
 
-    if (deleteError) {
+    const authUserMissing =
+      deleteError &&
+      ((deleteError as { status?: number }).status === 404 ||
+        /not found/i.test(deleteError.message));
+
+    if (deleteError && !authUserMissing) {
       return new Response(JSON.stringify({ error: deleteError.message }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Ensure the profile row is gone even if the auth user no longer existed
+    // (orphaned row) or CASCADE did not fire.
+    const { error: profileDeleteError } = await supabase
+      .from("user_profiles")
+      .delete()
+      .eq("id", userId);
+
+    if (profileDeleteError) {
+      return new Response(
+        JSON.stringify({ error: profileDeleteError.message }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, "Content-Type": "application/json" },
+        }
+      );
     }
 
     return new Response(JSON.stringify({ success: true }), {
