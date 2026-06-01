@@ -1432,7 +1432,7 @@ export interface UserProfile {
   role: "admin" | "viewer";
   first_name: string;
   last_name: string;
-  whatsapp_phone: string | null;
+  mechanic_phone: string | null;
   created_at: string;
 }
 
@@ -1468,7 +1468,7 @@ export async function updateUserRole(userId: string, role: "admin" | "viewer"): 
 
 export async function updateUserProfile(
   userId: string,
-  fields: { first_name?: string; last_name?: string; whatsapp_phone?: string | null }
+  fields: { first_name?: string; last_name?: string; mechanic_phone?: string | null }
 ): Promise<void> {
   const sb = getSupabase();
   const { error } = await sb
@@ -1518,11 +1518,11 @@ export async function invokeCreateUser(
   role: "admin" | "viewer",
   first_name: string,
   last_name: string,
-  whatsapp_phone?: string
+  mechanic_phone?: string
 ): Promise<{ id: string; email: string; role: string }> {
   const sb = getSupabase();
   const { data, error } = await sb.functions.invoke("create-user", {
-    body: { email, password, role, first_name, last_name, whatsapp_phone: whatsapp_phone || null },
+    body: { email, password, role, first_name, last_name, mechanic_phone: mechanic_phone || null },
   });
   if (error) throw new Error(await extractEdgeFnError(error));
   if (data?.error) throw new Error(data.error);

@@ -111,7 +111,9 @@ let factoryTimezone = "Europe/Zurich";  // loaded from app_settings
 // Twilio credentials from environment
 const TWILIO_SID          = process.env.TWILIO_ACCOUNT_SID || "";
 const TWILIO_TOKEN        = process.env.TWILIO_AUTH_TOKEN || "";
-const TWILIO_FROM         = process.env.TWILIO_WHATSAPP_FROM || "";  // e.g. "whatsapp:+14405863762"
+// SMS sender number (E.164, e.g. "+14405863762"). Falls back to the old
+// TWILIO_WHATSAPP_FROM var with any "whatsapp:" prefix stripped.
+const TWILIO_FROM         = (process.env.TWILIO_SMS_FROM || process.env.TWILIO_WHATSAPP_FROM || "").replace(/^whatsapp:/, "");
 const TWILIO_TEMPLATE_SID = process.env.TWILIO_TEMPLATE_SID || "";   // e.g. "HXe7a2d8e64c4305f014148976f37dc85c"
 
 // ============================================
@@ -823,28 +825,28 @@ async function resolveCurrentMechanic() {
     return null;
   }
 
-  // Look up mechanic's WhatsApp phone
+  // Look up mechanic's phone
   const { data: profile, error: profErr } = await supabase
     .from("user_profiles")
-    .select("first_name, last_name, whatsapp_phone")
+    .select("first_name, last_name, mechanic_phone")
     .eq("id", mechanicId)
     .single();
 
-  if (profErr || !profile || !profile.whatsapp_phone) {
-    logger.warn(`Mechanic ${mechanicId} has no WhatsApp phone`);
+  if (profErr || !profile || !profile.mechanic_phone) {
+    logger.warn(`Mechanic ${mechanicId} has no phone number`);
     return null;
   }
 
   return {
     mechanicId,
-    phone: profile.whatsapp_phone,
+    phone: profile.mechanic_phone,
     name: `${profile.first_name} ${profile.last_name}`.trim(),
     crewName,
   };
 }
 
 /**
- * Send a WhatsApp downtime alert via Twilio and log to notification_log.
+ * Send an SMS downtime alert via Twilio and log to notification_log.
  */
 async function sendDowntimeAlert(machine, errorMinutes) {
   if (!TWILIO_SID || !TWILIO_TOKEN || !TWILIO_FROM) {
@@ -895,11 +897,9 @@ async function sendDowntimeAlert(machine, errorMinutes) {
   try {
     const url = `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`;
 
-    // Send free-form WhatsApp message (requires 24h session window or approved template).
-    // TODO: switch back to ContentSid template once Meta Business verification is complete.
     const params = {
       From: TWILIO_FROM,
-      To: `whatsapp:${mechanic.phone}`,
+      To: mechanic.phone,
       Body: messageBody,
     };
 
@@ -926,12 +926,12 @@ async function sendDowntimeAlert(machine, errorMinutes) {
     });
 
     if (success) {
-      logger.info(`WhatsApp alert sent to ${mechanic.name} for ${machine.machine}`);
+      logger.info(`SMS alert sent to ${mechanic.name} for ${machine.machine}`);
     } else {
       logger.error(`Twilio error for ${machine.machine}: ${result.message || resp.status}`);
     }
   } catch (err) {
-    logger.error(`Failed to send WhatsApp alert for ${machine.machine}: ${err.message}`);
+    logger.error(`Failed to send SMS alert for ${machine.machine}: ${err.message}`);
     await supabase.from("notification_log").insert({
       machine_id: machineId,
       machine_code: machine.machine,

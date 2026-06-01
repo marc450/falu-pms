@@ -34,7 +34,7 @@ function MyAccountModal({ onClose }: { onClose: () => void }) {
     if (profile && !profileLoaded) {
       setFirstName(profile.first_name ?? "");
       setLastName(profile.last_name ?? "");
-      setPhone(profile.whatsapp_phone ?? "");
+      setPhone(profile.mechanic_phone ?? "");
       setProfileLoaded(true);
     }
   }, [profile, profileLoaded]);
@@ -48,7 +48,7 @@ function MyAccountModal({ onClose }: { onClose: () => void }) {
       await updateUserProfile(user.id, {
         first_name: firstName,
         last_name: lastName,
-        whatsapp_phone: phone || null,
+        mechanic_phone: phone || null,
       });
       await refreshProfile();
       setSuccess("Profile updated");
@@ -135,7 +135,7 @@ function MyAccountModal({ onClose }: { onClose: () => void }) {
                 </div>
               </div>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">WhatsApp Phone</label>
+                <label className="block text-xs text-gray-400 mb-1">Mobile Phone (SMS)</label>
                 <input
                   type="tel"
                   value={phone}

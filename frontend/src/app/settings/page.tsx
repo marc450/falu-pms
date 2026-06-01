@@ -2361,7 +2361,7 @@ function UsersTab() {
                 />
               </div>
               <div>
-                <label className="block text-xs text-gray-400 mb-1">WhatsApp Phone</label>
+                <label className="block text-xs text-gray-400 mb-1">Mobile Phone (SMS)</label>
                 <input
                   type="tel"
                   value={newPhone}
@@ -2510,7 +2510,7 @@ function EditUserModal({
 }) {
   const [firstName, setFirstName] = useState(user.first_name);
   const [lastName, setLastName] = useState(user.last_name);
-  const [phone, setPhone] = useState(user.whatsapp_phone ?? "");
+  const [phone, setPhone] = useState(user.mechanic_phone ?? "");
   const [role, setRole] = useState(user.role);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -2523,7 +2523,7 @@ function EditUserModal({
       await updateUserProfile(user.id, {
         first_name: firstName,
         last_name: lastName,
-        whatsapp_phone: phone || null,
+        mechanic_phone: phone || null,
       });
       if (role !== user.role) {
         await updateUserRole(user.id, role);
@@ -2532,7 +2532,7 @@ function EditUserModal({
         ...user,
         first_name: firstName,
         last_name: lastName,
-        whatsapp_phone: phone || null,
+        mechanic_phone: phone || null,
         role,
       });
     } catch (e) {
@@ -2595,7 +2595,7 @@ function EditUserModal({
           </div>
 
           <div>
-            <label className="block text-xs text-gray-400 mb-1">WhatsApp Phone</label>
+            <label className="block text-xs text-gray-400 mb-1">Mobile Phone (SMS)</label>
             <input
               type="tel"
               value={phone}

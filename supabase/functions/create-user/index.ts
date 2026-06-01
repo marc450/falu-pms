@@ -54,7 +54,7 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { email, password, role, first_name, last_name, whatsapp_phone } =
+    const { email, password, role, first_name, last_name, mechanic_phone } =
       await req.json();
 
     if (!email || !password) {
@@ -132,8 +132,8 @@ Deno.serve(async (req) => {
       first_name,
       last_name,
     };
-    if (whatsapp_phone) {
-      profileData.whatsapp_phone = whatsapp_phone;
+    if (mechanic_phone) {
+      profileData.mechanic_phone = mechanic_phone;
     }
 
     const { error: profileError } = await supabase
@@ -163,7 +163,7 @@ Deno.serve(async (req) => {
         role: role || "viewer",
         first_name,
         last_name,
-        whatsapp_phone: whatsapp_phone || null,
+        mechanic_phone: mechanic_phone || null,
       }),
       {
         status: 201,
