@@ -470,17 +470,7 @@ async function handleShiftMessage(payload) {
                   (data.ProducedSwabs || 0) > 0 ||
                   (data.ProducedBoxes || 0) > 0;
 
-  // At a shift boundary the PLC resets all per-shift counters to 0, so the
-  // first readings of a new shift carry zero counters even on a running
-  // machine. Without this, those readings were dropped, leaving an unwritten
-  // hole that renders as a dashed "no data" gap on the timeline at every
-  // shift change. Persist them too, as long as the PLC reported a real machine
-  // state (not the bridge's "offline" fallback for a missing Status field).
-  const hasRealStatus = typeof data.Status === "string" &&
-                        data.Status.trim() !== "" &&
-                        data.Status.trim().toLowerCase() !== "offline";
-
-  if (hasData || hasRealStatus) {
+  if (hasData) {
     const crew = resolveMessageCrew(data) || "Unassigned";
     const { error: insertError } = await supabase.from("shift_readings").insert({
       machine_id: machineId,
