@@ -42,7 +42,6 @@ export interface MachineStatusMessage {
   ProducedSwabs?: number;
   PackagedSwabs?: number;
   DiscardedSwabs?: number;    // PLC field
-  DiscardedSwabs?: number;    // backward-compat alias
   ProducedBoxes?: number;
   ProducedBoxesLayerPlus?: number;
   Timestamp?: string;
