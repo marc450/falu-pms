@@ -7,8 +7,8 @@
  *                    immediately on status change, e.g. when error occurs)
  *                    Fields: Machine, Status, Shift, Speed, ProductionTime,
  *                    IdleTime, ErrorTime, CottonTears, MissingSticks,
- *                    FoultyPickups, OtherErrors, ProducedSwabs, PackagedSwabs,
- *                    ProducedBoxes, ProducedBoxesLayerPlus, DisgardedSwabs,
+ *                    FaultyPickups, OtherErrors, ProducedSwabs, PackagedSwabs,
+ *                    ProducedBoxes, ProducedBoxesLayerPlus, DiscardedSwabs,
  *                    Efficiency, Reject, ErrorSince, IdleSince, Save, Timestamp
  *   - Error/<type>  (e.g. Error/CB, Error/SV, Error/CT)
  *                    Individual error code per message (many may arrive in
@@ -572,13 +572,13 @@ async function handleShiftMessage(payload) {
       error_time_seconds:        data.ErrorTime               || 0,  // seconds, from PLC
       cotton_tears:              data.CottonTears             || 0,
       missing_sticks:            data.MissingSticks           || 0,
-      faulty_pickups:            data.FoultyPickups           || 0,  // PLC typo preserved
+      faulty_pickups:            data.FaultyPickups           || 0,
       other_errors:              data.OtherErrors             || 0,
       produced_swabs:            data.ProducedSwabs           || 0,
       packaged_swabs:            data.PackagedSwabs           || 0,
       produced_boxes:            data.ProducedBoxes           || 0,
       produced_boxes_layer_plus: data.ProducedBoxesLayerPlus  || 0,
-      discarded_swabs:           data.DisgardedSwabs          || 0,  // PLC typo preserved
+      discarded_swabs:           data.DiscardedSwabs          || 0,
       efficiency:                data.Efficiency              || 0,
       scrap_rate:                data.Reject                  || 0,
       save_flag:                 data.Save                    || false,
@@ -637,13 +637,13 @@ async function handleShiftMessage(payload) {
       error_time_seconds:       Math.round(data.ErrorTime       || 0),  // seconds, from PLC
       cotton_tears:             data.CottonTears               || 0,
       missing_sticks:           data.MissingSticks             || 0,
-      faulty_pickups:           data.FoultyPickups             || 0,
+      faulty_pickups:           data.FaultyPickups             || 0,
       other_errors:             data.OtherErrors               || 0,
       produced_swabs:           data.ProducedSwabs             || 0,
       packaged_swabs:           data.PackagedSwabs             || 0,
       produced_boxes:           data.ProducedBoxes             || 0,
       produced_boxes_layer_plus: data.ProducedBoxesLayerPlus   || 0,
-      discarded_swabs:          data.DisgardedSwabs            || 0,  // PLC typo preserved
+      discarded_swabs:          data.DiscardedSwabs            || 0,
       efficiency:               data.Efficiency                || 0,
       scrap_rate:               data.Reject                    || 0,
     });

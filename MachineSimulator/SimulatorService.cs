@@ -229,18 +229,18 @@ namespace MachineSimulator
             var discarded = (long)_rng.Next(0, 3);
             s.ProducedSwaps += produced;
             s.PackagedSwaps += produced - discarded;
-            s.DisgardedSwaps += discarded;
+            s.DiscardedSwaps += discarded;
             s.ProducedBoxes += _rng.Next(1, 4);
             s.ProducedBoxesLayerPlus += _rng.Next(0, 2);
 
             // Rare errors
             if (_rng.Next(0, 40) == 0) s.CottonTears++;
             if (_rng.Next(0, 60) == 0) s.MissingSticks++;
-            if (_rng.Next(0, 70) == 0) s.FoultyPickups++;
+            if (_rng.Next(0, 70) == 0) s.FaultyPickups++;
             if (_rng.Next(0, 90) == 0) s.OtherErrors++;
 
             s.Reject = s.ProducedSwaps > 0
-                ? Math.Round((double)s.DisgardedSwaps / s.ProducedSwaps * 100, 1)
+                ? Math.Round((double)s.DiscardedSwaps / s.ProducedSwaps * 100, 1)
                 : 0;
             s.Efficiency = Math.Round(85.0 + _rng.NextDouble() * 13.0, 1);
 
@@ -257,15 +257,15 @@ namespace MachineSimulator
             m.Total.IdleTime             = m.Shift1.IdleTime + m.Shift2.IdleTime + m.Shift3.IdleTime;
             m.Total.CottonTears          = m.Shift1.CottonTears + m.Shift2.CottonTears + m.Shift3.CottonTears;
             m.Total.MissingSticks        = m.Shift1.MissingSticks + m.Shift2.MissingSticks + m.Shift3.MissingSticks;
-            m.Total.FoultyPickups        = m.Shift1.FoultyPickups + m.Shift2.FoultyPickups + m.Shift3.FoultyPickups;
+            m.Total.FaultyPickups        = m.Shift1.FaultyPickups + m.Shift2.FaultyPickups + m.Shift3.FaultyPickups;
             m.Total.OtherErrors          = m.Shift1.OtherErrors + m.Shift2.OtherErrors + m.Shift3.OtherErrors;
             m.Total.ProducedSwaps        = m.Shift1.ProducedSwaps + m.Shift2.ProducedSwaps + m.Shift3.ProducedSwaps;
             m.Total.PackagedSwaps        = m.Shift1.PackagedSwaps + m.Shift2.PackagedSwaps + m.Shift3.PackagedSwaps;
             m.Total.ProducedBoxes        = m.Shift1.ProducedBoxes + m.Shift2.ProducedBoxes + m.Shift3.ProducedBoxes;
             m.Total.ProducedBoxesLayerPlus = m.Shift1.ProducedBoxesLayerPlus + m.Shift2.ProducedBoxesLayerPlus + m.Shift3.ProducedBoxesLayerPlus;
-            m.Total.DisgardedSwaps       = m.Shift1.DisgardedSwaps + m.Shift2.DisgardedSwaps + m.Shift3.DisgardedSwaps;
+            m.Total.DiscardedSwaps       = m.Shift1.DiscardedSwaps + m.Shift2.DiscardedSwaps + m.Shift3.DiscardedSwaps;
             m.Total.Reject               = m.Total.ProducedSwaps > 0
-                ? Math.Round((double)m.Total.DisgardedSwaps / m.Total.ProducedSwaps * 100, 1)
+                ? Math.Round((double)m.Total.DiscardedSwaps / m.Total.ProducedSwaps * 100, 1)
                 : 0;
             m.Total.Efficiency = Math.Round(
                 (m.Shift1.Efficiency + m.Shift2.Efficiency + m.Shift3.Efficiency) / 3.0, 1);
@@ -299,13 +299,13 @@ namespace MachineSimulator
                 IdleTime = d.IdleTime,
                 CottonTears = d.CottonTears,
                 MissingSticks = d.MissingSticks,
-                FoultyPickups = d.FoultyPickups,
+                FaultyPickups = d.FaultyPickups,
                 OtherErrors = d.OtherErrors,
                 ProducedSwaps = d.ProducedSwaps,
                 PackagedSwaps = d.PackagedSwaps,
                 ProducedBoxes = d.ProducedBoxes,
                 ProducedBoxesLayerPlus = d.ProducedBoxesLayerPlus,
-                DisgardedSwaps = d.DisgardedSwaps,
+                DiscardedSwaps = d.DiscardedSwaps,
                 Efficiency = d.Efficiency,
                 Reject = d.Reject,
                 Save = save

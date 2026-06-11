@@ -34,14 +34,14 @@ CREATE TABLE IF NOT EXISTS shift_readings
 
     cotton_tears               UInt32,
     missing_sticks             UInt32,
-    faulty_pickups             UInt32,             -- PLC typo preserved (FoultyPickups)
+    faulty_pickups             UInt32,             -- maps to PLC field FaultyPickups
     other_errors               UInt32,
 
     produced_swabs             UInt64,
     packaged_swabs             UInt64,
     produced_boxes             UInt64,
     produced_boxes_layer_plus  UInt64,
-    discarded_swabs            UInt64,             -- PLC typo preserved (DisgardedSwabs)
+    discarded_swabs            UInt64,             -- maps to PLC field DiscardedSwabs
 
     efficiency                 Float64,
     scrap_rate                 Float64,            -- PLC field: Reject

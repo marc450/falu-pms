@@ -301,12 +301,12 @@ using Microsoft.Extensions.Configuration;
                 {
                     if (!fileExists)
                     {
-                        writer.WriteLine("Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FoultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DisgardedSwaps;Efficiency;Reject");
+                        writer.WriteLine("Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FaultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DiscardedSwaps;Efficiency;Reject");
                     }
 
                     var prodTime = FormatMinutesToTime(data.ProductionTime);
                     var idleTime = FormatMinutesToTime(data.IdleTime);
-                    writer.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};{data.Machine};{data.Shift};{prodTime};{idleTime};{data.CottonTears};{data.MissingSticks};{data.FoultyPickups};{data.OtherErrors};{data.ProducedSwaps};{data.PackagedSwaps};{data.ProducedBoxes};{data.ProducedBoxesLayerPlus};{data.DisgardedSwaps};{data.Efficiency:F2};{data.Reject:F2}");
+                    writer.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};{data.Machine};{data.Shift};{prodTime};{idleTime};{data.CottonTears};{data.MissingSticks};{data.FaultyPickups};{data.OtherErrors};{data.ProducedSwaps};{data.PackagedSwaps};{data.ProducedBoxes};{data.ProducedBoxesLayerPlus};{data.DiscardedSwaps};{data.Efficiency:F2};{data.Reject:F2}");
                 }
             }
             catch (Exception ex)
@@ -327,12 +327,12 @@ using Microsoft.Extensions.Configuration;
                 {
                     if (!fileExists)
                     {
-                        writer.WriteLine("Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FoultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DisgardedSwaps;Efficiency;Reject");
+                        writer.WriteLine("Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FaultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DiscardedSwaps;Efficiency;Reject");
                     }
 
                     var prodTime = FormatMinutesToTime(data.ProductionTime);
                     var idleTime = FormatMinutesToTime(data.IdleTime);
-                    writer.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};{data.Machine};{data.Shift};{prodTime};{idleTime};{data.CottonTears};{data.MissingSticks};{data.FoultyPickups};{data.OtherErrors};{data.ProducedSwaps};{data.PackagedSwaps};{data.ProducedBoxes};{data.ProducedBoxesLayerPlus};{data.DisgardedSwaps};{data.Efficiency:F2};{data.Reject:F2}");
+                    writer.WriteLine($"{DateTime.Now:yyyy-MM-dd HH:mm:ss};{data.Machine};{data.Shift};{prodTime};{idleTime};{data.CottonTears};{data.MissingSticks};{data.FaultyPickups};{data.OtherErrors};{data.ProducedSwaps};{data.PackagedSwaps};{data.ProducedBoxes};{data.ProducedBoxesLayerPlus};{data.DiscardedSwaps};{data.Efficiency:F2};{data.Reject:F2}");
                 }
             }
             catch (Exception ex)

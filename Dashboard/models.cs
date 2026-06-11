@@ -8,13 +8,13 @@
         public long IdleTime { get; set; }
         public long CottonTears { get; set; }
         public long MissingSticks { get; set; }
-        public long FoultyPickups { get; set; }
+        public long FaultyPickups { get; set; }
         public long OtherErrors { get; set; }
         public long ProducedSwaps { get; set; }
         public long PackagedSwaps { get; set; }
         public long ProducedBoxes { get; set; }
         public long ProducedBoxesLayerPlus { get; set; }
-        public long DisgardedSwaps { get; set; }
+        public long DiscardedSwaps { get; set; }
         public double Efficiency { get; set; }
         public double Reject { get; set; }
         public bool Save { get; set; }

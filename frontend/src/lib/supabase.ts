@@ -37,11 +37,11 @@ export interface MachineStatusMessage {
   ErrorTime?: number;
   CottonTears?: number;
   MissingSticks?: number;
-  FoultyPickups?: number;
+  FaultyPickups?: number;
   OtherErrors?: number;
   ProducedSwabs?: number;
   PackagedSwabs?: number;
-  DisgardedSwabs?: number;    // PLC field (typo in PLC spec, preserved as-is)
+  DiscardedSwabs?: number;    // PLC field
   DiscardedSwabs?: number;    // backward-compat alias
   ProducedBoxes?: number;
   ProducedBoxesLayerPlus?: number;
@@ -56,7 +56,7 @@ export interface ShiftDataMessage {
   ErrorTime: number;
   CottonTears: number;
   MissingSticks: number;
-  FoultyPickups: number;
+  FaultyPickups: number;
   OtherErrors: number;
   ProducedSwabs: number;
   PackagedSwabs: number;

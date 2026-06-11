@@ -78,7 +78,7 @@
 
 ### CSV Format:
 ```
-Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FoultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DisgardedSwaps;Efficiency;Reject
+Timestamp;Machine;Shift;ProductionTime;IdleTime;CottonTears;MissingSticks;FaultyPickups;OtherErrors;ProducedSwaps;PackagedSwaps;ProducedBoxes;ProducedBoxesLayerPlus;DiscardedSwaps;Efficiency;Reject
 2024-01-15 08:30:15;Machine1;1;08:30;01:45;3;2;5;1;1250;1200;150;75;50;95.50;2.30
 ```
 

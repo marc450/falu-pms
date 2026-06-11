@@ -23,13 +23,13 @@ namespace MachineSimulator
         public long IdleTime { get; set; }
         public long CottonTears { get; set; }
         public long MissingSticks { get; set; }
-        public long FoultyPickups { get; set; }
+        public long FaultyPickups { get; set; }
         public long OtherErrors { get; set; }
         public long ProducedSwaps { get; set; }
         public long PackagedSwaps { get; set; }
         public long ProducedBoxes { get; set; }
         public long ProducedBoxesLayerPlus { get; set; }
-        public long DisgardedSwaps { get; set; }
+        public long DiscardedSwaps { get; set; }
         public double Efficiency { get; set; }
         public double Reject { get; set; }
         public bool Save { get; set; }
@@ -49,13 +49,13 @@ namespace MachineSimulator
         public long IdleTime { get; set; }
         public long CottonTears { get; set; }
         public long MissingSticks { get; set; }
-        public long FoultyPickups { get; set; }
+        public long FaultyPickups { get; set; }
         public long OtherErrors { get; set; }
         public long ProducedSwaps { get; set; }
         public long PackagedSwaps { get; set; }
         public long ProducedBoxes { get; set; }
         public long ProducedBoxesLayerPlus { get; set; }
-        public long DisgardedSwaps { get; set; }
+        public long DiscardedSwaps { get; set; }
         public double Efficiency { get; set; }
         public double Reject { get; set; }
 
@@ -65,13 +65,13 @@ namespace MachineSimulator
             IdleTime             = 0;
             CottonTears          = 0;
             MissingSticks        = 0;
-            FoultyPickups        = 0;
+            FaultyPickups        = 0;
             OtherErrors          = 0;
             ProducedSwaps        = 0;
             PackagedSwaps        = 0;
             ProducedBoxes        = 0;
             ProducedBoxesLayerPlus = 0;
-            DisgardedSwaps       = 0;
+            DiscardedSwaps       = 0;
             Efficiency           = 0;
             Reject               = 0;
         }

@@ -757,11 +757,11 @@ function publishCombinedShift(client, machine, shiftNum, save = false) {
     ErrorTime:              Math.round(shift.errorTime      * 60),  // seconds, matching real PLC spec
     CottonTears:            shift.cottonTears            || 0,
     MissingSticks:          shift.missingSticks          || 0,
-    FoultyPickups:          shift.faultyPickups          || 0,  // PLC field name has typo
+    FaultyPickups:          shift.faultyPickups          || 0,
     OtherErrors:            shift.otherErrors            || 0,
     ProducedSwabs:          shift.producedSwabs,
     PackagedSwabs:          shift.packagedSwabs,
-    DisgardedSwabs:         shift.discardedSwabs,               // PLC field name has typo
+    DiscardedSwabs:         shift.discardedSwabs,
     ProducedBoxes:          shift.producedBoxes,
     ProducedBoxesLayerPlus: shift.producedBoxesLayerPlus || 0,
     Efficiency:             parseFloat(shift.efficiency.toFixed(2)),

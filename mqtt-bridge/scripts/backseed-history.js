@@ -372,7 +372,7 @@ function simulateShift({ shiftMin, speedTarget, personality, crew, shiftStartUtc
   discardedSwabs = Math.round(discardedSwabs);
 
   // Roll up "stick problem" sub-counters from the discarded total, matching the
-  // simulator's split (CottonTears / MissingSticks / FoultyPickups / OtherErrors).
+  // simulator's split (CottonTears / MissingSticks / FaultyPickups / OtherErrors).
   // The split is uniform-ish — analytics views aggregate them but the precise
   // distribution doesn't drive any chart.
   const cottonTears   = Math.round(discardedSwabs * 0.35);

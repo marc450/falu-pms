@@ -276,7 +276,7 @@ function ProductionContent() {
         ProducedBoxesLayerPlus: s.ProducedBoxesLayerPlus ?? 0,
         CottonTears:            s.CottonTears            ?? 0,
         MissingSticks:          s.MissingSticks          ?? 0,
-        FoultyPickups:          s.FoultyPickups          ?? 0,
+        FaultyPickups:          s.FaultyPickups          ?? 0,
         OtherErrors:            s.OtherErrors            ?? 0,
         Efficiency:             correctedEfficiency(s.ProductionTime ?? 0, s.IdleTime ?? 0, activeShiftErrorSecs),
         Reject:                 s.Reject                 ?? 0,
@@ -296,7 +296,7 @@ function ProductionContent() {
       ProducedBoxesLayerPlus: log.produced_boxes_layer_plus,
       CottonTears:            log.cotton_tears,
       MissingSticks:          log.missing_sticks,
-      FoultyPickups:          log.faulty_pickups,
+      FaultyPickups:          log.faulty_pickups,
       OtherErrors:            log.other_errors,
       Efficiency:             correctedEfficiency(log.production_time_seconds, log.idle_time_seconds, log.error_time_seconds),
       Reject:                 log.scrap_rate,
@@ -319,7 +319,7 @@ function ProductionContent() {
       ProducedBoxesLayerPlus: acc.ProducedBoxesLayerPlus + s.ProducedBoxesLayerPlus,
       CottonTears:            acc.CottonTears            + s.CottonTears,
       MissingSticks:          acc.MissingSticks          + s.MissingSticks,
-      FoultyPickups:          acc.FoultyPickups          + s.FoultyPickups,
+      FaultyPickups:          acc.FaultyPickups          + s.FaultyPickups,
       OtherErrors:            acc.OtherErrors            + s.OtherErrors,
       Efficiency:             0,
       Reject:                 0,
@@ -401,7 +401,7 @@ function ProductionContent() {
   const errorMetrics: MetricDef[] = [
     { label: "Cotton Tears",   key: "CottonTears" },   // no hardcoded color — no thresholds configured
     { label: "Missing Sticks", key: "MissingSticks" },
-    { label: "Faulty Pickups", key: "FoultyPickups" },
+    { label: "Faulty Pickups", key: "FaultyPickups" },
     { label: "Other Errors",   key: "OtherErrors" },
   ];
 
