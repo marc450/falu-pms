@@ -66,6 +66,39 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// ============================================
+// SHIFT_READINGS WRITE BUFFER (throughput)
+// ============================================
+// Previously every message did an immediate `await ...insert()` for
+// shift_readings PLUS two machines updates. Under a simulator reconnect
+// burst that became hundreds of concurrent Supabase requests, saturating
+// connections so the bridge fell minutes behind real time. Buffer the
+// reading rows and flush them as one batched insert. Analytics read
+// shift_readings on a cron, and the 5-min buckets window by plc_timestamp
+// (migration 096), so a ~1.5s batch delay is invisible to every consumer.
+let srBuffer = [];
+const SR_BUFFER_MAX = 50000;            // memory cap if Supabase is unreachable for a while
+
+async function flushShiftReadings() {
+  if (srBuffer.length === 0) return;
+  const batch = srBuffer;
+  srBuffer = [];                         // swap first so new rows accumulate during the await
+  const { error } = await supabase.from("shift_readings").insert(batch);
+  if (error) {
+    // Re-queue on failure (capped) so transient errors don't silently drop data
+    if (srBuffer.length + batch.length <= SR_BUFFER_MAX) {
+      srBuffer = batch.concat(srBuffer);
+    } else {
+      logger.error(`shift_readings buffer full (${SR_BUFFER_MAX}), dropping ${batch.length} rows`);
+    }
+    logger.error(`shift_readings batch insert failed: ${error.message} | code: ${error.code}`);
+  } else {
+    logger.debug(`shift_readings: flushed ${batch.length} rows`);
+  }
+}
+
+setInterval(flushShiftReadings, 1500);
+
 /**
  * PLC timestamps are set by hand on the machine and may drift from real time.
  * This helper rejects sentinel values like the PLC's "null" (epoch-zero
@@ -454,6 +487,8 @@ async function handleShiftMessage(payload) {
     error_time_seconds: Math.round(data.ErrorTime || 0),
     // Persist active error codes so they survive a bridge restart.
     active_error_codes: m.activeErrors || [],
+    // Folded in from the former second machines update (one round-trip, not two).
+    last_sync_shift: now,
   };
 
   // Mirror the PLC seconds values onto the in-memory object so the REST
@@ -473,7 +508,9 @@ async function handleShiftMessage(payload) {
 
   if (hasData) {
     const crew = resolveMessageCrew(data) || "Unassigned";
-    const { error: insertError } = await supabase.from("shift_readings").insert({
+    // Buffered batch insert (see flushShiftReadings). recorded_at = true
+    // receipt time so it's accurate despite the ~1.5s batch delay.
+    srBuffer.push({
       machine_id: machineId,
       machine_code: machineCode,
       shift_crew: crew,
@@ -496,15 +533,9 @@ async function handleShiftMessage(payload) {
       save_flag:                 data.Save                    || false,
       raw_payload: data,
       plc_timestamp: data.Timestamp ? new Date(data.Timestamp).toISOString() : null,
+      recorded_at: new Date().toISOString(),
     });
-    if (insertError) {
-      logger.error(`shift_readings insert failed for ${machineCode} (Shift ${data.Shift}): ${insertError.message} | code: ${insertError.code}`);
-    }
-
-    await supabase
-      .from("machines")
-      .update({ last_sync_shift: now })
-      .eq("id", machineId);
+    if (srBuffer.length >= 500) flushShiftReadings();   // burst guard: flush early
   }
 
   if (data.Save) {
@@ -1213,17 +1244,15 @@ app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on("SIGINT", () => {
-  logger.info("Received SIGINT — shutting down");
+async function gracefulShutdown(signal) {
+  logger.info(`Received ${signal} — shutting down`);
   if (mqttClient) mqttClient.end(true);
+  try { await flushShiftReadings(); } catch (e) { logger.error(`shutdown flush failed: ${e.message}`); }
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", () => {
-  logger.info("Received SIGTERM — shutting down");
-  if (mqttClient) mqttClient.end(true);
-  process.exit(0);
-});
+process.on("SIGINT",  () => { gracefulShutdown("SIGINT"); });
+process.on("SIGTERM", () => { gracefulShutdown("SIGTERM"); });
 
 // Log crashes so Railway deploy logs show the cause
 process.on("uncaughtException", (err) => {
