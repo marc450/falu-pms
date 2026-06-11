@@ -116,6 +116,40 @@ if (CLICKHOUSE_ENABLED) {
   setInterval(flushClickHouse, 5000);   // batch every 5s — well within CH insert limits
 }
 
+// ============================================
+// SHIFT_READINGS WRITE BUFFER (throughput)
+// ============================================
+// Previously every message did an immediate `await ...insert()` for
+// shift_readings PLUS two machines updates. Under a simulator reconnect
+// burst that became hundreds of concurrent Supabase requests, saturating
+// connections so the bridge fell minutes behind real time. Buffer the
+// reading rows and flush them as one batched insert, mirroring the
+// ClickHouse path. Analytics read shift_readings on a cron, and the
+// 5-min buckets window by plc_timestamp (migration 096), so a ~1.5s
+// batch delay is invisible to every consumer.
+let srBuffer = [];
+const SR_BUFFER_MAX = 50000;            // memory cap if Supabase is unreachable for a while
+
+async function flushShiftReadings() {
+  if (srBuffer.length === 0) return;
+  const batch = srBuffer;
+  srBuffer = [];                         // swap first so new rows accumulate during the await
+  const { error } = await supabase.from("shift_readings").insert(batch);
+  if (error) {
+    // Re-queue on failure (capped) so transient errors don't silently drop data
+    if (srBuffer.length + batch.length <= SR_BUFFER_MAX) {
+      srBuffer = batch.concat(srBuffer);
+    } else {
+      logger.error(`shift_readings buffer full (${SR_BUFFER_MAX}), dropping ${batch.length} rows`);
+    }
+    logger.error(`shift_readings batch insert failed: ${error.message} | code: ${error.code}`);
+  } else {
+    logger.debug(`shift_readings: flushed ${batch.length} rows`);
+  }
+}
+
+setInterval(flushShiftReadings, 1500);
+
 /**
  * PLC timestamps are set by hand on the machine and may drift from real time.
  * This helper rejects sentinel values like the PLC's "null" (epoch-zero
@@ -504,6 +538,8 @@ async function handleShiftMessage(payload) {
     error_time_seconds: Math.round(data.ErrorTime || 0),
     // Persist active error codes so they survive a bridge restart.
     active_error_codes: m.activeErrors || [],
+    // Folded in from the former second machines update (one round-trip, not two).
+    last_sync_shift: now,
   };
 
   // Mirror the PLC seconds values onto the in-memory object so the REST
@@ -550,11 +586,10 @@ async function handleShiftMessage(payload) {
       plc_timestamp: data.Timestamp ? new Date(data.Timestamp).toISOString() : null,
     };
 
-    // ── Supabase write (unchanged source of truth) ──
-    const { error: insertError } = await supabase.from("shift_readings").insert(readingRow);
-    if (insertError) {
-      logger.error(`shift_readings insert failed for ${machineCode} (Shift ${data.Shift}): ${insertError.message} | code: ${insertError.code}`);
-    }
+    // ── Supabase write (buffered batch insert; see flushShiftReadings) ──
+    // recorded_at = true receipt time so it's accurate despite the batch delay.
+    srBuffer.push({ ...readingRow, recorded_at: new Date().toISOString() });
+    if (srBuffer.length >= 500) flushShiftReadings();   // burst guard: flush early
 
     // ── ClickHouse dual-write (additive, buffered, never blocks/throws) ──
     if (CLICKHOUSE_ENABLED) {
@@ -566,11 +601,6 @@ async function handleShiftMessage(payload) {
         ingested_at: new Date().toISOString(),           // reliable server arrival time
       });
     }
-
-    await supabase
-      .from("machines")
-      .update({ last_sync_shift: now })
-      .eq("id", machineId);
   }
 
   if (data.Save) {
@@ -1282,6 +1312,7 @@ app.listen(PORT, () => {
 process.on("SIGINT", async () => {
   logger.info("Received SIGINT — shutting down");
   if (mqttClient) mqttClient.end(true);
+  await flushShiftReadings();     // drain buffered shift_readings to Supabase
   await flushClickHouse();        // drain remaining buffered rows (no-op if CH disabled)
   process.exit(0);
 });
@@ -1289,6 +1320,7 @@ process.on("SIGINT", async () => {
 process.on("SIGTERM", async () => {
   logger.info("Received SIGTERM — shutting down");
   if (mqttClient) mqttClient.end(true);
+  await flushShiftReadings();     // drain buffered shift_readings to Supabase
   await flushClickHouse();        // drain remaining buffered rows (no-op if CH disabled)
   process.exit(0);
 });
