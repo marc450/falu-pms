@@ -793,7 +793,11 @@ console.log(`=====================================\n`);
 const client = mqtt.connect(url, {
   username:           BROKER_USER,
   password:           BROKER_PASS,
-  clientId:           `falu-simulator-${Date.now()}`,
+  // Fixed clientId (NOT per-connection) so the broker enforces a single
+  // session: a new simulator connection evicts any older one. A unique
+  // clientId would let multiple simulator processes coexist and all publish
+  // for the same machines, inflating counters ~Nx (uptime >100%, BU spikes).
+  clientId:           "falu-simulator",
   clean:              true,
   keepalive:          30,
   connectTimeout:     15000,
