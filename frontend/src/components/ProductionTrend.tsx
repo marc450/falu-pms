@@ -19,6 +19,7 @@ import {
   formatHourMinute,
   getZonedParts,
   constructFactoryInstant,
+  factoryStartOfDay,
   factoryStartOfMonth,
   factoryStartOfQuarter,
   factoryStartOfYear,
@@ -42,7 +43,9 @@ const TOOLTIP_ITEM_STYLE = { color: "#e5e7eb", padding: "1px 0" };
 
 // ─── Period presets ───────────────────────────────────────────────────────────
 
-export type PresetId = "24h" | "7d" | "4w" | "6m" | "12m" | "mtd" | "qtd" | "ytd" | "all";
+export type PresetId =
+  | "1h" | "curshift" | "lastshift"
+  | "24h" | "7d" | "4w" | "6m" | "12m" | "mtd" | "qtd" | "ytd" | "all";
 
 export interface Preset {
   id: PresetId;
@@ -56,7 +59,22 @@ export interface Preset {
 
 const mkNow = () => new Date();
 
+// Start of the current 12h shift (07:00 / 19:00 factory-local). Before 07:00
+// the active shift began at the previous day's 19:00.
+function currentShiftStart(tz: string): Date {
+  const p = getZonedParts(mkNow(), tz);
+  if (p.hour >= 19) return constructFactoryInstant(tz, p.year, p.month, p.day, 19, 0);
+  if (p.hour >= 7)  return constructFactoryInstant(tz, p.year, p.month, p.day, 7, 0);
+  // before 07:00 → previous day's 19:00 shift (step 3h before factory midnight)
+  const prev = getZonedParts(new Date(factoryStartOfDay(tz).getTime() - 3 * 3_600_000), tz);
+  return constructFactoryInstant(tz, prev.year, prev.month, prev.day, 19, 0);
+}
+
 export const PRESETS: Preset[] = [
+  // Shift + hour windows are fixed-duration; resolved at the factory wall clock.
+  { id: "curshift",  label: "Current shift", getRange: (tz) => ({ start: currentShiftStart(tz),              end: mkNow() }) },
+  { id: "lastshift", label: "Last shift",    getRange: (tz) => ({ start: subHours(currentShiftStart(tz), 12), end: currentShiftStart(tz) }) },
+  { id: "1h",        label: "Last hour",     getRange: ()   => ({ start: subHours(mkNow(), 1),               end: mkNow() }) },
   // 24h is a fixed-duration window — timezone-independent.
   { id: "24h", label: "Last 24 hours",   getRange: ()   => ({ start: subHours(mkNow(), 24),                        end: mkNow() }) },
   { id: "7d",  label: "Last 7 days",     getRange: (tz) => ({ start: factoryDateBefore(tz, { days:   7 }),         end: mkNow() }) },

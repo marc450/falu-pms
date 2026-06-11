@@ -654,6 +654,59 @@ async function fetchIntradayTrend(
   return { rows: filledRows, granularity: "hour", totalReadings };
 }
 
+// Window length -> bucket granularity (chart finest = 5min; 5s stays API-only).
+//   <= 24h -> 5m,  <= 7d -> 1h,  else -> 1d (factory work-day)
+function pickGranularity(range: DateRange): "5m" | "1h" | "1d" {
+  const ms = range.end.getTime() - range.start.getTime();
+  const H = 3_600_000;
+  if (ms <= 24 * H)     return "5m";
+  if (ms <= 7 * 24 * H) return "1h";
+  return "1d";
+}
+
+interface CHTrendRow {
+  bucket: string; avg_uptime: number; avg_scrap: number;
+  total_boxes: number; total_swabs: number; machine_count: number;
+  reading_count: number; shift_count: number;
+  production_seconds: number; idle_seconds: number; error_seconds: number;
+}
+
+// ClickHouse-backed trend (Phase 3). Picks granularity from the window, fetches
+// the bridge proxy, maps to the same FleetTrendResult the chart already consumes.
+export async function fetchTrendClickHouse(
+  range: DateRange,
+  machineIds: string[] | null,
+): Promise<FleetTrendResult> {
+  const gran = pickGranularity(range);
+  const qs = new URLSearchParams({
+    start: range.start.toISOString(),
+    end:   range.end.toISOString(),
+    granularity: gran,
+  });
+  if (machineIds && machineIds.length) qs.set("machines", machineIds.join(","));
+  const resp = await fetch(`${API_BASE}/api/analytics/fleet-trend?${qs.toString()}`, { headers: API_HEADERS });
+  if (!resp.ok) throw new Error(`fleet-trend ${resp.status}`);
+  const raw = (await resp.json()) as CHTrendRow[];
+  const rows: FleetTrendRow[] = raw.map((r) => ({
+    date:              r.bucket,
+    avgUptime:         Number(r.avg_uptime) || 0,
+    avgScrap:          Number(r.avg_scrap)  || 0,
+    totalBoxes:        Number(r.total_boxes) || 0,
+    totalSwabs:        Number(r.total_swabs) || 0,
+    machineCount:      Number(r.machine_count) || 0,
+    readingCount:      Number(r.reading_count) || 0,
+    shiftCount:        Number(r.shift_count) || 0,
+    productionSeconds: Number(r.production_seconds) || 0,
+    idleSeconds:       Number(r.idle_seconds) || 0,
+    errorSeconds:      Number(r.error_seconds) || 0,
+  }));
+  return {
+    rows,
+    granularity: gran === "1d" ? "day" : "hour",
+    totalReadings: rows.reduce((a, r) => a + r.readingCount, 0),
+  };
+}
+
 export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrendResult> {
   return fetchIntradayTrend(range, null);
 }
@@ -895,7 +948,7 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
 // Analytics source flag (Phase 3). "supabase" (default) reads the existing
 // RPCs; "clickhouse" reads the same trend via the bridge's ClickHouse proxy.
-const ANALYTICS_SOURCE = (process.env.NEXT_PUBLIC_ANALYTICS_SOURCE || "supabase").toLowerCase();
+export const ANALYTICS_SOURCE = (process.env.NEXT_PUBLIC_ANALYTICS_SOURCE || "supabase").toLowerCase();
 
 // Include ngrok bypass header so the free-tier warning page is skipped
 const API_HEADERS: HeadersInit = {

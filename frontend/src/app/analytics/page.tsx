@@ -3,7 +3,8 @@
 import { useEffect, useState, useCallback } from "react";
 import { format } from "date-fns";
 import {
-  fetchFleetTrend, fetchHourlyAnalytics, fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
+  fetchFleetTrend, fetchHourlyAnalytics, fetchTrendClickHouse, ANALYTICS_SOURCE,
+  fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
@@ -81,9 +82,11 @@ export default function Analytics() {
       const [result, machines, savedThresholds, shiftCfg, assignmentRows] = await Promise.all([
         cachedResult
           ? Promise.resolve(cachedResult)
-          : activePresetId === "24h"
-            ? fetchHourlyAnalytics(effectiveRange)
-            : fetchFleetTrend(effectiveRange),
+          : ANALYTICS_SOURCE === "clickhouse"
+            ? fetchTrendClickHouse(effectiveRange, null)
+            : (activePresetId === "24h" || activePresetId === "1h" || activePresetId === "curshift" || activePresetId === "lastshift")
+              ? fetchHourlyAnalytics(effectiveRange)
+              : fetchFleetTrend(effectiveRange),
         fetchRegisteredMachines(),
         fetchThresholds(),
         fetchShiftConfig(),
