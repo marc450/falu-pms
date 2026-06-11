@@ -66,6 +66,56 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY
 );
 
+// ============================================
+// CLICKHOUSE (additive dual-write, PoC, behind a flag)
+// ============================================
+// Mirrors every shift_readings row into ClickHouse for analytics evaluation.
+// Fully isolated from the Supabase path: writes are buffered, flushed on a
+// timer, and NEVER throw into the MQTT handler. A ClickHouse outage cannot
+// affect ingest. Set CLICKHOUSE_ENABLED=false (or unset) to disable entirely.
+const CLICKHOUSE_ENABLED = process.env.CLICKHOUSE_ENABLED === "true";
+let clickhouse = null;
+let chBuffer = [];
+const CH_BUFFER_MAX = 50000;   // safety cap so a long CH outage can't exhaust memory
+
+if (CLICKHOUSE_ENABLED) {
+  const { createClient: createCHClient } = require("@clickhouse/client");
+  clickhouse = createCHClient({
+    url: process.env.CLICKHOUSE_URL,
+    username: process.env.CLICKHOUSE_USER || "default",
+    password: process.env.CLICKHOUSE_PASSWORD || "",
+    database: process.env.CLICKHOUSE_DB || "default",
+  });
+  logger.info("ClickHouse dual-write ENABLED");
+}
+
+// Flush the buffer as one batched INSERT. Never throws into the caller.
+async function flushClickHouse() {
+  if (!clickhouse || chBuffer.length === 0) return;
+  const batch = chBuffer;
+  chBuffer = [];                 // swap first so new rows accumulate during the await
+  try {
+    await clickhouse.insert({
+      table: "shift_readings",
+      values: batch,
+      format: "JSONEachRow",
+    });
+    logger.debug(`ClickHouse: flushed ${batch.length} rows`);
+  } catch (err) {
+    // Re-queue on failure (capped) so transient CH errors don't silently drop data
+    if (chBuffer.length + batch.length <= CH_BUFFER_MAX) {
+      chBuffer = batch.concat(chBuffer);
+    } else {
+      logger.error(`ClickHouse buffer full (${CH_BUFFER_MAX}), dropping ${batch.length} rows`);
+    }
+    logger.error(`ClickHouse flush failed: ${err.message}`);
+  }
+}
+
+if (CLICKHOUSE_ENABLED) {
+  setInterval(flushClickHouse, 5000);   // batch every 5s — well within CH insert limits
+}
+
 /**
  * PLC timestamps are set by hand on the machine and may drift from real time.
  * This helper rejects sentinel values like the PLC's "null" (epoch-zero
@@ -473,7 +523,9 @@ async function handleShiftMessage(payload) {
 
   if (hasData) {
     const crew = resolveMessageCrew(data) || "Unassigned";
-    const { error: insertError } = await supabase.from("shift_readings").insert({
+
+    // Single source of truth for the reading row, written to both stores.
+    const readingRow = {
       machine_id: machineId,
       machine_code: machineCode,
       shift_crew: crew,
@@ -496,9 +548,23 @@ async function handleShiftMessage(payload) {
       save_flag:                 data.Save                    || false,
       raw_payload: data,
       plc_timestamp: data.Timestamp ? new Date(data.Timestamp).toISOString() : null,
-    });
+    };
+
+    // ── Supabase write (unchanged source of truth) ──
+    const { error: insertError } = await supabase.from("shift_readings").insert(readingRow);
     if (insertError) {
       logger.error(`shift_readings insert failed for ${machineCode} (Shift ${data.Shift}): ${insertError.message} | code: ${insertError.code}`);
+    }
+
+    // ── ClickHouse dual-write (additive, buffered, never blocks/throws) ──
+    if (CLICKHOUSE_ENABLED) {
+      chBuffer.push({
+        ...readingRow,
+        save_flag: readingRow.save_flag ? 1 : 0,        // CH UInt8, not JS bool
+        raw_payload: JSON.stringify(data),               // CH String column, not nested object
+        plc_timestamp: readingRow.plc_timestamp,         // already ISO string or null
+        ingested_at: new Date().toISOString(),           // reliable server arrival time
+      });
     }
 
     await supabase
@@ -1213,15 +1279,17 @@ app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on("SIGINT", () => {
+process.on("SIGINT", async () => {
   logger.info("Received SIGINT — shutting down");
   if (mqttClient) mqttClient.end(true);
+  await flushClickHouse();        // drain remaining buffered rows (no-op if CH disabled)
   process.exit(0);
 });
 
-process.on("SIGTERM", () => {
+process.on("SIGTERM", async () => {
   logger.info("Received SIGTERM — shutting down");
   if (mqttClient) mqttClient.end(true);
+  await flushClickHouse();        // drain remaining buffered rows (no-op if CH disabled)
   process.exit(0);
 });
 
