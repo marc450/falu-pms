@@ -925,9 +925,22 @@ client.on("connect", async () => {
 
 client.on("error", err => console.error(`MQTT Error: ${err.message}`));
 
-process.on("SIGINT", async () => {
-  console.log("\nShutting down simulator — saving state...");
-  await saveState();
-  client.end(true);
-  process.exit(0);
-});
+// Graceful shutdown. Railway sends SIGTERM on redeploy; without a handler the
+// process was killed without closing MQTT, leaving the old socket lingering on
+// the broker. With a FIXED clientId the next container then fights that ghost
+// connection over "falu-simulator" → keepalive-timeout flapping → dropped
+// publishes → gaps in the readings. Closing the client cleanly (graceful
+// DISCONNECT, not force) makes the broker drop the session immediately so the
+// new container connects without conflict.
+let shuttingDown = false;
+async function gracefulShutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n${signal} — saving state and closing MQTT...`);
+  try { await saveState(); } catch (e) { console.error("saveState failed:", e.message); }
+  client.end(false, () => process.exit(0));   // false = send DISCONNECT, don't force-kill the socket
+  setTimeout(() => process.exit(0), 3000);     // hard backstop if end() hangs
+}
+
+process.on("SIGINT",  () => gracefulShutdown("SIGINT"));
+process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));

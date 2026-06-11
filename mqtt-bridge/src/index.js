@@ -1309,21 +1309,16 @@ app.listen(PORT, () => {
 });
 
 // Graceful shutdown
-process.on("SIGINT", async () => {
-  logger.info("Received SIGINT — shutting down");
+async function gracefulShutdown(signal) {
+  logger.info(`Received ${signal} — shutting down`);
   if (mqttClient) mqttClient.end(true);
-  await flushShiftReadings();     // drain buffered shift_readings to Supabase
-  await flushClickHouse();        // drain remaining buffered rows (no-op if CH disabled)
+  try { await flushShiftReadings(); } catch (e) { logger.error(`shutdown flush failed: ${e.message}`); }
+  try { await flushClickHouse(); } catch (e) { logger.error(`shutdown CH flush failed: ${e.message}`); }
   process.exit(0);
-});
+}
 
-process.on("SIGTERM", async () => {
-  logger.info("Received SIGTERM — shutting down");
-  if (mqttClient) mqttClient.end(true);
-  await flushShiftReadings();     // drain buffered shift_readings to Supabase
-  await flushClickHouse();        // drain remaining buffered rows (no-op if CH disabled)
-  process.exit(0);
-});
+process.on("SIGINT",  () => { gracefulShutdown("SIGINT"); });
+process.on("SIGTERM", () => { gracefulShutdown("SIGTERM"); });
 
 // Log crashes so Railway deploy logs show the cause
 process.on("uncaughtException", (err) => {
