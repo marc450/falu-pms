@@ -12,9 +12,12 @@
 -- correct on the PLC clock; only the windowing was wrong — so
 -- re-bucketing by PLC time yields correct history.
 --
--- Run AFTER 096. May take a couple of minutes (re-aggregates all
--- cells for ~576 buckets, ascending so the anchor chain stays
--- consistent). Safe to re-run.
+-- Run AFTER 096 AND 096c (096c adds the index that keeps this fast;
+-- without it the per-machine scans go sequential and time out).
+-- Re-aggregates all cells for ~576 buckets, ascending so the anchor
+-- chain stays consistent. Safe to re-run.
 -- ============================================================
+
+SET statement_timeout = '600s';   -- backfill is one long call; lift the editor cap
 
 SELECT aggregate_recent_buckets(interval '48 hours');
