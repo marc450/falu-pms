@@ -593,14 +593,27 @@ async function fetchIntradayTrend(
   const sb = getSupabase();
   const bucketMs = INTRADAY_BUCKET_MINUTES * 60_000;
 
-  const { data, error } = await sb.rpc("get_fleet_trend_minute", {
-    range_start: range.start.toISOString(),
-    range_end:   range.end.toISOString(),
-    machine_ids: machineIds,
-  });
-  if (error) throw new Error(error.message);
-
-  const rows_raw = (data ?? []) as IntradayBucketRow[];
+  // Source flag: default "supabase" (unchanged). Set NEXT_PUBLIC_ANALYTICS_SOURCE
+  // = "clickhouse" to read the same trend from the bridge's ClickHouse proxy.
+  let rows_raw: IntradayBucketRow[];
+  if (ANALYTICS_SOURCE === "clickhouse") {
+    const qs = new URLSearchParams({
+      start: range.start.toISOString(),
+      end:   range.end.toISOString(),
+    });
+    if (machineIds && machineIds.length) qs.set("machines", machineIds.join(","));
+    const resp = await fetch(`${API_BASE}/api/analytics/fleet-trend?${qs.toString()}`, { headers: API_HEADERS });
+    if (!resp.ok) throw new Error(`fleet-trend ${resp.status}`);
+    rows_raw = (await resp.json()) as IntradayBucketRow[];
+  } else {
+    const { data, error } = await sb.rpc("get_fleet_trend_minute", {
+      range_start: range.start.toISOString(),
+      range_end:   range.end.toISOString(),
+      machine_ids: machineIds,
+    });
+    if (error) throw new Error(error.message);
+    rows_raw = (data ?? []) as IntradayBucketRow[];
+  }
   const bucketMap = new Map<string, IntradayBucketRow>();
   for (const r of rows_raw) bucketMap.set(r.bucket, r);
 
@@ -879,6 +892,10 @@ export async function fetchPeersHourlyTrend(peerIds: string[], range: DateRange)
 // ============================================
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+// Analytics source flag (Phase 3). "supabase" (default) reads the existing
+// RPCs; "clickhouse" reads the same trend via the bridge's ClickHouse proxy.
+const ANALYTICS_SOURCE = (process.env.NEXT_PUBLIC_ANALYTICS_SOURCE || "supabase").toLowerCase();
 
 // Include ngrok bypass header so the free-tier warning page is skipped
 const API_HEADERS: HeadersInit = {

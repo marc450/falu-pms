@@ -1239,6 +1239,42 @@ app.get("/api/machines", (req, res) => {
   });
 });
 
+// ── Analytics: fleet trend from ClickHouse (Phase 3) ──
+// Read-only proxy so the browser never touches ClickHouse directly. Returns the
+// same row shape as Supabase's get_fleet_trend_minute, so the frontend can swap
+// source behind a flag with no other changes. 5-min grain (intraday) for now.
+app.get("/api/analytics/fleet-trend", async (req, res) => {
+  if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: "start and end (ISO) required" });
+  const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");  // -> CH 'YYYY-MM-DD HH:MM:SS'
+  const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
+  try {
+    const rs = await clickhouse.query({
+      query: `
+        SELECT
+          formatDateTime(bucket_ts, '%Y-%m-%dT%H:%i')                                   AS bucket,
+          round(sum(delta_prod_t) / (count() * 300) * 100, 1)                           AS avg_uptime,
+          if(sum(delta_swabs) > 0, round(sum(delta_discard) / sum(delta_swabs) * 100, 1), 0) AS avg_scrap,
+          toInt64(sum(delta_boxes))                                                     AS total_boxes,
+          toInt64(sum(delta_swabs))                                                     AS total_swabs,
+          uniqExact(machine_id)                                                         AS machine_count
+        FROM v_bucket_deltas_5m
+        WHERE bucket_ts >= toDateTime64({start:String}, 3, 'UTC')
+          AND bucket_ts <  toDateTime64({end:String}, 3, 'UTC')
+          AND (length({machines:Array(String)}) = 0 OR machine_id IN {machines:Array(String)})
+        GROUP BY bucket_ts
+        ORDER BY bucket_ts`,
+      query_params: { start: fmt(start), end: fmt(end), machines },
+      format: "JSONEachRow",
+    });
+    res.json(await rs.json());
+  } catch (err) {
+    logger.error(`fleet-trend query failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get single machine
 app.get("/api/machines/:code", (req, res) => {
   const machine = allMachines[req.params.code];
