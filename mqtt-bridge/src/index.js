@@ -35,6 +35,7 @@ const cors = require("cors");
 const winston = require("winston");
 const fs = require("fs");
 const path = require("path");
+const { startDataQualityMonitor } = require("./dataQualityMonitor");
 
 // ============================================
 // LOGGER
@@ -1204,6 +1205,11 @@ app.listen(PORT, () => {
   // Periodic cleanup: delete shift_readings and error_events older than 48h (every hour)
   periodicCleanup(); // run once on startup
   setInterval(() => periodicCleanup(), 60 * 60 * 1000);
+
+  // Data-quality monitor: polls data_quality_alerts (filled by pg_cron job
+  // `data-quality-check`, migration 095) and posts a Claude root-cause report
+  // to Slack when impossible values appear. Cheap until an incident fires.
+  startDataQualityMonitor({ supabase, logger });
 });
 
 // Graceful shutdown
