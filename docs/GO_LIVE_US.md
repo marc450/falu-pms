@@ -79,6 +79,26 @@ DELETE FROM machines WHERE hidden = true;
 
 ---
 
+### F. ClickHouse access (evaluation — applies only if/when ClickHouse is adopted)
+
+ClickHouse is currently a PoC (analytics dual-write, branch `clickhouse-poc`).
+It is NOT part of the current Supabase go-live. Capture these so they are not
+forgotten if the analytics layer moves to ClickHouse.
+
+| Step | Action | Where |
+|---|---|---|
+| F1 | ClickHouse Cloud blocks all connections via its **IP Access List**. The bridge connects from **Railway**, so Railway's **egress IP** must be allow-listed — not a developer laptop IP. | ClickHouse Cloud → service → Settings → IP Access List |
+| F2 | Configure **Railway static egress** so the bridge has a stable outbound IP, then add that exact IP (`/32`) to the ClickHouse access list. Without static egress, Railway egress IPs rotate and connections will start timing out. | Railway → service → Settings → Networking |
+| F3 | Alternative (less secure): set the ClickHouse access list to **Anywhere** (`0.0.0.0/0`) and rely on a strong password. Avoid for a corporate customer. | ClickHouse Cloud → IP Access List |
+| F4 | Do **not** ship the all-powerful `default` user. Create a dedicated, restricted ClickHouse user (read/write only on the readings tables) with per-user quotas/settings profiles. | ClickHouse Cloud → SQL console |
+| F5 | Developer-machine IPs added during the PoC (e.g. `81.27.232.122`) are for local testing only and do not apply in production — remove them before handover. | ClickHouse Cloud → IP Access List |
+
+> Symptom if the access list is wrong: TCP connect to port `8443` times out
+> (curl exit 28 / client "Timeout error"), while the ClickHouse web SQL console
+> still works (it connects from ClickHouse's own servers, not your IP).
+
+---
+
 ## Factory Timezone
 
 The US factory operates in **Eastern Time (ET)**.
@@ -233,6 +253,7 @@ hourly regardless of the factory timezone.
 | `downsample_to_analytics` — bucket alignment | Apply `AT TIME ZONE` to hour truncation | Low — minor alignment only |
 | MQTT bridge shift detection | No code change — verify PLC clock is in ET | Operational check |
 | pg_cron schedule | No change needed | None |
+| ClickHouse IP Access List (if adopted) | Allow-list Railway **static egress** IP (not a laptop IP); use a restricted user, not `default` | Critical for ClickHouse — evaluation only |
 
 ---
 
