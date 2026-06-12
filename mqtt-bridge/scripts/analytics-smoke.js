@@ -2,7 +2,7 @@
 /**
  * Analytics endpoint smoke test.
  *
- * Hits /api/analytics/fleet-trend for EVERY granularity tier (5s/5m/1h/1d) and
+ * Hits /api/analytics/fleet-trend for EVERY granularity tier (5s/5m/1h/shift/1d) and
  * asserts HTTP 200 + a sane payload (non-empty, required fields, plausible
  * values, returned in time). Run it after any deploy that touches the bridge,
  * the ClickHouse views, or the data volume — so a broken tier (SQL error,
@@ -20,10 +20,14 @@ const now = Date.now();
 const iso = (ms) => new Date(ms).toISOString();
 
 // One representative window per tier — matches how the frontend maps windows.
+// The "shift" tier carries the configured shift system (12h @ 07:00, factory tz)
+// as the frontend does, so the bridge can align buckets to shift boundaries.
 const CASES = [
   { name: "Last hour  (5s)", gran: "5s", start: now - H,       end: now },
   { name: "Last 24h   (5m)", gran: "5m", start: now - 24 * H,  end: now },
   { name: "Last 7 days (1h)", gran: "1h", start: now - 8 * D,  end: now },
+  { name: "Last 7 days (shift)", gran: "shift", start: now - 8 * D, end: now,
+    extra: { shiftHours: 12, shiftStartHour: 7, tz: "Europe/Zurich" } },
   { name: "Last 12 mo  (1d)", gran: "1d", start: now - 365 * D, end: now },
 ];
 
@@ -31,10 +35,12 @@ const REQUIRED = ["bucket", "avg_uptime", "avg_scrap", "total_swabs", "machine_c
 const MAX_MS = 15_000;   // a healthy tier answers well under this
 
 async function check(c) {
+  const extra = Object.entries(c.extra || {})
+    .map(([k, v]) => `&${k}=${encodeURIComponent(v)}`).join("");
   const url = `${BASE}/api/analytics/fleet-trend`
     + `?start=${encodeURIComponent(iso(c.start))}`
     + `&end=${encodeURIComponent(iso(c.end))}`
-    + `&granularity=${c.gran}`;
+    + `&granularity=${c.gran}${extra}`;
   const t0 = Date.now();
   let res, text;
   try {
