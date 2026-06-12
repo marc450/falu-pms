@@ -452,6 +452,203 @@ function ZoneLegend({ color, label }: { color: string; label: string }) {
   );
 }
 
+// ─── Custom range picker (styled, in-app) ────────────────────────────────────
+// Replaces the native <input type="datetime-local"> popups — which can't be
+// themed and force a click-away to dismiss — with an in-app calendar + time
+// fields that match the app's dark/cyan look. It edits the same
+// "yyyy-MM-ddTHH:mm" factory wall-clock strings, so all the tz / granularity /
+// validation logic in PeriodSelector stays untouched.
+
+const CAL_WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+const pad2s = (n: number) => String(n).padStart(2, "0");
+
+interface LocalParts { y: number; mo: number; d: number; hh: number; mm: number; }
+
+function parseLocalParts(s: string): LocalParts | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s);
+  if (!m) return null;
+  return { y: +m[1], mo: +m[2], d: +m[3], hh: +m[4], mm: +m[5] };
+}
+
+function buildLocalParts(p: LocalParts): string {
+  return `${p.y}-${pad2s(p.mo)}-${pad2s(p.d)}T${pad2s(p.hh)}:${pad2s(p.mm)}`;
+}
+
+// Comparable integer for a y/mo/d triple, for range-membership tests.
+const dayKey = (y: number, mo: number, d: number) => y * 10000 + mo * 100 + d;
+
+function CustomRangeFields({
+  startValue,
+  endValue,
+  onChangeStart,
+  onChangeEnd,
+}: {
+  startValue:    string;
+  endValue:      string;
+  onChangeStart: (v: string) => void;
+  onChangeEnd:   (v: string) => void;
+}) {
+  const sp = parseLocalParts(startValue);
+  const ep = parseLocalParts(endValue);
+
+  // Which endpoint a calendar click assigns to. Clicking "From" then "To" is the
+  // natural flow, so a day-click auto-advances start → end.
+  const [active, setActive] = useState<"start" | "end">("start");
+  const [view, setView] = useState<{ y: number; mo: number }>(() => {
+    const seed = sp ?? ep;
+    const now = new Date();
+    return { y: seed?.y ?? now.getFullYear(), mo: seed?.mo ?? now.getMonth() + 1 };
+  });
+
+  // Build the Monday-first month grid for the displayed month.
+  const firstDow      = new Date(view.y, view.mo - 1, 1).getDay();  // 0 = Sun
+  const leadingBlanks = firstDow === 0 ? 6 : firstDow - 1;
+  const totalDays     = new Date(view.y, view.mo, 0).getDate();
+  const cells: (number | null)[] = [];
+  for (let i = 0; i < leadingBlanks; i++) cells.push(null);
+  for (let d = 1; d <= totalDays; d++) cells.push(d);
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  const startKey = sp ? dayKey(sp.y, sp.mo, sp.d) : null;
+  const endKey   = ep ? dayKey(ep.y, ep.mo, ep.d) : null;
+
+  function focusEndpoint(which: "start" | "end") {
+    setActive(which);
+    const p = which === "start" ? sp : ep;
+    if (p) setView({ y: p.y, mo: p.mo });
+  }
+
+  function pickDay(d: number) {
+    const target = active === "start" ? sp : ep;
+    // Preserve the endpoint's existing time; default new starts to 00:00 and new
+    // ends to 23:59 so a fresh pick spans the whole day.
+    const hh = target?.hh ?? (active === "start" ? 0 : 23);
+    const mm = target?.mm ?? (active === "start" ? 0 : 59);
+    const next = buildLocalParts({ y: view.y, mo: view.mo, d, hh, mm });
+    if (active === "start") { onChangeStart(next); setActive("end"); }
+    else                    { onChangeEnd(next); }
+  }
+
+  function setTime(which: "start" | "end", field: "hh" | "mm", raw: string) {
+    const p = which === "start" ? sp : ep;
+    if (!p) return;
+    let n = parseInt(raw, 10);
+    if (isNaN(n)) n = 0;
+    n = field === "hh" ? Math.max(0, Math.min(23, n)) : Math.max(0, Math.min(59, n));
+    const next = buildLocalParts({ ...p, [field]: n });
+    (which === "start" ? onChangeStart : onChangeEnd)(next);
+  }
+
+  function shiftMonth(delta: number) {
+    setView(v => {
+      const m0 = v.mo - 1 + delta;
+      return { y: v.y + Math.floor(m0 / 12), mo: ((m0 % 12) + 12) % 12 + 1 };
+    });
+  }
+
+  function endpointRow(which: "start" | "end", label: string, p: LocalParts | null) {
+    const isActive = active === which;
+    return (
+      <button
+        type="button"
+        onClick={() => focusEndpoint(which)}
+        className={`flex items-center justify-between gap-2 rounded-lg border px-2.5 py-1.5 text-left transition-colors ${
+          isActive ? "border-cyan-600 bg-cyan-950/30" : "border-gray-700 bg-gray-800 hover:border-gray-600"
+        }`}
+      >
+        <span className="flex flex-col">
+          <span className="text-[11px] text-gray-500">{label}</span>
+          <span className="text-sm text-gray-200 tabular-nums">
+            {p ? `${pad2s(p.d)}.${pad2s(p.mo)}.${p.y}` : "—"}
+          </span>
+        </span>
+        <span className="flex items-center gap-0.5" onClick={e => e.stopPropagation()}>
+          <input
+            type="number" min={0} max={23} value={p ? p.hh : ""}
+            onChange={e => setTime(which, "hh", e.target.value)}
+            className="w-9 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-sm text-gray-200 text-center tabular-nums focus:outline-none focus:border-cyan-600"
+            aria-label={`${label} hour`}
+          />
+          <span className="text-gray-500">:</span>
+          <input
+            type="number" min={0} max={59} value={p ? p.mm : ""}
+            onChange={e => setTime(which, "mm", e.target.value)}
+            className="w-9 bg-gray-900 border border-gray-700 rounded px-1 py-0.5 text-sm text-gray-200 text-center tabular-nums focus:outline-none focus:border-cyan-600"
+            aria-label={`${label} minute`}
+          />
+        </span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Month navigation */}
+      <div className="flex items-center justify-between">
+        <button
+          type="button"
+          onClick={() => shiftMonth(-1)}
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          aria-label="Previous month"
+        >
+          <i className="bi bi-chevron-left text-xs"></i>
+        </button>
+        <span className="text-sm font-semibold text-gray-200">
+          {format(new Date(view.y, view.mo - 1, 1), "MMMM yyyy")}
+        </span>
+        <button
+          type="button"
+          onClick={() => shiftMonth(1)}
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          aria-label="Next month"
+        >
+          <i className="bi bi-chevron-right text-xs"></i>
+        </button>
+      </div>
+
+      {/* Weekday header */}
+      <div className="grid grid-cols-7 gap-1">
+        {CAL_WEEKDAYS.map(w => (
+          <div key={w} className="text-center text-[11px] font-medium text-gray-500">{w}</div>
+        ))}
+      </div>
+
+      {/* Day grid */}
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((d, i) => {
+          if (!d) return <div key={i} />;
+          const k       = dayKey(view.y, view.mo, d);
+          const isEdge  = k === startKey || k === endKey;
+          const between = startKey !== null && endKey !== null && k > startKey && k < endKey;
+          return (
+            <button
+              key={i}
+              type="button"
+              onClick={() => pickDay(d)}
+              className={[
+                "h-8 w-8 flex items-center justify-center rounded-lg text-sm transition-colors",
+                isEdge
+                  ? "bg-cyan-600 text-white font-semibold"
+                  : between
+                    ? "bg-cyan-950/60 text-cyan-200"
+                    : "text-gray-300 hover:bg-gray-800",
+              ].join(" ")}
+            >
+              {d}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* From / To endpoints with time */}
+      <div className="flex flex-col gap-2">
+        {endpointRow("start", "From", sp)}
+        {endpointRow("end", "To", ep)}
+      </div>
+    </div>
+  );
+}
+
 // ─── Period selector ─────────────────────────────────────────────────────────
 
 export function PeriodSelector({
@@ -558,28 +755,14 @@ export function PeriodSelector({
               </button>
             ))}
           </div>
-          <div className="p-4 flex flex-col gap-3 min-w-[240px]">
+          <div className="p-4 flex flex-col gap-3 min-w-[264px]">
             <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Custom range · factory time</p>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">From</span>
-              <input
-                type="datetime-local"
-                value={customStart}
-                onChange={e => setCustomStart(e.target.value)}
-                style={{ colorScheme: "dark" }}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">To</span>
-              <input
-                type="datetime-local"
-                value={customEnd}
-                onChange={e => setCustomEnd(e.target.value)}
-                style={{ colorScheme: "dark" }}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
-              />
-            </label>
+            <CustomRangeFields
+              startValue={customStart}
+              endValue={customEnd}
+              onChangeStart={setCustomStart}
+              onChangeEnd={setCustomEnd}
+            />
             {invalid
               ? <p className="text-xs text-red-400"><i className="bi bi-exclamation-circle mr-1"></i>{(preview as { error: string }).error}</p>
               : <p className="text-xs text-gray-500">
