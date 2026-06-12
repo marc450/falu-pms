@@ -221,6 +221,8 @@ export default function Analytics() {
             dateRange={dateRange}
             onPresetSelect={handlePresetSelect}
             onCustomRange={handleCustomRange}
+            factoryTz={factoryTz}
+            fleetSize={machines.length}
           />
         </div>
         {lastRefreshed && !loading && (

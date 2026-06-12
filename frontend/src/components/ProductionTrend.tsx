@@ -12,7 +12,7 @@ import {
   subHours,
 } from "date-fns";
 import { fmtPct } from "@/lib/fmt";
-import { applyEfficiencyColor, applyScrapColor } from "@/lib/supabase";
+import { applyEfficiencyColor, applyScrapColor, pickGranularity } from "@/lib/supabase";
 import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
 import {
   useFactoryTimezone,
@@ -177,8 +177,29 @@ function filterDailyTicks(rows: { date: string }[]): number[] {
   return indices;
 }
 
-function toDateInputValue(d: Date): string {
-  return format(d, "yyyy-MM-dd");
+// <input type="datetime-local"> value ("yyyy-MM-ddTHH:mm") rendered at the
+// FACTORY wall clock, so the custom picker is consistent with the presets.
+function toDateTimeInputValue(d: Date, tz: string): string {
+  const p = getZonedParts(d, tz);
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${p.year}-${pad(p.month)}-${pad(p.day)}T${pad(p.hour)}:${pad(p.minute)}`;
+}
+
+// Parse a datetime-local string as a FACTORY-local wall clock -> UTC instant.
+function parseFactoryInput(s: string, tz: string): Date | null {
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/.exec(s);
+  if (!m) return null;
+  return constructFactoryInstant(tz, +m[1], +m[2], +m[3], +m[4], +m[5]);
+}
+
+const GRAN_LABEL: Record<string, string> = {
+  "5s": "5-second", "5m": "5-minute", "1h": "hourly", "1d": "daily",
+};
+function fmtReadingCount(n: number): string {
+  return n >= 1e9 ? `${(n / 1e9).toFixed(1)}B`
+    : n >= 1e6 ? `${(n / 1e6).toFixed(0)}M`
+    : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K`
+    : `${n}`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -424,21 +445,25 @@ export function PeriodSelector({
   dateRange,
   onPresetSelect,
   onCustomRange,
+  factoryTz,
+  fleetSize = 0,
 }: {
   activePresetId: PresetId | "custom";
   dateRange:      DateRange;
   onPresetSelect: (preset: Preset) => void;
   onCustomRange:  (range: DateRange) => void;
+  factoryTz:      string;
+  fleetSize?:     number;
 }) {
   const [open, setOpen] = useState(false);
-  const [customStart, setCustomStart] = useState(() => toDateInputValue(dateRange.start));
-  const [customEnd, setCustomEnd] = useState(() => toDateInputValue(dateRange.end));
+  const [customStart, setCustomStart] = useState(() => toDateTimeInputValue(dateRange.start, factoryTz));
+  const [customEnd, setCustomEnd] = useState(() => toDateTimeInputValue(dateRange.end, factoryTz));
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    setCustomStart(toDateInputValue(dateRange.start));
-    setCustomEnd(toDateInputValue(dateRange.end));
-  }, [dateRange]);
+    setCustomStart(toDateTimeInputValue(dateRange.start, factoryTz));
+    setCustomEnd(toDateTimeInputValue(dateRange.end, factoryTz));
+  }, [dateRange, factoryTz]);
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {
@@ -450,19 +475,31 @@ export function PeriodSelector({
 
   const buttonLabel =
     activePresetId === "custom"
-      ? `${format(dateRange.start, "dd.MM.yyyy")} – ${format(dateRange.end, "dd.MM.yyyy")}`
+      ? `${format(dateRange.start, "dd.MM HH:mm")} – ${format(dateRange.end, "dd.MM HH:mm")}`
       : PRESETS.find(p => p.id === activePresetId)?.label ?? "Select period";
 
+  // Validate the inputs and preview the resulting query. The granularity ladder
+  // guarantees a sane resolution (5s only for <=1h windows, coarser otherwise),
+  // so a runaway is impossible by construction — we just surface what it'll be
+  // and block invalid ranges.
+  const preview: { error: string } | { start: Date; end: Date; gran: "5s" | "5m" | "1h" | "1d"; readings: number } = (() => {
+    const start = parseFactoryInput(customStart, factoryTz);
+    const end   = parseFactoryInput(customEnd, factoryTz);
+    const now   = new Date();
+    if (!start || !end) return { error: "Pick a valid start and end" };
+    if (start >= end)   return { error: "Start must be before end" };
+    if (start > now)    return { error: "Start is in the future" };
+    const clampedEnd = end > now ? now : end;          // never query past 'now'
+    const gran = pickGranularity({ start, end: clampedEnd });
+    const readings = Math.round((clampedEnd.getTime() - start.getTime()) / 5000) * (fleetSize > 0 ? fleetSize : 18);
+    return { start, end: clampedEnd, gran, readings };
+  })();
+  const invalid = "error" in preview;
+
   function applyCustom() {
-    try {
-      const start = parseISO(customStart);
-      const end   = parseISO(customEnd);
-      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
-        end.setHours(23, 59, 59, 999);
-        onCustomRange({ start, end });
-        setOpen(false);
-      }
-    } catch { /* ignore parse errors */ }
+    if ("error" in preview) return;
+    onCustomRange({ start: preview.start, end: preview.end });
+    setOpen(false);
   }
 
   return (
@@ -493,12 +530,12 @@ export function PeriodSelector({
               </button>
             ))}
           </div>
-          <div className="p-4 flex flex-col gap-3 min-w-[190px]">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Custom range</p>
+          <div className="p-4 flex flex-col gap-3 min-w-[240px]">
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Custom range · factory time</p>
             <label className="flex flex-col gap-1">
               <span className="text-xs text-gray-500">From</span>
               <input
-                type="date"
+                type="datetime-local"
                 value={customStart}
                 onChange={e => setCustomStart(e.target.value)}
                 style={{ colorScheme: "dark" }}
@@ -508,16 +545,23 @@ export function PeriodSelector({
             <label className="flex flex-col gap-1">
               <span className="text-xs text-gray-500">To</span>
               <input
-                type="date"
+                type="datetime-local"
                 value={customEnd}
                 onChange={e => setCustomEnd(e.target.value)}
                 style={{ colorScheme: "dark" }}
                 className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
               />
             </label>
+            {invalid
+              ? <p className="text-xs text-red-400"><i className="bi bi-exclamation-circle mr-1"></i>{(preview as { error: string }).error}</p>
+              : <p className="text-xs text-gray-500">
+                  <i className="bi bi-bar-chart-line mr-1"></i>
+                  {GRAN_LABEL[(preview as { gran: string }).gran]} resolution · ~{fmtReadingCount((preview as { readings: number }).readings)} readings
+                </p>}
             <button
               onClick={applyCustom}
-              className="mt-1 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition-colors font-medium"
+              disabled={invalid}
+              className="mt-1 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors font-medium"
             >
               Apply
             </button>

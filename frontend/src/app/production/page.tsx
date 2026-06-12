@@ -463,6 +463,8 @@ function ProductionContent() {
                 setTrendPresetId("custom");
                 setTrendRange(range);
               }}
+              factoryTz={factoryTz}
+              fleetSize={1}
             />
           )}
         </div>
