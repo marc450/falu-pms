@@ -92,6 +92,14 @@ export const DEFAULT_PRESET_ID: PresetId = "7d";
 // ─── Formatters ──────────────────────────────────────────────────────────────
 
 const MONTH_ABBR = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+const WEEKDAY_ABBR = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+
+// Weekday name for a factory-local calendar date. Day-of-week depends only on
+// the Y/M/D, so building a UTC date from the already-zoned parts and reading
+// getUTCDay() is timezone-safe.
+function weekdayAbbr(year: number, month: number, day: number): string {
+  return WEEKDAY_ABBR[new Date(Date.UTC(year, month - 1, day)).getUTCDay()];
+}
 
 function fmtMillions(n: number): string {
   const m = n / 1_000_000;
@@ -224,9 +232,9 @@ function fmtDayMonth(key: string, tz?: string): string {
   const d = parseBucketKey(key);
   const zp = tz
     ? getZonedParts(d, tz)
-    : { day: d.getUTCDate(), month: d.getUTCMonth() + 1 };
+    : { year: d.getUTCFullYear(), day: d.getUTCDate(), month: d.getUTCMonth() + 1 };
   const pad = (n: number) => String(n).padStart(2, "0");
-  return `${pad(zp.day)}.${pad(zp.month)}`;
+  return `${weekdayAbbr(zp.year, zp.month, zp.day)} ${pad(zp.day)}.${pad(zp.month)}`;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
