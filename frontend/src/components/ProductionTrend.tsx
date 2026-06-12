@@ -154,8 +154,16 @@ function fmtBucketLabel(key: string, granularity: "hour" | "day", tz?: string): 
         if (d.getUTCSeconds() !== 0) return "";
         return tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
       }
-      const minute = tz ? getZonedParts(d, tz).minute : d.getUTCMinutes();
-      if (minute !== 0) return "";
+      const zp = tz
+        ? getZonedParts(d, tz)
+        : { day: d.getUTCDate(), month: d.getUTCMonth() + 1, hour: d.getUTCHours(), minute: d.getUTCMinutes() };
+      if (zp.minute !== 0) return "";
+      // Midnight is the day boundary -> show the DATE so days are marked; other
+      // hours -> the time.
+      if (zp.hour === 0) {
+        const pad = (n: number) => String(n).padStart(2, "0");
+        return `${pad(zp.day)}.${pad(zp.month)}`;
+      }
       return tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
     }
     return fmtDateShort(parseISO(key), tz);
@@ -1076,16 +1084,24 @@ export function ProductionTrendSection({
   // positions, which is what gives the x-axis the "10:00 11:00 12:00" feel.
   const hourTicks = granularity === "hour"
     ? (() => {
-        // Sub-minute grains (5s) mark the top of each MINUTE; coarser grains the
-        // top of each HOUR. Then downsample to keep ~24 labels visible.
-        const subMinute = bucketMinutes < 1;
-        const aligned = rows.filter(r => {
-          const d = parseBucketKey(r.date);
-          return subMinute ? d.getUTCSeconds() === 0 : d.getUTCMinutes() === 0;
-        }).map(r => r.date);
-        const MAX_LABELS = 24;
-        const step = Math.max(1, Math.ceil(aligned.length / MAX_LABELS));
-        return aligned.filter((_, i) => i % step === 0);
+        // 5s grain: mark the top of each minute, downsampled to ~24 labels.
+        if (bucketMinutes < 1) {
+          const aligned = rows.filter(r => parseBucketKey(r.date).getUTCSeconds() === 0).map(r => r.date);
+          const step = Math.max(1, Math.ceil(aligned.length / 24));
+          return aligned.filter((_, i) => i % step === 0);
+        }
+        // 5m / 1h grain: tick on factory-local hours at a DIVISOR-of-24 interval,
+        // so the midnight (day boundary, labelled with its date) is always marked.
+        const spanHours = rows.length >= 2
+          ? (parseBucketKey(rows[rows.length - 1].date).getTime() - parseBucketKey(rows[0].date).getTime()) / 3_600_000
+          : 24;
+        const every = [1, 2, 3, 4, 6, 8, 12, 24].find(h => spanHours / h <= 16) ?? 24;
+        return rows
+          .filter(r => {
+            const p = getZonedParts(parseBucketKey(r.date), factoryTz);
+            return p.minute === 0 && p.hour % every === 0;
+          })
+          .map(r => r.date);
       })()
     : undefined;
 
