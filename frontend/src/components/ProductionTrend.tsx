@@ -561,9 +561,10 @@ export function PeriodSelector({
             <button
               onClick={applyCustom}
               disabled={invalid}
-              className="mt-1 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors font-medium"
+              className="mt-1 w-full px-3 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors font-semibold flex items-center justify-center gap-1.5"
             >
-              Apply
+              <i className="bi bi-check-lg"></i>
+              Confirm range
             </button>
           </div>
         </div>

@@ -602,7 +602,7 @@ async function fetchIntradayTrend(
       end:   range.end.toISOString(),
     });
     if (machineIds && machineIds.length) qs.set("machines", machineIds.join(","));
-    const resp = await fetch(`${API_BASE}/api/analytics/fleet-trend?${qs.toString()}`, { headers: API_HEADERS });
+    const resp = await fetchRetry(`${API_BASE}/api/analytics/fleet-trend?${qs.toString()}`, { headers: API_HEADERS });
     if (!resp.ok) throw new Error(`fleet-trend ${resp.status}`);
     rows_raw = (await resp.json()) as IntradayBucketRow[];
   } else {
@@ -690,7 +690,7 @@ export async function fetchTrendClickHouse(
     granularity: gran,
   });
   if (machineIds && machineIds.length) qs.set("machines", machineIds.join(","));
-  const resp = await fetch(`${API_BASE}/api/analytics/fleet-trend?${qs.toString()}`, { headers: API_HEADERS });
+  const resp = await fetchRetry(`${API_BASE}/api/analytics/fleet-trend?${qs.toString()}`, { headers: API_HEADERS });
   if (!resp.ok) throw new Error(`fleet-trend ${resp.status}`);
   const raw = (await resp.json()) as CHTrendRow[];
   const rows: FleetTrendRow[] = raw.map((r) => ({
@@ -961,6 +961,23 @@ const API_HEADERS: HeadersInit = {
   "Content-Type": "application/json",
   "ngrok-skip-browser-warning": "true",
 };
+
+// fetch() that retries on NETWORK failure (the "Failed to fetch" TypeError that
+// happens during a brief bridge restart or a momentary connection blip). It does
+// NOT retry HTTP errors (4xx/5xx) — those surface immediately. Smooths over the
+// transient gaps so the user doesn't see a scary error for a blip.
+export async function fetchRetry(input: string, init?: RequestInit, tries = 3): Promise<Response> {
+  let lastErr: unknown;
+  for (let i = 0; i < tries; i++) {
+    try {
+      return await fetch(input, init);
+    } catch (e) {
+      lastErr = e;
+      if (i < tries - 1) await new Promise((r) => setTimeout(r, 500 * (i + 1)));
+    }
+  }
+  throw lastErr;
+}
 
 export async function fetchMachines(): Promise<BridgeState> {
   const res = await fetch(`${API_BASE}/api/machines`, { headers: API_HEADERS });
