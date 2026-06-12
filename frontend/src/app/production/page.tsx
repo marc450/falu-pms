@@ -5,8 +5,8 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments, fetchRegisteredMachines, fetchMachineDailyTrend, fetchMachineHourlyTrend,
-  fetchMachinePeers, fetchPeersDailyTrend, fetchPeersHourlyTrend,
-  fetchMachineErrorEvents, fetchErrorCodeLookup,
+  fetchMachineFineTrend, fetchMachinePeers, fetchPeersDailyTrend, fetchPeersHourlyTrend, fetchPeersFineTrend,
+  fetchMachineErrorEvents, fetchErrorCodeLookup, ANALYTICS_SOURCE,
   PACKING_FORMATS,
 } from "@/lib/supabase";
 import type {
@@ -153,6 +153,11 @@ function ProductionContent() {
     // filters summary_date < today, so a window living entirely inside the
     // current day matched zero rows and rendered "No data for this period".
     const windowMs = effectiveRange.end.getTime() - effectiveRange.start.getTime();
+    // Short windows (a current shift that has only run a few hours) zoom into
+    // 5-second buckets so brief standstills and errors are visible. 5s lives
+    // only in ClickHouse, so this needs the clickhouse source; below it falls
+    // back to the 5-min intraday rollup. 6h cap matches the analytics 5s ladder.
+    const isFine   = ANALYTICS_SOURCE === "clickhouse" && windowMs <= 6 * 60 * 60 * 1000;
     const isHourly = windowMs <= 25 * 60 * 60 * 1000;
 
     (async () => {
@@ -160,9 +165,11 @@ function ProductionContent() {
         // Self trend first; peer info second. Peers depends on the machine's
         // machine_type which is read by fetchMachinePeers.
         const [selfResult, peers] = await Promise.all([
-          isHourly
-            ? fetchMachineHourlyTrend(machineName, effectiveRange)
-            : fetchMachineDailyTrend(machineName, effectiveRange),
+          isFine
+            ? fetchMachineFineTrend(machineName, effectiveRange)
+            : isHourly
+              ? fetchMachineHourlyTrend(machineName, effectiveRange)
+              : fetchMachineDailyTrend(machineName, effectiveRange),
           fetchMachinePeers(machineName),
         ]);
         setTrendRows(selfResult.rows);
@@ -173,9 +180,11 @@ function ProductionContent() {
         if (peers.peerCodes.length === 0) {
           setPeerRows([]);
         } else {
-          const peerResult = isHourly
-            ? await fetchPeersHourlyTrend(peers.peerIds, effectiveRange)
-            : await fetchPeersDailyTrend(peers.peerCodes, effectiveRange);
+          const peerResult = isFine
+            ? await fetchPeersFineTrend(peers.peerIds, effectiveRange)
+            : isHourly
+              ? await fetchPeersHourlyTrend(peers.peerIds, effectiveRange)
+              : await fetchPeersDailyTrend(peers.peerCodes, effectiveRange);
           setPeerRows(peerResult.rows);
         }
 

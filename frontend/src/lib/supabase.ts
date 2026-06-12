@@ -863,6 +863,24 @@ export async function fetchMachineHourlyTrend(machineCode: string, range: DateRa
   return fetchIntradayTrend(range, [(machineRow as { id: string }).id]);
 }
 
+// Per-machine trend at 5-second resolution, for short windows (a current shift
+// that has only run a few hours). 5s buckets exist only in ClickHouse (the
+// Supabase RPC path has no sub-minute rollup), so this routes through the
+// bridge proxy. Callers must gate on ANALYTICS_SOURCE === "clickhouse" and on
+// the 6h window cap (see FINE_5S_MAX_MS / sensibleGrains).
+export async function fetchMachineFineTrend(machineCode: string, range: DateRange): Promise<FleetTrendResult> {
+  const sb = getSupabase();
+  const { data: machineRow, error: machineErr } = await sb
+    .from("machines")
+    .select("id")
+    .eq("machine_code", machineCode)
+    .maybeSingle();
+  if (machineErr) throw new Error(machineErr.message);
+  if (!machineRow) return { rows: [], granularity: "hour", totalReadings: 0 };
+
+  return fetchTrendClickHouse(range, [(machineRow as { id: string }).id], "5s");
+}
+
 // ============================================
 // PEER BENCHMARK (machines sharing the same machine_type, excluding self)
 // ============================================
@@ -996,6 +1014,22 @@ export async function fetchPeersHourlyTrend(peerIds: string[], range: DateRange)
     return { rows: [], granularity: "hour", totalReadings: 0 };
   }
   const result = await fetchIntradayTrend(range, peerIds);
+  const perPeerRows = result.rows.map(r => {
+    const n = Math.max(1, r.machineCount);
+    return { ...r, totalBoxes: r.totalBoxes / n, totalSwabs: r.totalSwabs / n };
+  });
+  return { ...result, rows: perPeerRows };
+}
+
+// Peer benchmark at 5-second resolution (the 5s sibling of fetchPeersHourlyTrend).
+// fetchTrendClickHouse sums production across peers, so post-divide by the
+// per-bucket machine_count to get the per-peer average — directly comparable to
+// a single machine's own 5s trend.
+export async function fetchPeersFineTrend(peerIds: string[], range: DateRange): Promise<FleetTrendResult> {
+  if (peerIds.length === 0) {
+    return { rows: [], granularity: "hour", totalReadings: 0 };
+  }
+  const result = await fetchTrendClickHouse(range, peerIds, "5s");
   const perPeerRows = result.rows.map(r => {
     const n = Math.max(1, r.machineCount);
     return { ...r, totalBoxes: r.totalBoxes / n, totalSwabs: r.totalSwabs / n };
