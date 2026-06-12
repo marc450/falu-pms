@@ -684,9 +684,18 @@ export async function fetchTrendClickHouse(
   machineIds: string[] | null,
 ): Promise<FleetTrendResult> {
   const gran = pickGranularity(range);
+  // Snap the window to the bucket grid (must match the bridge exactly) so the
+  // request URL is byte-identical for every reload within the same window. A
+  // stable URL lets the browser serve the reload from its HTTP cache without a
+  // network round-trip; `end` rounds up into the empty future so no rendered
+  // data point changes. Falls back to the raw instants if the grain is unknown.
+  const Q_MS: Record<string, number> = { "5s": 5_000, "5m": 300_000, "1h": 3_600_000, "1d": 3_600_000 };
+  const qms = Q_MS[gran];
+  const startISO = qms ? new Date(Math.floor(range.start.getTime() / qms) * qms).toISOString() : range.start.toISOString();
+  const endISO   = qms ? new Date(Math.ceil(range.end.getTime()   / qms) * qms).toISOString() : range.end.toISOString();
   const qs = new URLSearchParams({
-    start: range.start.toISOString(),
-    end:   range.end.toISOString(),
+    start: startISO,
+    end:   endISO,
     granularity: gran,
   });
   if (machineIds && machineIds.length) qs.set("machines", machineIds.join(","));

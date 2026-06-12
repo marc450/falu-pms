@@ -1261,6 +1261,18 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
   const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
   const gran = String(req.query.granularity);
   const g = TREND_GRAN[gran] || TREND_GRAN["5m"];   // whitelist -> no injection
+
+  // ── Bucket-grid snapping (makes the cache real) ──────────────────────────
+  // The chart only ever renders complete buckets, so the exact sub-bucket
+  // second of `end` is irrelevant to the result. We snap `start` DOWN and
+  // `end` UP to the bucket grid so the query text is byte-identical for every
+  // reload within the same window. `end` rounds up into the empty future, so
+  // no rendered data point changes. With a stable query the ClickHouse query
+  // cache (below) and the HTTP cache both actually hit instead of recomputing.
+  const Q_MS = { "5s": 5_000, "5m": 300_000, "1h": 3_600_000, "1d": 3_600_000 };
+  const qms = Q_MS[gran] || 300_000;
+  const startSnap = new Date(Math.floor(new Date(start).getTime() / qms) * qms);
+  const endSnap   = new Date(Math.ceil(new Date(end).getTime()  / qms) * qms);
   const bucketSel = g.label ? `formatDateTime(${g.ts}, '${g.label}')` : `toString(${g.ts})`;
 
   // 5m/1h/1d read the pre-aggregated MV (fast). 5s reads RAW with window funcs,
@@ -1335,13 +1347,25 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
   try {
     const rs = await clickhouse.query({
       query: gran === "5s" ? query5s : queryAgg,
-      query_params: { start: fmt(start), end: fmt(end), machines },
+      query_params: { start: fmt(startSnap), end: fmt(endSnap), machines },
       // Fail fast + legibly: a runaway query is killed at 20s (and returns a
       // clear error the endpoint surfaces as 500) instead of hanging ~90s.
-      clickhouse_settings: { max_execution_time: 20 },
+      // use_query_cache: identical (snapped) queries within the window return
+      // the cached result instead of recomputing — a reload no longer re-scans
+      // ClickHouse. TTL = the window length so it expires exactly when a new
+      // bucket can appear.
+      clickhouse_settings: {
+        max_execution_time: 20,
+        use_query_cache: 1,
+        query_cache_ttl: Math.ceil(qms / 1000),
+      },
       format: "JSONEachRow",
     });
-    res.json(await rs.json());
+    const payload = await rs.json();
+    // Let the browser serve a reload straight from its HTTP cache until the
+    // next bucket boundary — no request reaches the bridge at all.
+    res.set("Cache-Control", `public, max-age=${Math.ceil(qms / 1000)}`);
+    res.json(payload);
   } catch (err) {
     logger.error(`fleet-trend query failed: ${err.message}`);
     res.status(500).json({ error: err.message });
