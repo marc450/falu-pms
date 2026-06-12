@@ -135,7 +135,7 @@ function ProductionContent() {
   }, [machineName, loadData, loadSavedLogs]);
 
   // Load production trend (machine + peer benchmark) for the selected period.
-  // 24h preset → hourly data, all other presets → daily.
+  // Sub-day windows → 5-min intraday buckets; longer windows → daily summary.
   useEffect(() => {
     if (!machineName) return;
     setTrendLoading(true);
@@ -145,7 +145,15 @@ function ProductionContent() {
       trendPresetId !== "custom"
         ? PRESETS.find(p => p.id === trendPresetId)!.getRange(factoryTz)
         : trendRange;
-    const isHourly = trendPresetId === "24h";
+    // Any window up to ~a day (Last hour, Current/Last shift, Last 24 hours,
+    // and short custom ranges) renders from the 5-min intraday rollup. Longer
+    // windows roll up to the daily summary. Keying this on the window length
+    // instead of just the "24h" preset fixes "Last hour" and the shift presets,
+    // which previously fell through to fetchMachineDailyTrend — that query
+    // filters summary_date < today, so a window living entirely inside the
+    // current day matched zero rows and rendered "No data for this period".
+    const windowMs = effectiveRange.end.getTime() - effectiveRange.start.getTime();
+    const isHourly = windowMs <= 25 * 60 * 60 * 1000;
 
     (async () => {
       try {

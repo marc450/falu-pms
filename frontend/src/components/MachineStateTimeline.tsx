@@ -170,9 +170,12 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     }
 
     // Build error spans from error_events (precise PLC-reported timing). Clip
-    // each event to the chart window, drop empty ones, then merge time-
-    // overlapping events so concurrent codes land in one combined ErrorSeg —
-    // the tooltip lists every code active during the hovered range.
+    // each event to the chart window, drop empty ones, then merge only
+    // genuinely time-OVERLAPPING events so concurrent codes land in one
+    // combined ErrorSeg — the tooltip lists every code active during the
+    // hovered range. Two errors that merely touch (one ends exactly when the
+    // next begins) stay separate so a back-to-back sequence reads as distinct
+    // errors, not one fused block.
     const clippedErrs = errorEvents
       .map(ev => {
         const s = new Date(ev.started_at).getTime();
@@ -185,7 +188,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
     const errorSpans: ErrorSeg[] = [];
     for (const e of clippedErrs) {
       const last = errorSpans[errorSpans.length - 1];
-      if (last && e.start <= last.end) {
+      if (last && e.start < last.end) {
         last.end = Math.max(last.end, e.end);
         last.events.push(e.ev);
       } else {
@@ -290,6 +293,14 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
             const end   = v.seg.end;
             const w     = pct(end) - pct(start);
             if (v.kind === "error") {
+              // When this error block butts directly against the previous one
+              // (a back-to-back sequence), draw a thin dark divider on its left
+              // edge so the two read as separate errors instead of one fused
+              // red stretch. The red fill bakes its own alpha into the rgba so
+              // the divider can stay full-opacity and crisp.
+              const prev = data.visual[i - 1];
+              const abutsPrevError =
+                prev?.kind === "error" && prev.seg.end === v.seg.start;
               return (
                 <div
                   key={`v-${i}`}
@@ -301,8 +312,8 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
                     // hoverable. Bucket slices don't need this — they're at
                     // least a 5-min wide chunk after the carve.
                     width: `${Math.max(w, 0.15)}%`,
-                    background: COLORS.error,
-                    opacity: 0.4,
+                    background: "rgba(239, 68, 68, 0.4)",
+                    borderLeft: abutsPrevError ? "2px solid #0b1220" : undefined,
                   }}
                   onMouseEnter={enterError(v.seg)}
                   onMouseLeave={leave}
