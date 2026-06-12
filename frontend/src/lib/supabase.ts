@@ -577,9 +577,16 @@ interface IntradayBucketRow {
   machine_count: number;
   reading_count: number;
   shift_count:   number;
-  total_production_seconds?: number;  // added by migration 089
+  // Production/idle/error seconds feed the corrected Avg Uptime KPI. The two
+  // backends name them differently: the Supabase RPC (get_fleet_trend_minute,
+  // migration 089) prefixes "total_"; the ClickHouse fleet-trend proxy does not.
+  // Both are mapped below so uptime works regardless of ANALYTICS_SOURCE.
+  total_production_seconds?: number;
   total_idle_seconds?:       number;
   total_error_seconds?:      number;
+  production_seconds?:       number;
+  idle_seconds?:             number;
+  error_seconds?:            number;
 }
 
 // Shared workhorse: calls get_fleet_trend_minute, gap-fills the requested
@@ -636,9 +643,9 @@ async function fetchIntradayTrend(
         machineCount:     Number(b.machine_count) || 0,
         readingCount:     Number(b.reading_count) || 0,
         shiftCount:       Number(b.shift_count)   || 0,
-        productionSeconds: Number(b.total_production_seconds) || 0,
-        idleSeconds:       Number(b.total_idle_seconds)       || 0,
-        errorSeconds:      Number(b.total_error_seconds)      || 0,
+        productionSeconds: Number(b.total_production_seconds ?? b.production_seconds) || 0,
+        idleSeconds:       Number(b.total_idle_seconds       ?? b.idle_seconds)       || 0,
+        errorSeconds:      Number(b.total_error_seconds      ?? b.error_seconds)      || 0,
       });
     } else {
       filledRows.push({
