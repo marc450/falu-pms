@@ -150,10 +150,6 @@ function filterDailyTicks(rows: { date: string }[]): number[] {
   return indices;
 }
 
-function toDateInputValue(d: Date): string {
-  return format(d, "yyyy-MM-dd");
-}
-
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function RangeTick({ x, y, payload, granularity, angled, tz }: any) {
   const label = fmtBucketLabel(payload?.value ?? "", granularity, tz);
@@ -390,6 +386,163 @@ function ZoneLegend({ color, label }: { color: string; label: string }) {
   );
 }
 
+// ─── Custom range calendar ───────────────────────────────────────────────────
+// In-app styled month calendar (Monday-first) replacing the native date input
+// popup, so it matches the app's dark/cyan theme and offers an explicit Apply
+// (confirm) action instead of relying on the browser's un-styleable picker.
+
+const CAL_WEEKDAYS = ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+
+function isSameDay(a: Date, b: Date): boolean {
+  return a.getFullYear() === b.getFullYear()
+      && a.getMonth() === b.getMonth()
+      && a.getDate() === b.getDate();
+}
+
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+}
+
+function RangeCalendar({
+  start,
+  end,
+  onApply,
+}: {
+  start:   Date;
+  end:     Date;
+  onApply: (range: DateRange) => void;
+}) {
+  const [selStart, setSelStart] = useState<Date | null>(() => startOfDay(start));
+  const [selEnd,   setSelEnd]   = useState<Date | null>(() => startOfDay(end));
+  const [viewMonth, setViewMonth] = useState<Date>(() => new Date(start.getFullYear(), start.getMonth(), 1));
+
+  const today = startOfDay(new Date());
+  const year  = viewMonth.getFullYear();
+  const month = viewMonth.getMonth();
+
+  // Build the month grid (Monday-first), padded with leading/trailing blanks.
+  const firstOfMonth  = new Date(year, month, 1);
+  const totalDays     = new Date(year, month + 1, 0).getDate();
+  const startDay      = firstOfMonth.getDay();             // 0 = Sun
+  const leadingBlanks = startDay === 0 ? 6 : startDay - 1;
+  const cells: (Date | null)[] = [];
+  for (let i = 0; i < leadingBlanks; i++) cells.push(null);
+  for (let d = 1; d <= totalDays; d++) cells.push(new Date(year, month, d));
+  while (cells.length % 7 !== 0) cells.push(null);
+
+  function pickDay(day: Date) {
+    // No start yet, or a complete range already chosen → begin a new range.
+    if (!selStart || (selStart && selEnd)) {
+      setSelStart(day);
+      setSelEnd(null);
+      return;
+    }
+    // Second click: order the two ends correctly.
+    if (day < selStart) { setSelEnd(selStart); setSelStart(day); }
+    else                { setSelEnd(day); }
+  }
+
+  function inRange(day: Date): boolean {
+    if (!selStart || !selEnd) return false;
+    return day > selStart && day < selEnd;
+  }
+
+  function apply() {
+    if (!selStart) return;
+    const s = startOfDay(selStart);
+    const e = startOfDay(selEnd ?? selStart);
+    e.setHours(23, 59, 59, 999);   // include the full end day
+    onApply({ start: s, end: e });
+  }
+
+  return (
+    <div className="p-4 flex flex-col gap-3 min-w-[252px]">
+      {/* Month navigation */}
+      <div className="flex items-center justify-between">
+        <button
+          onClick={() => setViewMonth(new Date(year, month - 1, 1))}
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          aria-label="Previous month"
+        >
+          <i className="bi bi-chevron-left text-xs"></i>
+        </button>
+        <span className="text-sm font-semibold text-gray-200">{format(viewMonth, "MMMM yyyy")}</span>
+        <button
+          onClick={() => setViewMonth(new Date(year, month + 1, 1))}
+          className="w-7 h-7 flex items-center justify-center rounded-lg text-gray-400 hover:text-white hover:bg-gray-800 transition-colors"
+          aria-label="Next month"
+        >
+          <i className="bi bi-chevron-right text-xs"></i>
+        </button>
+      </div>
+
+      {/* Weekday header */}
+      <div className="grid grid-cols-7 gap-1">
+        {CAL_WEEKDAYS.map(w => (
+          <div key={w} className="text-center text-[11px] font-medium text-gray-500">{w}</div>
+        ))}
+      </div>
+
+      {/* Day grid */}
+      <div className="grid grid-cols-7 gap-1">
+        {cells.map((day, i) => {
+          if (!day) return <div key={i} />;
+          const isEdge  = (selStart && isSameDay(day, selStart)) || (selEnd && isSameDay(day, selEnd));
+          const between = inRange(day);
+          const isToday = isSameDay(day, today);
+          return (
+            <button
+              key={i}
+              onClick={() => pickDay(day)}
+              className={[
+                "h-8 w-8 flex items-center justify-center rounded-lg text-sm transition-colors",
+                isEdge
+                  ? "bg-cyan-600 text-white font-semibold"
+                  : between
+                    ? "bg-cyan-950/60 text-cyan-200"
+                    : "text-gray-300 hover:bg-gray-800",
+                !isEdge && isToday ? "ring-1 ring-inset ring-cyan-700" : "",
+              ].join(" ")}
+            >
+              {day.getDate()}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Selected range readout */}
+      <div className="flex items-center justify-between text-xs text-gray-400 pt-0.5">
+        <span>{selStart ? format(selStart, "dd.MM.yyyy") : "Start"}</span>
+        <i className="bi bi-arrow-right text-gray-600"></i>
+        <span>{selEnd ? format(selEnd, "dd.MM.yyyy") : (selStart ? "Pick end" : "End")}</span>
+      </div>
+
+      {/* Actions */}
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => setViewMonth(new Date(today.getFullYear(), today.getMonth(), 1))}
+          className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white transition-colors"
+        >
+          Today
+        </button>
+        <button
+          onClick={() => { setSelStart(null); setSelEnd(null); }}
+          className="px-2.5 py-1.5 text-xs text-gray-400 hover:text-white transition-colors"
+        >
+          Clear
+        </button>
+        <button
+          onClick={apply}
+          disabled={!selStart}
+          className="ml-auto px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 disabled:bg-gray-700 disabled:text-gray-500 disabled:cursor-not-allowed text-white text-sm rounded-lg transition-colors font-medium"
+        >
+          Apply
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ─── Period selector ─────────────────────────────────────────────────────────
 
 export function PeriodSelector({
@@ -404,14 +557,7 @@ export function PeriodSelector({
   onCustomRange:  (range: DateRange) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [customStart, setCustomStart] = useState(() => toDateInputValue(dateRange.start));
-  const [customEnd, setCustomEnd] = useState(() => toDateInputValue(dateRange.end));
   const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setCustomStart(toDateInputValue(dateRange.start));
-    setCustomEnd(toDateInputValue(dateRange.end));
-  }, [dateRange]);
 
   useEffect(() => {
     function onOutside(e: MouseEvent) {
@@ -425,18 +571,6 @@ export function PeriodSelector({
     activePresetId === "custom"
       ? `${format(dateRange.start, "dd.MM.yyyy")} – ${format(dateRange.end, "dd.MM.yyyy")}`
       : PRESETS.find(p => p.id === activePresetId)?.label ?? "Select period";
-
-  function applyCustom() {
-    try {
-      const start = parseISO(customStart);
-      const end   = parseISO(customEnd);
-      if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
-        end.setHours(23, 59, 59, 999);
-        onCustomRange({ start, end });
-        setOpen(false);
-      }
-    } catch { /* ignore parse errors */ }
-  }
 
   return (
     <div className="relative" ref={ref}>
@@ -466,35 +600,11 @@ export function PeriodSelector({
               </button>
             ))}
           </div>
-          <div className="p-4 flex flex-col gap-3 min-w-[190px]">
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide">Custom range</p>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">From</span>
-              <input
-                type="date"
-                value={customStart}
-                onChange={e => setCustomStart(e.target.value)}
-                style={{ colorScheme: "dark" }}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
-              />
-            </label>
-            <label className="flex flex-col gap-1">
-              <span className="text-xs text-gray-500">To</span>
-              <input
-                type="date"
-                value={customEnd}
-                onChange={e => setCustomEnd(e.target.value)}
-                style={{ colorScheme: "dark" }}
-                className="bg-gray-800 border border-gray-700 rounded-lg px-2 py-1.5 text-sm text-gray-300 focus:outline-none focus:border-cyan-600"
-              />
-            </label>
-            <button
-              onClick={applyCustom}
-              className="mt-1 px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white text-sm rounded-lg transition-colors font-medium"
-            >
-              Apply
-            </button>
-          </div>
+          <RangeCalendar
+            start={dateRange.start}
+            end={dateRange.end}
+            onApply={range => { onCustomRange(range); setOpen(false); }}
+          />
         </div>
       )}
     </div>
