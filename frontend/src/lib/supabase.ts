@@ -1335,27 +1335,25 @@ export interface MachineShiftRow {
   avg_scrap:      number | null;
 }
 
-export async function fetchMachineShiftSummary(
-  range: DateRange,
-  _slots: TimeSlot[] = slotsFromDuration(12, 7),
+// Shared post-processing for crew/shift summaries. Takes raw saved_shift_logs-
+// shaped rows (from Supabase OR the ClickHouse reconstruction endpoint — same
+// column names) and aggregates them by (work_day, crew, machine) into the
+// MachineShiftRow shape the analytics tabs consume. Keeping this in ONE place
+// means both backends produce byte-identical downstream numbers.
+//
+// bu_normalized projects the machine's running pace onto a hypothetical full
+// shift. The right multiplier is *available production time* — total shift
+// length minus planned downtime (breaks + cleaning) — not total shift length.
+// Defaults preserve legacy behaviour (full 12 h shift, no planned downtime).
+function aggregateShiftLogs(
+  rawRows: Record<string, unknown>[],
   config: { shiftLengthMinutes?: number; plannedDowntimeMinutes?: number } = {},
-): Promise<MachineShiftRow[]> {
-  void _slots; // no longer needed: crew is stored directly by the bridge
-  const sb = getSupabase();
-
-  // bu_normalized projects the machine's running pace onto a hypothetical
-  // full shift. The right multiplier is *available production time* —
-  // total shift length minus planned downtime (breaks + cleaning) — not
-  // total shift length. A machine that ran perfectly through every
-  // available minute and only paused for scheduled breaks should hit its
-  // target; multiplying by the full 12 h penalises it for downtime that
-  // wasn't its fault. Defaults preserve legacy behaviour (full 12 h shift,
-  // no planned downtime budget) so unconfigured callers don't shift.
-  const shiftMin   = config.shiftLengthMinutes      ?? 720;
+): MachineShiftRow[] {
+  const shiftMin    = config.shiftLengthMinutes      ?? 720;
   const downtimeMin = config.plannedDowntimeMinutes ?? 0;
   const availableHours = Math.max(0, (shiftMin - downtimeMin) / 60);
 
-  // Helper: local YYYY-MM-DD string (no UTC offset shift)
+  // Local YYYY-MM-DD string (no UTC offset shift)
   const toLocalDate = (d: Date) => {
     const y = d.getFullYear();
     const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -1363,17 +1361,7 @@ export async function fetchMachineShiftSummary(
     return `${y}-${m}-${day}`;
   };
 
-  const logsResult = await sb
-    .from("saved_shift_logs")
-    .select("machine_id, machine_code, shift_crew, production_time_seconds, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
-    .gte("saved_at", range.start.toISOString())
-    .lte("saved_at", range.end.toISOString())
-    .order("saved_at", { ascending: false });
-
-  if (logsResult.error) throw new Error(logsResult.error.message);
-
   // Aggregate by (shift_date, shift_crew, machine_id).
-  // The bridge stores the crew name directly so no slot resolution is needed.
   type Acc = {
     machineCode:  string;
     shiftDate:    string;
@@ -1387,7 +1375,7 @@ export async function fetchMachineShiftSummary(
   };
   const map = new Map<string, Acc>();
 
-  for (const row of (logsResult.data ?? []) as Record<string, unknown>[]) {
+  for (const row of rawRows) {
     const crew = String(row.shift_crew ?? "Unassigned");
     const shiftDate = toLocalDate(new Date(String(row.saved_at)));
 
@@ -1428,6 +1416,48 @@ export async function fetchMachineShiftSummary(
     || a.shift_crew.localeCompare(b.shift_crew)
     || a.machine_code.localeCompare(b.machine_code)
   );
+}
+
+// Reconstructed shift rows from ClickHouse (Crew Comparison on raw 5s data).
+// Returns the same column shape as the saved_shift_logs select so the shared
+// aggregator treats both backends identically.
+async function fetchCrewShiftRowsClickHouse(range: DateRange): Promise<Record<string, unknown>[]> {
+  // Snap to a 1h grid (must match the bridge) so the URL is stable across
+  // reloads and the browser / ClickHouse caches actually hit.
+  const Q = 3_600_000;
+  const startISO = new Date(Math.floor(range.start.getTime() / Q) * Q).toISOString();
+  const endISO   = new Date(Math.ceil(range.end.getTime()   / Q) * Q).toISOString();
+  const qs = new URLSearchParams({ start: startISO, end: endISO });
+  const resp = await fetchRetry(`${API_BASE}/api/analytics/crew-shifts?${qs.toString()}`, { headers: API_HEADERS });
+  if (!resp.ok) throw new Error(`crew-shifts ${resp.status}`);
+  return (await resp.json()) as Record<string, unknown>[];
+}
+
+export async function fetchMachineShiftSummary(
+  range: DateRange,
+  _slots: TimeSlot[] = slotsFromDuration(12, 7),
+  config: { shiftLengthMinutes?: number; plannedDowntimeMinutes?: number } = {},
+): Promise<MachineShiftRow[]> {
+  void _slots; // no longer needed: crew is stored directly by the bridge
+
+  // ClickHouse path: reconstruct shifts from raw 5s data, gated by the same
+  // flag as the Production Trend tab. Identical downstream aggregation.
+  if (ANALYTICS_SOURCE === "clickhouse") {
+    const raw = await fetchCrewShiftRowsClickHouse(range);
+    return aggregateShiftLogs(raw, config);
+  }
+
+  const sb = getSupabase();
+  const logsResult = await sb
+    .from("saved_shift_logs")
+    .select("machine_id, machine_code, shift_crew, production_time_seconds, produced_swabs, produced_boxes, discarded_swabs, efficiency, saved_at")
+    .gte("saved_at", range.start.toISOString())
+    .lte("saved_at", range.end.toISOString())
+    .order("saved_at", { ascending: false });
+
+  if (logsResult.error) throw new Error(logsResult.error.message);
+
+  return aggregateShiftLogs((logsResult.data ?? []) as Record<string, unknown>[], config);
 }
 
 // ============================================

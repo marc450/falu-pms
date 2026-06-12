@@ -1372,6 +1372,76 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
   }
 });
 
+// ── Crew shift reconstruction (Crew Comparison tab on ClickHouse) ──────────
+// Rebuilds one row per shift from the 5-minute delta view. A shift = a
+// contiguous run of the same crew on a machine (segmented by crew change). We
+// sum the reset-aware per-bucket deltas across that run (output, boxes,
+// discards, producing seconds) and derive the shift's uptime the same way the
+// fleet trend does (producing seconds / elapsed). The returned rows mirror the
+// saved_shift_logs column shape so the frontend runs the *identical*
+// aggregation it uses for the Supabase path — only the data source differs.
+app.get("/api/analytics/crew-shifts", async (req, res) => {
+  if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: "start and end (ISO) required" });
+  const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");
+  const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
+
+  // Snap to a 1h grid so reloads within the hour reuse the cached result.
+  const Q_MS = 3_600_000;
+  const startSnap = new Date(Math.floor(new Date(start).getTime() / Q_MS) * Q_MS);
+  const endSnap   = new Date(Math.ceil(new Date(end).getTime()  / Q_MS) * Q_MS);
+
+  const query = `
+    SELECT
+      machine_id,
+      any(machine_code)                                   AS machine_code,
+      any(shift_crew)                                     AS shift_crew,
+      toInt64(sum(delta_swabs))                           AS produced_swabs,
+      toInt64(sum(delta_boxes))                           AS produced_boxes,
+      toInt64(sum(delta_discard))                         AS discarded_swabs,
+      toInt64(sum(delta_prod_t))                          AS production_time_seconds,
+      round(sum(delta_prod_t) / (count() * 300) * 100, 1) AS efficiency,
+      concat(formatDateTime(max(bucket_ts), '%Y-%m-%dT%H:%i:%S'), 'Z') AS saved_at
+    FROM (
+      SELECT *,
+        sum(seg_start) OVER (PARTITION BY machine_id ORDER BY bucket_ts
+                             ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS seg_id
+      FROM (
+        SELECT machine_id, machine_code, shift_crew, bucket_ts,
+               delta_swabs, delta_boxes, delta_discard, delta_prod_t,
+               if(shift_crew != lagInFrame(shift_crew, 1, '') OVER w, 1, 0) AS seg_start
+        FROM v_bucket_deltas_5m
+        WHERE bucket_ts >= toDateTime64({start:String}, 3, 'UTC')
+          AND bucket_ts <  toDateTime64({end:String}, 3, 'UTC')
+          AND shift_crew != ''
+          AND (length({machines:Array(String)}) = 0 OR machine_id IN {machines:Array(String)})
+        WINDOW w AS (PARTITION BY machine_id ORDER BY bucket_ts)
+      )
+    )
+    GROUP BY machine_id, seg_id
+    ORDER BY saved_at`;
+
+  try {
+    const rs = await clickhouse.query({
+      query,
+      query_params: { start: fmt(startSnap), end: fmt(endSnap), machines },
+      clickhouse_settings: {
+        max_execution_time: 20,
+        use_query_cache: 1,
+        query_cache_ttl: Math.ceil(Q_MS / 1000),
+      },
+      format: "JSONEachRow",
+    });
+    const payload = await rs.json();
+    res.set("Cache-Control", `public, max-age=${Math.ceil(Q_MS / 1000)}`);
+    res.json(payload);
+  } catch (err) {
+    logger.error(`crew-shifts query failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get single machine
 app.get("/api/machines/:code", (req, res) => {
   const machine = allMachines[req.params.code];

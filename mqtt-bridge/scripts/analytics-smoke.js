@@ -57,6 +57,30 @@ async function check(c) {
   return { ok: true, ms, msg: `${rows.length} buckets` };
 }
 
+// Crew Comparison reconstruction endpoint (different shape: per-shift rows).
+const CREW_REQUIRED = ["machine_code", "shift_crew", "produced_swabs", "production_time_seconds", "efficiency", "saved_at"];
+async function checkCrew() {
+  const url = `${BASE}/api/analytics/crew-shifts`
+    + `?start=${encodeURIComponent(iso(now - 8 * D))}`
+    + `&end=${encodeURIComponent(iso(now))}`;
+  const t0 = Date.now();
+  let res, text;
+  try { res = await fetch(url); text = await res.text(); }
+  catch (e) { return { ok: false, msg: `network error: ${e.message}` }; }
+  const ms = Date.now() - t0;
+  if (!res.ok)              return { ok: false, ms, msg: `HTTP ${res.status}: ${text.slice(0, 140)}` };
+  let rows;
+  try { rows = JSON.parse(text); } catch { return { ok: false, ms, msg: `bad JSON: ${text.slice(0, 140)}` }; }
+  if (!Array.isArray(rows)) return { ok: false, ms, msg: "response is not an array" };
+  if (rows.length === 0)    return { ok: false, ms, msg: "empty result" };
+  const miss = CREW_REQUIRED.filter((k) => !(k in rows[0]));
+  if (miss.length)          return { ok: false, ms, msg: `missing fields: ${miss.join(", ")}` };
+  const e = Number(rows[0].efficiency);
+  if (!(e >= 0 && e <= 200)) return { ok: false, ms, msg: `implausible efficiency: ${e}` };
+  if (ms > MAX_MS)          return { ok: false, ms, msg: `too slow (${ms}ms > ${MAX_MS}ms)` };
+  return { ok: true, ms, msg: `${rows.length} shifts` };
+}
+
 (async () => {
   console.log(`Analytics smoke test -> ${BASE}\n`);
   let failed = 0;
@@ -65,6 +89,10 @@ async function check(c) {
     console.log(`[${r.ok ? "PASS" : "FAIL"}] ${c.name}  ${r.msg}${r.ms != null ? `  (${r.ms}ms)` : ""}`);
     if (!r.ok) failed++;
   }
-  console.log(failed ? `\n❌ ${failed} tier(s) FAILED` : `\n✅ all tiers OK`);
+  const cr = await checkCrew();
+  console.log(`[${cr.ok ? "PASS" : "FAIL"}] Crew shifts (7d)  ${cr.msg}${cr.ms != null ? `  (${cr.ms}ms)` : ""}`);
+  if (!cr.ok) failed++;
+
+  console.log(failed ? `\n❌ ${failed} check(s) FAILED` : `\n✅ all checks OK`);
   process.exit(failed ? 1 : 0);
 })();
