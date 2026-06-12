@@ -170,19 +170,23 @@ function fmtBucketLabel(key: string, granularity: "hour" | "day", tz?: string): 
   } catch { return key; }
 }
 
+// Pick which daily buckets get an x-axis label. Anchoring to calendar landmarks
+// (1st/15th) left short windows with only one or two lonely labels and a huge
+// gap. Instead pick an evenly-spaced subset: every Nth day, where N comes from a
+// "nice" ladder sized so the axis carries a comfortable number of labels.
+// Walking backwards from the last bucket keeps the most recent day labelled and
+// the spacing even, with no orphaned gap at the right edge.
 function filterDailyTicks(rows: { date: string }[]): number[] {
+  const n = rows.length;
+  if (n <= 1) return rows.map((_, i) => i);
+  // Up to ~10 days: label every day, no crowding.
+  if (n <= 10) return rows.map((_, i) => i);
+  const MAX_LABELS = 12;
+  const stepDays =
+    [1, 2, 3, 7, 14, 30].find(s => n / s <= MAX_LABELS) ?? Math.ceil(n / MAX_LABELS);
   const indices: number[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    try {
-      const d = parseISO(rows[i].date);
-      const day = d.getDate();
-      if (day === 1 || day === 15) indices.push(i);
-    } catch { /* skip */ }
-  }
-  if (indices.length < 2 && rows.length <= 31) {
-    return rows.map((_, i) => i);
-  }
-  return indices;
+  for (let i = n - 1; i >= 0; i -= stepDays) indices.push(i);
+  return indices.reverse();
 }
 
 // <input type="datetime-local"> value ("yyyy-MM-ddTHH:mm") rendered at the
