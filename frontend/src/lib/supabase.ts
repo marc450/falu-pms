@@ -654,11 +654,12 @@ async function fetchIntradayTrend(
   return { rows: filledRows, granularity: "hour", totalReadings };
 }
 
-// Window length -> bucket granularity (chart finest = 5min; 5s stays API-only).
-//   <= 24h -> 5m,  <= 7d -> 1h,  else -> 1d (factory work-day)
-function pickGranularity(range: DateRange): "5m" | "1h" | "1d" {
+// Window length -> bucket granularity.
+//   <= 1h -> 5s,  <= 24h -> 5m,  <= 7d -> 1h,  else -> 1d (factory work-day)
+function pickGranularity(range: DateRange): "5s" | "5m" | "1h" | "1d" {
   const ms = range.end.getTime() - range.start.getTime();
   const H = 3_600_000;
+  if (ms <= H + 60_000) return "5s";   // <= ~1h (+1min slack so "Last hour" lands here)
   if (ms <= 24 * H)     return "5m";
   if (ms <= 7 * 24 * H) return "1h";
   return "1d";

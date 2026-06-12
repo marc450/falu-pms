@@ -115,10 +115,12 @@ function fmtDateShort(d: Date, tz?: string): string {
   return `${day}. ${mon} '${yr}`;
 }
 
-// Bucket keys come in three lengths: "YYYY-MM-DD" (day, 10), "YYYY-MM-DDTHH"
-// (hour, 13 — legacy), "YYYY-MM-DDTHH:MM" (sub-hour, 16). Append whatever
-// suffix is needed to round it out to a parseable UTC instant.
+// Bucket keys come in four lengths: "YYYY-MM-DD" (day, 10), "YYYY-MM-DDTHH"
+// (hour, 13 — legacy), "YYYY-MM-DDTHH:MM" (sub-hour, 16), and
+// "YYYY-MM-DDTHH:MM:SS" (5-sec, 19). Append whatever suffix rounds it out to a
+// parseable UTC instant. ORDER MATTERS: check 19 before 16.
 export function parseBucketKey(key: string): Date {
+  if (key.length >= 19) return parseISO(key + "Z");           // 5-sec
   if (key.length >= 16) return parseISO(key + ":00Z");        // sub-hour
   if (key.length >= 13) return parseISO(key + ":00:00Z");     // hour
   return parseISO(key);                                       // day
@@ -128,7 +130,9 @@ function fmtBucketFull(key: string, granularity: "hour" | "day", tz?: string): s
   try {
     if (granularity === "hour") {
       const d = parseBucketKey(key);
-      const time = tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
+      const base = tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
+      // 5-sec buckets: append seconds (tz-invariant) so the tooltip is precise.
+      const time = key.length >= 19 ? `${base}:${String(d.getUTCSeconds()).padStart(2, "0")}` : base;
       return `${fmtDateShort(d, tz)} ${time}`;
     }
     return fmtDateShort(parseISO(key), tz);
@@ -145,6 +149,11 @@ function fmtBucketLabel(key: string, granularity: "hour" | "day", tz?: string): 
   try {
     if (granularity === "hour") {
       const d = parseBucketKey(key);
+      // 5-sec buckets: label the top of each minute (seconds are tz-invariant).
+      if (key.length >= 19) {
+        if (d.getUTCSeconds() !== 0) return "";
+        return tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
+      }
       const minute = tz ? getZonedParts(d, tz).minute : d.getUTCMinutes();
       if (minute !== 0) return "";
       return tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
@@ -912,11 +921,18 @@ export function ProductionTrendSection({
   // Detect the sub-daily bucket size from the first two rows so the BU chart
   // can rate-normalise its y-axis to "BUs/hour" regardless of bucket length
   // (15-min buckets are 1/4 of the legacy 60-min buckets).
-  const bucketMinutes = granularity === "hour" && rows.length >= 2
-    ? Math.max(1, Math.round(
-        (parseBucketKey(rows[1].date).getTime() - parseBucketKey(rows[0].date).getTime()) / 60_000
-      ))
-    : 60;
+  // Smallest gap between consecutive buckets = the true bucket width. Using the
+  // min (not rows[1]-rows[0]) is robust to leading gaps, and we do NOT round to
+  // whole minutes so sub-minute grains (5s = 1/12 min) rate-normalise correctly.
+  const bucketMinutes = (() => {
+    if (granularity !== "hour" || rows.length < 2) return 60;
+    let minMs = Infinity;
+    for (let i = 1; i < rows.length; i++) {
+      const g = parseBucketKey(rows[i].date).getTime() - parseBucketKey(rows[i - 1].date).getTime();
+      if (g > 0 && g < minMs) minMs = g;
+    }
+    return minMs === Infinity ? 60 : Math.max(1 / 60, minMs / 60_000);
+  })();
   const buRateMultiplier = granularity === "hour" ? 60 / bucketMinutes : 1;
 
   // Peer benchmark series. Aligned to the same date keys as `rows`; missing
@@ -999,9 +1015,12 @@ export function ProductionTrendSection({
   // positions, which is what gives the x-axis the "10:00 11:00 12:00" feel.
   const hourTicks = granularity === "hour"
     ? (() => {
+        // Sub-minute grains (5s) mark the top of each MINUTE; coarser grains the
+        // top of each HOUR. Then downsample to keep ~24 labels visible.
+        const subMinute = bucketMinutes < 1;
         const aligned = rows.filter(r => {
           const d = parseBucketKey(r.date);
-          return d.getUTCMinutes() === 0;
+          return subMinute ? d.getUTCSeconds() === 0 : d.getUTCMinutes() === 0;
         }).map(r => r.date);
         const MAX_LABELS = 24;
         const step = Math.max(1, Math.ceil(aligned.length / MAX_LABELS));
