@@ -164,18 +164,17 @@ function fmtBucketLabel(key: string, granularity: "hour" | "day", tz?: string): 
   } catch { return key; }
 }
 
-// Pick which daily buckets get an x-axis label. Anchoring to calendar landmarks
-// (1st/15th) left short windows with only one or two lonely labels and a huge
-// gap. Instead pick an evenly-spaced subset: every Nth day, where N comes from a
-// "nice" ladder sized so the axis carries a comfortable number of labels.
-// Walking backwards from the last bucket keeps the most recent day labelled and
-// the spacing even, with no orphaned gap at the right edge.
+// Pick which daily buckets get an x-axis label. Label EVERY day for windows up
+// to ~2 months — the labels angle at 45° (see RangeTick) so they stay legible.
+// Beyond that, a full set of daily labels turns into an unreadable wall, so fall
+// back to an evenly-spaced subset: every Nth day from a "nice" ladder sized to a
+// comfortable label count, walked backwards from the last bucket so the most
+// recent day is always labelled and the spacing stays even.
+const DAILY_LABEL_ALL_MAX = 62;
 function filterDailyTicks(rows: { date: string }[]): number[] {
   const n = rows.length;
-  if (n <= 1) return rows.map((_, i) => i);
-  // Up to ~10 days: label every day, no crowding.
-  if (n <= 10) return rows.map((_, i) => i);
-  const MAX_LABELS = 12;
+  if (n <= DAILY_LABEL_ALL_MAX) return rows.map((_, i) => i);
+  const MAX_LABELS = 16;
   const stepDays =
     [1, 2, 3, 7, 14, 30].find(s => n / s <= MAX_LABELS) ?? Math.ceil(n / MAX_LABELS);
   const indices: number[] = [];
@@ -234,7 +233,7 @@ function RangeTick({ x, y, payload, granularity, angled, tz, dateKeys }: any) {
   if (angled && !isDate) {
     return (
       <g transform={`translate(${x},${y})`}>
-        <text transform="rotate(-40)" textAnchor="end" fill={fill} fontWeight={weight} fontSize={size} dy={4} dx={-4}>
+        <text transform="rotate(-45)" textAnchor="end" fill={fill} fontWeight={weight} fontSize={size} dy={4} dx={-4}>
           {label}
         </text>
       </g>
