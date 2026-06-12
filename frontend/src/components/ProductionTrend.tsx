@@ -613,6 +613,12 @@ function CustomRangeFields({
 
   return (
     <div className="flex flex-col gap-3">
+      {/* From / To endpoints with time */}
+      <div className="flex flex-col gap-2">
+        {endpointRow("start", "From", sp)}
+        {endpointRow("end", "To", ep)}
+      </div>
+
       {/* Month navigation */}
       <div className="flex items-center justify-between">
         <button
@@ -668,12 +674,6 @@ function CustomRangeFields({
             </button>
           );
         })}
-      </div>
-
-      {/* From / To endpoints with time */}
-      <div className="flex flex-col gap-2">
-        {endpointRow("start", "From", sp)}
-        {endpointRow("end", "To", ep)}
       </div>
     </div>
   );
