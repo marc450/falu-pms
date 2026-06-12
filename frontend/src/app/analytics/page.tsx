@@ -47,8 +47,8 @@ export default function Analytics() {
   const [shiftSlots, setShiftSlots]             = useState<TimeSlot[]>([]);
   const [shiftAssignments, setShiftAssignments] = useState<Record<string, ShiftAssignment>>({});
 
-  const load = useCallback(async (bustCache = false) => {
-    setLoading(true);
+  const load = useCallback(async (bustCache = false, silent = false) => {
+    if (!silent) setLoading(true);   // silent = background refresh, keep charts on screen
     setError(null);
     // For presets, always recompute the range so `end` = now() at call time.
     // Storing the range at mount would freeze the window and miss readings
@@ -147,7 +147,7 @@ export default function Analytics() {
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load analytics data");
     } finally {
-      setLoading(false);
+      if (!silent) setLoading(false);
     }
   }, [activePresetId, dateRange]);
 
@@ -156,7 +156,7 @@ export default function Analytics() {
 
   // Auto-refresh every 5 minutes so live production data stays current
   useEffect(() => {
-    const timer = setInterval(() => load(true), 5 * 60 * 1000);
+    const timer = setInterval(() => load(true, true), 5 * 60 * 1000);   // silent background refresh
     return () => clearInterval(timer);
   }, [load]);
 

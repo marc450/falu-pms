@@ -1085,10 +1085,27 @@ export function ProductionTrendSection({
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity, factoryTz);
 
   if (loading) {
+    // Skeleton that mirrors the real layout (KPI tiles + 3 chart cards) so the
+    // page structure appears instantly and shimmers while data loads, instead
+    // of blanking out for the ~2s a long-range query can take.
+    const tileCount = showTotalSwabs ? 4 : 3;
     return (
-      <div className="flex items-center justify-center h-64 gap-2 text-gray-500 text-sm">
-        <span className="inline-block w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></span>
-        Loading analytics…
+      <div className="animate-pulse">
+        <div className={`grid ${showTotalSwabs ? "grid-cols-4" : "grid-cols-3"} gap-3 mb-5`}>
+          {Array.from({ length: tileCount }).map((_, i) => (
+            <div key={i} className="bg-gray-800/50 border-l-4 border-gray-700 rounded-lg px-5 py-4 flex flex-col gap-2.5">
+              <div className="h-3 w-24 bg-gray-700/60 rounded" />
+              <div className="h-7 w-20 bg-gray-700/70 rounded" />
+              <div className="h-2.5 w-28 bg-gray-700/40 rounded" />
+            </div>
+          ))}
+        </div>
+        {Array.from({ length: 3 }).map((_, i) => (
+          <div key={i} className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-4">
+            <div className="h-4 w-56 bg-gray-700/60 rounded mb-4" />
+            <div className="h-[220px] bg-gray-700/20 rounded" />
+          </div>
+        ))}
       </div>
     );
   }
