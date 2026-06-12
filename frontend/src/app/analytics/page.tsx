@@ -280,6 +280,7 @@ export default function Analytics() {
           dateRange={kpiRange}
           kpiSubLabel="Park average · selected period"
           chartTitleSuffix={granularity === "hour" ? "— intraday park total" : "— daily park total"}
+          fleetSize={machines.length}
         />
       )}
     </div>

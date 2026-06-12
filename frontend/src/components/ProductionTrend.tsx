@@ -855,6 +855,7 @@ export function ProductionTrendSection({
   errorLookup = {},
   showUptimeChart = true,
   afterKpis,
+  fleetSize = 0,
 }: {
   rows: FleetTrendRow[];
   granularity: "hour" | "day";
@@ -865,6 +866,7 @@ export function ProductionTrendSection({
   buMediocrePerShift: number | null;
   dateRange: DateRange;
   showTotalSwabs?: boolean;
+  fleetSize?: number;   // machine count, for the loading "~N readings" estimate
   kpiSubLabel?: string;
   chartTitleSuffix?: string;
   peerRows?: FleetTrendRow[];
@@ -1089,23 +1091,38 @@ export function ProductionTrendSection({
     // page structure appears instantly and shimmers while data loads, instead
     // of blanking out for the ~2s a long-range query can take.
     const tileCount = showTotalSwabs ? 4 : 3;
+    // Rough size of the window being analysed (readings ≈ window / 5s × fleet),
+    // shown so the wait has context — "a year of 5-second data" explains ~2s.
+    const windowMs = Math.max(0, dateRange.end.getTime() - dateRange.start.getTime());
+    const readings = Math.round(windowMs / 5000) * (fleetSize > 0 ? fleetSize : 18);
+    const fmtCount = (n: number) =>
+      n >= 1e9 ? `${(n / 1e9).toFixed(1)}B`
+      : n >= 1e6 ? `${(n / 1e6).toFixed(0)}M`
+      : n >= 1e3 ? `${(n / 1e3).toFixed(0)}K`
+      : `${n}`;
     return (
-      <div className="animate-pulse">
-        <div className={`grid ${showTotalSwabs ? "grid-cols-4" : "grid-cols-3"} gap-3 mb-5`}>
-          {Array.from({ length: tileCount }).map((_, i) => (
-            <div key={i} className="bg-gray-800/50 border-l-4 border-gray-700 rounded-lg px-5 py-4 flex flex-col gap-2.5">
-              <div className="h-3 w-24 bg-gray-700/60 rounded" />
-              <div className="h-7 w-20 bg-gray-700/70 rounded" />
-              <div className="h-2.5 w-28 bg-gray-700/40 rounded" />
+      <div>
+        <div className="flex items-center gap-2 text-sm text-gray-400 mb-4">
+          <span className="inline-block w-3.5 h-3.5 border-2 border-cyan-500 border-t-transparent rounded-full animate-spin"></span>
+          Fetching data{readings > 0 ? ` · analysing ~${fmtCount(readings)} readings` : ""}…
+        </div>
+        <div className="animate-pulse">
+          <div className={`grid ${showTotalSwabs ? "grid-cols-4" : "grid-cols-3"} gap-3 mb-5`}>
+            {Array.from({ length: tileCount }).map((_, i) => (
+              <div key={i} className="bg-gray-800/50 border-l-4 border-gray-700 rounded-lg px-5 py-4 flex flex-col gap-2.5">
+                <div className="h-3 w-24 bg-gray-700/60 rounded" />
+                <div className="h-7 w-20 bg-gray-700/70 rounded" />
+                <div className="h-2.5 w-28 bg-gray-700/40 rounded" />
+              </div>
+            ))}
+          </div>
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-4">
+              <div className="h-4 w-56 bg-gray-700/60 rounded mb-4" />
+              <div className="h-[220px] bg-gray-700/20 rounded" />
             </div>
           ))}
         </div>
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 mb-4">
-            <div className="h-4 w-56 bg-gray-700/60 rounded mb-4" />
-            <div className="h-[220px] bg-gray-700/20 rounded" />
-          </div>
-        ))}
       </div>
     );
   }
