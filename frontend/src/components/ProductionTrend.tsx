@@ -1258,7 +1258,7 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={buRows} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <LineChart data={buRows} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                 {buTargetLine !== null && (
                   <ReferenceArea y1={buTargetLine} y2={buMax} fill="#4ade80" fillOpacity={0.15} />
                 )}
@@ -1346,7 +1346,7 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={rowsWithPeer} margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <LineChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                 <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={thresholds.scrap.mediocre} y2={scrapMax} fill="#ef4444" fillOpacity={0.12} />
@@ -1435,7 +1435,7 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
-              <LineChart data={rowsWithPeer} margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
+              <LineChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
                 <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
