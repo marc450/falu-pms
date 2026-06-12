@@ -3,13 +3,13 @@
 import { useEffect, useState, useCallback, useRef } from "react";
 import { format } from "date-fns";
 import {
-  fetchFleetTrend, fetchHourlyAnalytics, fetchTrendClickHouse, ANALYTICS_SOURCE, pickGranularity,
+  fetchFleetTrend, fetchHourlyAnalytics, fetchTrendClickHouse, ANALYTICS_SOURCE, resolveGrain,
   fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments,
   DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
-import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, TimeSlot, ShiftAssignment } from "@/lib/supabase";
-import { ProductionTrendSection, PeriodSelector, PRESETS, DEFAULT_PRESET_ID } from "@/components/ProductionTrend";
+import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, TimeSlot, ShiftAssignment, GrainPref, GrainId } from "@/lib/supabase";
+import { ProductionTrendSection, PeriodSelector, GranularitySelector, PRESETS, DEFAULT_PRESET_ID } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
 import { useFactoryTimezone, getZonedParts } from "@/lib/useFactoryTimezone";
 import MachineAnalytics from "./MachineAnalytics";
@@ -26,8 +26,7 @@ type AnalyticsTab = "fleet" | "machines" | "shifts" | "downtime";
 // until this token does. We cache the payload against it: same token -> serve
 // cache instantly; token changed -> a new bucket exists -> refetch. Daily uses
 // the factory CALENDAR date (00:00 boundary); sub-daily align to the clock.
-function trendFreshnessToken(range: DateRange, tz: string): string {
-  const gran = pickGranularity(range);
+function trendFreshnessToken(range: DateRange, tz: string, gran: GrainId): string {
   if (gran === "1d") {
     const p = getZonedParts(new Date(), tz);   // factory calendar date (rolls at 00:00 local)
     return `1d:${p.year}-${p.month}-${p.day}`;
@@ -56,6 +55,7 @@ export default function Analytics() {
   const [tab, setTab]                     = useState<AnalyticsTab>("fleet");
   const [rows, setRows]                   = useState<FleetTrendRow[]>([]);
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
+  const [grainPref, setGrainPref]         = useState<GrainPref>("auto"); // user override of the auto bucket size
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [buTargetPerShift, setBuTargetPerShift]       = useState<number | null>(null); // sum of all machines' BU targets (per shift)
   const [buMediocrePerShift, setBuMediocrePerShift]   = useState<number | null>(null);
@@ -74,7 +74,11 @@ export default function Analytics() {
       activePresetId !== "custom"
         ? PRESETS.find(p => p.id === activePresetId)!.getRange(factoryTz)
         : dateRange;
-    const token = trendFreshnessToken(effectiveRange, factoryTz);
+    // Effective bucket grain = the user's choice if still sensible for this
+    // window, else the auto pick. Drives the cache key, freshness token, and the
+    // ClickHouse query so all three stay consistent.
+    const effGrain = resolveGrain(effectiveRange, grainPref);
+    const token = trendFreshnessToken(effectiveRange, factoryTz, effGrain);
 
     // Silent auto-refresh: nothing visible changes until a new complete bucket
     // exists, so skip the round-trip entirely when the token is unchanged.
@@ -90,7 +94,7 @@ export default function Analytics() {
       // The chart shows only COMPLETE buckets, so a cached payload stays valid
       // until the token changes (a new bucket finishes): the 12-month/daily view
       // caches until the next factory day, 7-day/hourly until the next hour, etc.
-      const cacheKey = `fleet_trend_${activePresetId}_${rangeFrom}_${rangeTo}`;
+      const cacheKey = `fleet_trend_${activePresetId}_${rangeFrom}_${rangeTo}_${effGrain}`;
 
       let cachedResult: Awaited<ReturnType<typeof fetchFleetTrend>> | null = null;
       if (!bustCache) {
@@ -108,7 +112,7 @@ export default function Analytics() {
         cachedResult
           ? Promise.resolve(cachedResult)
           : ANALYTICS_SOURCE === "clickhouse"
-            ? fetchTrendClickHouse(effectiveRange, null)
+            ? fetchTrendClickHouse(effectiveRange, null, effGrain)
             : (activePresetId === "24h" || activePresetId === "1h" || activePresetId === "curshift" || activePresetId === "lastshift")
               ? fetchHourlyAnalytics(effectiveRange)
               : fetchFleetTrend(effectiveRange),
@@ -175,7 +179,7 @@ export default function Analytics() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [activePresetId, dateRange, factoryTz]);
+  }, [activePresetId, dateRange, factoryTz, grainPref]);
 
   // Initial load + reload whenever period changes
   useEffect(() => { load(); }, [load]);
@@ -189,11 +193,13 @@ export default function Analytics() {
   function handlePresetSelect(preset: Preset) {
     setActivePresetId(preset.id);
     setDateRange(preset.getRange(factoryTz)); // also update custom inputs in the selector
+    setGrainPref("auto"); // a new window invalidates a manual grain choice
   }
 
   function handleCustomRange(range: DateRange) {
     setActivePresetId("custom");
     setDateRange(range);
+    setGrainPref("auto"); // a new window invalidates a manual grain choice
   }
 
   // When the factory timezone resolves (or changes), recompute any
@@ -216,14 +222,23 @@ export default function Analytics() {
       <div className="flex justify-between items-start mb-4 gap-6">
         <div className="flex flex-col gap-3">
           <h2 className="text-xl font-bold text-white">Analytics</h2>
-          <PeriodSelector
-            activePresetId={activePresetId}
-            dateRange={dateRange}
-            onPresetSelect={handlePresetSelect}
-            onCustomRange={handleCustomRange}
-            factoryTz={factoryTz}
-            fleetSize={machines.length}
-          />
+          <div className="flex items-center gap-2 flex-wrap">
+            <PeriodSelector
+              activePresetId={activePresetId}
+              dateRange={dateRange}
+              onPresetSelect={handlePresetSelect}
+              onCustomRange={handleCustomRange}
+              factoryTz={factoryTz}
+              fleetSize={machines.length}
+            />
+            {tab === "fleet" && (
+              <GranularitySelector
+                dateRange={kpiRange}
+                value={grainPref}
+                onChange={setGrainPref}
+              />
+            )}
+          </div>
         </div>
         {lastRefreshed && !loading && (
           <div className="flex items-center gap-1.5">

@@ -670,6 +670,47 @@ export function pickGranularity(range: DateRange): "5s" | "5m" | "1h" | "1d" {
   return "1d";                              // 4 weeks and beyond
 }
 
+// ── User-selectable granularity ──────────────────────────────────────────────
+// Compute cost between 5m/1h/1d is identical (all read the same 5-min rollup),
+// so the user may override the auto pick. Two guardrails stay enforced here:
+//   * 5s bypasses the rollup and scans raw shift_readings (~104M rows), so it is
+//     only offered for short windows.
+//   * a finer grain on a long window produces too many points for the chart, so
+//     each grain is gated to a sane point budget.
+export type GrainId = "5s" | "5m" | "1h" | "1d";
+export type GrainPref = GrainId | "auto";
+
+export const TREND_GRAINS: { id: GrainId; label: string; ms: number }[] = [
+  { id: "5s", label: "5 seconds", ms: 5_000 },
+  { id: "5m", label: "5 minutes", ms: 300_000 },
+  { id: "1h", label: "Hourly",    ms: 3_600_000 },
+  { id: "1d", label: "Daily",     ms: 86_400_000 },
+];
+
+const GRAIN_MAX_POINTS = 1500;          // recharts stays smooth below this
+const GRAIN_MIN_POINTS = 2;             // need at least a couple of buckets
+const GRAIN_5S_MAX_MS  = 2 * 3_600_000; // raw-scan grain: cap to ~2h windows
+
+// Which explicit grains make sense for a window (point budget + 5s gating).
+export function sensibleGrains(range: DateRange): GrainId[] {
+  const ms = range.end.getTime() - range.start.getTime();
+  return TREND_GRAINS
+    .filter(g => {
+      if (g.id === "5s" && ms > GRAIN_5S_MAX_MS) return false;
+      const pts = ms / g.ms;
+      return pts >= GRAIN_MIN_POINTS && pts <= GRAIN_MAX_POINTS;
+    })
+    .map(g => g.id);
+}
+
+// Resolve a preference to a concrete grain: "auto" -> the window-based pick; an
+// explicit grain only if it is still sensible for the window, else fall back to
+// auto (defends against a stale selection after the window changes).
+export function resolveGrain(range: DateRange, pref: GrainPref): GrainId {
+  if (pref === "auto") return pickGranularity(range);
+  return sensibleGrains(range).includes(pref) ? pref : pickGranularity(range);
+}
+
 interface CHTrendRow {
   bucket: string; avg_uptime: number; avg_scrap: number;
   total_boxes: number; total_swabs: number; machine_count: number;
@@ -682,8 +723,9 @@ interface CHTrendRow {
 export async function fetchTrendClickHouse(
   range: DateRange,
   machineIds: string[] | null,
+  grain?: GrainId,
 ): Promise<FleetTrendResult> {
-  const gran = pickGranularity(range);
+  const gran = grain ?? pickGranularity(range);
   // Snap the window to the bucket grid (must match the bridge exactly) so the
   // request URL is byte-identical for every reload within the same window. A
   // stable URL lets the browser serve the reload from its HTTP cache without a

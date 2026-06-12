@@ -12,8 +12,8 @@ import {
   subHours,
 } from "date-fns";
 import { fmtPct } from "@/lib/fmt";
-import { applyEfficiencyColor, applyScrapColor, pickGranularity } from "@/lib/supabase";
-import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode } from "@/lib/supabase";
+import { applyEfficiencyColor, applyScrapColor, pickGranularity, sensibleGrains, TREND_GRAINS } from "@/lib/supabase";
+import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode, GrainId, GrainPref } from "@/lib/supabase";
 import {
   useFactoryTimezone,
   formatHourMinute,
@@ -808,6 +808,82 @@ export function PeriodSelector({
               Confirm range
             </button>
           </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Granularity selector ─────────────────────────────────────────────────────
+// Lets the user override the auto-derived bucket size for the current window.
+// Only grains that are sensible for the window are offered (see sensibleGrains):
+// switching among 5m/1h/1d is free on the ClickHouse side, so this is cheap.
+
+export function GranularitySelector({
+  dateRange,
+  value,
+  onChange,
+}: {
+  dateRange: DateRange;
+  value:     GrainPref;
+  onChange:  (pref: GrainPref) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function onOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    if (open) document.addEventListener("mousedown", onOutside);
+    return () => document.removeEventListener("mousedown", onOutside);
+  }, [open]);
+
+  const labelOf = (id: GrainId) => TREND_GRAINS.find(g => g.id === id)?.label ?? id;
+  const autoGrain = pickGranularity(dateRange);
+  const options = sensibleGrains(dateRange);
+
+  // Button label reflects what's actually rendered: "Auto · Hourly" or the grain.
+  const buttonLabel =
+    value === "auto"
+      ? <><span className="text-gray-500">Auto · </span>{labelOf(autoGrain)}</>
+      : labelOf(value);
+
+  return (
+    <div className="relative" ref={ref}>
+      <button
+        onClick={() => setOpen(o => !o)}
+        className="flex items-center gap-2 px-3 py-1.5 bg-gray-800 border border-gray-700 rounded-lg text-sm text-gray-300 hover:text-white hover:border-gray-600 transition-colors"
+      >
+        <i className="bi bi-bar-chart-steps text-xs text-gray-500"></i>
+        {buttonLabel}
+        <i className={`bi bi-chevron-${open ? "up" : "down"} text-xs text-gray-500`}></i>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-full mt-1 z-50 min-w-[180px] py-1 bg-gray-900 border border-gray-700 rounded-xl shadow-2xl overflow-hidden">
+          <button
+            onClick={() => { onChange("auto"); setOpen(false); }}
+            className={`w-full text-left px-4 py-1.5 text-sm transition-colors flex items-center justify-between ${
+              value === "auto" ? "text-cyan-400 bg-cyan-950/50" : "text-gray-300 hover:text-white hover:bg-gray-800"
+            }`}
+          >
+            <span>Auto</span>
+            <span className="text-xs text-gray-500">{labelOf(autoGrain)}</span>
+          </button>
+          <div className="my-1 border-t border-gray-800" />
+          {options.map(id => (
+            <button
+              key={id}
+              onClick={() => { onChange(id); setOpen(false); }}
+              className={`w-full text-left px-4 py-1.5 text-sm transition-colors ${
+                value === id ? "text-cyan-400 bg-cyan-950/50" : "text-gray-300 hover:text-white hover:bg-gray-800"
+              }`}
+            >
+              {labelOf(id)}
+              {id === autoGrain && <span className="ml-2 text-xs text-gray-600">default</span>}
+            </button>
+          ))}
         </div>
       )}
     </div>
