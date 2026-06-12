@@ -158,12 +158,6 @@ function fmtBucketLabel(key: string, granularity: "hour" | "day", tz?: string): 
         ? getZonedParts(d, tz)
         : { day: d.getUTCDate(), month: d.getUTCMonth() + 1, hour: d.getUTCHours(), minute: d.getUTCMinutes() };
       if (zp.minute !== 0) return "";
-      // Midnight is the day boundary -> show the DATE so days are marked; other
-      // hours -> the time.
-      if (zp.hour === 0) {
-        const pad = (n: number) => String(n).padStart(2, "0");
-        return `${pad(zp.day)}.${pad(zp.month)}`;
-      }
       return tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
     }
     return fmtDateShort(parseISO(key), tz);
@@ -214,20 +208,33 @@ function fmtReadingCount(n: number): string {
     : `${n}`;
 }
 
+// "dd.MM" rendered in the factory clock — the day label that sits centered
+// inside each day's band (not on the boundary, so it's unambiguous which day
+// it names).
+function fmtDayMonth(key: string, tz?: string): string {
+  const d = parseBucketKey(key);
+  const zp = tz
+    ? getZonedParts(d, tz)
+    : { day: d.getUTCDate(), month: d.getUTCMonth() + 1 };
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${pad(zp.day)}.${pad(zp.month)}`;
+}
+
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function RangeTick({ x, y, payload, granularity, angled, tz }: any) {
-  const label = fmtBucketLabel(payload?.value ?? "", granularity, tz);
+function RangeTick({ x, y, payload, granularity, angled, tz, dateKeys }: any) {
+  const value = payload?.value ?? "";
+  // Day-center keys render a bold DATE; everything else renders a faint time.
+  // Dates are never angled (there are few of them and they read horizontally).
+  const isDate = dateKeys instanceof Set && dateKeys.has(value);
+  const label = isDate ? fmtDayMonth(value, tz) : fmtBucketLabel(value, granularity, tz);
   if (!label) return null;
-  // Date labels (day boundaries) read "dd.MM"; times read "HH:mm". Make the
-  // day markers stand out so the days are visually delimited, not lost in a
-  // uniform strip of grey time labels.
-  const isDay = label.includes(".");
-  const fill = isDay ? "#e5e7eb" : "#9ca3af";
-  const weight = isDay ? 700 : 400;
-  if (angled) {
+  const fill = isDate ? "#f3f4f6" : "#9ca3af";
+  const weight = isDate ? 700 : 400;
+  const size = isDate ? 12 : 10;
+  if (angled && !isDate) {
     return (
       <g transform={`translate(${x},${y})`}>
-        <text transform="rotate(-40)" textAnchor="end" fill={fill} fontWeight={weight} fontSize={10} dy={4} dx={-4}>
+        <text transform="rotate(-40)" textAnchor="end" fill={fill} fontWeight={weight} fontSize={size} dy={4} dx={-4}>
           {label}
         </text>
       </g>
@@ -235,7 +242,7 @@ function RangeTick({ x, y, payload, granularity, angled, tz }: any) {
   }
   return (
     <g transform={`translate(${x},${y})`}>
-      <text x={0} y={0} dy={12} textAnchor="middle" fill={fill} fontWeight={weight} fontSize={10}>
+      <text x={0} y={0} dy={isDate ? 13 : 12} textAnchor="middle" fill={fill} fontWeight={weight} fontSize={size}>
         {label}
       </text>
     </g>
@@ -1275,6 +1282,39 @@ export function ProductionTrendSection({
   // only the bucket keys aligned to the integer hour, downsampled to keep at
   // most ~24 labels visible. Recharts will only render ticks at those
   // positions, which is what gives the x-axis the "10:00 11:00 12:00" feel.
+  // Factory-midnight bucket keys -> vertical day-divider lines. Computed first
+  // because the tick strategy below depends on how many day boundaries exist.
+  const dayBoundaries = granularity === "hour" && bucketMinutes >= 1
+    ? rows
+        .filter(r => {
+          const p = getZonedParts(parseBucketKey(r.date), factoryTz);
+          return p.minute === 0 && p.hour === 0;
+        })
+        .map(r => r.date)
+    : [];
+  // "Multi-day" = the intraday view spans more than one calendar day. There we
+  // switch the x-axis from times to one bold DATE centered in each day's band.
+  const multiDayHourly = dayBoundaries.length >= 2;
+
+  // One date label per factory day, anchored to the bucket nearest local noon
+  // so it sits in the MIDDLE of the day (between two dividers). Centering it
+  // removes the "is this the day before or after the line?" ambiguity.
+  const dayCenterKeys = multiDayHourly
+    ? (() => {
+        const best = new Map<string, { key: string; dist: number }>();
+        for (const r of rows) {
+          const p = getZonedParts(parseBucketKey(r.date), factoryTz);
+          if (p.minute !== 0) continue;
+          const dayKey = `${p.year}-${p.month}-${p.day}`;
+          const dist = Math.abs(p.hour - 12);
+          const cur = best.get(dayKey);
+          if (!cur || dist < cur.dist) best.set(dayKey, { key: r.date, dist });
+        }
+        return [...best.values()].map(v => v.key);
+      })()
+    : [];
+  const dateKeys = new Set(dayCenterKeys);
+
   const hourTicks = granularity === "hour"
     ? (() => {
         // 5s grain: mark the top of each minute, downsampled to ~24 labels.
@@ -1283,8 +1323,10 @@ export function ProductionTrendSection({
           const step = Math.max(1, Math.ceil(aligned.length / 24));
           return aligned.filter((_, i) => i % step === 0);
         }
-        // 5m / 1h grain: tick on factory-local hours at a DIVISOR-of-24 interval,
-        // so the midnight (day boundary, labelled with its date) is always marked.
+        // Multi-day: show ONLY the centered per-day dates — no competing time
+        // labels. The dividers already mark where each day starts and ends.
+        if (multiDayHourly) return dayCenterKeys;
+        // Single day: time ticks at a divisor-of-24 interval ("00:00", "06:00"…).
         const spanHours = rows.length >= 2
           ? (parseBucketKey(rows[rows.length - 1].date).getTime() - parseBucketKey(rows[0].date).getTime()) / 3_600_000
           : 24;
@@ -1302,19 +1344,6 @@ export function ProductionTrendSection({
     ? dailyTickIndices.map(i => rows[i].date)
     : undefined;
   const explicitTicks = dailyTicks ?? hourTicks;
-
-  // Factory-midnight bucket keys -> draw a faint vertical divider at each day
-  // boundary so the intraday multi-day view is visually split into days. Only
-  // when the window actually spans more than one day (≥2 boundaries would be
-  // noise on a single day; one divider is still useful to anchor "today").
-  const dayBoundaries = granularity === "hour" && bucketMinutes >= 1
-    ? rows
-        .filter(r => {
-          const p = getZonedParts(parseBucketKey(r.date), factoryTz);
-          return p.minute === 0 && p.hour === 0;
-        })
-        .map(r => r.date)
-    : [];
 
   const visibleTicks = granularity === "day"
     ? dailyTickIndices.length
@@ -1493,7 +1522,7 @@ export function ProductionTrendSection({
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
+                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} dateKeys={dateKeys} />}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
@@ -1501,7 +1530,7 @@ export function ProductionTrendSection({
                   {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
                 {dayBoundaries.map((k) => (
-                  <ReferenceLine key={k} x={k} stroke="#6b7280" strokeOpacity={0.4} strokeDasharray="2 3" ifOverflow="visible" />
+                  <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
                 ))}
                 <YAxis
                   domain={[0, buMax]}
@@ -1578,7 +1607,7 @@ export function ProductionTrendSection({
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
+                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} dateKeys={dateKeys} />}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
@@ -1586,7 +1615,7 @@ export function ProductionTrendSection({
                   {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
                 {dayBoundaries.map((k) => (
-                  <ReferenceLine key={k} x={k} stroke="#6b7280" strokeOpacity={0.4} strokeDasharray="2 3" ifOverflow="visible" />
+                  <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
                 ))}
                 <YAxis
                   domain={[0, scrapMax]}
@@ -1670,7 +1699,7 @@ export function ProductionTrendSection({
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} />}
+                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} dateKeys={dateKeys} />}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
@@ -1678,7 +1707,7 @@ export function ProductionTrendSection({
                   {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
                 {dayBoundaries.map((k) => (
-                  <ReferenceLine key={k} x={k} stroke="#6b7280" strokeOpacity={0.4} strokeDasharray="2 3" ifOverflow="visible" />
+                  <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
                 ))}
                 <YAxis
                   domain={[0, 100]}
