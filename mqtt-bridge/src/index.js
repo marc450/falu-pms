@@ -1259,11 +1259,60 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
   if (!start || !end) return res.status(400).json({ error: "start and end (ISO) required" });
   const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");  // -> CH 'YYYY-MM-DD HH:MM:SS'
   const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
-  const g = TREND_GRAN[String(req.query.granularity)] || TREND_GRAN["5m"];   // whitelist -> no injection
+  const gran = String(req.query.granularity);
+  const g = TREND_GRAN[gran] || TREND_GRAN["5m"];   // whitelist -> no injection
   const bucketSel = g.label ? `formatDateTime(${g.ts}, '${g.label}')` : `toString(${g.ts})`;
-  try {
-    const rs = await clickhouse.query({
-      query: `
+
+  // 5m/1h/1d read the pre-aggregated MV (fast). 5s reads RAW with window funcs,
+  // so the time filter MUST be pushed into the raw scan — otherwise the window
+  // runs over the whole table (104M rows -> timeout). 30s margin keeps the first
+  // in-window bucket's delta anchor.
+  const query5s = `
+    SELECT
+      formatDateTime(bucket_ts, '%Y-%m-%dT%H:%i:%S')                                  AS bucket,
+      round(sum(delta_prod_t) / (count() * 5) * 100, 1)                               AS avg_uptime,
+      if(sum(delta_swabs) > 0, round(sum(delta_discard) / sum(delta_swabs) * 100, 1), 0) AS avg_scrap,
+      toInt64(sum(delta_boxes))   AS total_boxes,   toInt64(sum(delta_swabs)) AS total_swabs,
+      uniqExact(machine_id)       AS machine_count, toInt64(sum(reading_count)) AS reading_count,
+      uniqExact(shift_crew)       AS shift_count,
+      toInt64(sum(delta_prod_t))  AS production_seconds,
+      toInt64(sum(delta_idle_t))  AS idle_seconds,  toInt64(sum(delta_error_t)) AS error_seconds
+    FROM (
+      SELECT machine_id, shift_crew, bucket_ts, reading_count,
+        if(rn=1,0, if(max_swabs<anc_swabs, max_swabs-min_swabs, max_swabs-anc_swabs))       AS delta_swabs,
+        if(rn=1,0, if(max_boxes<anc_boxes, max_boxes-min_boxes, max_boxes-anc_boxes))       AS delta_boxes,
+        if(rn=1,0, if(max_prod_t<anc_prod_t, max_prod_t-min_prod_t, max_prod_t-anc_prod_t)) AS delta_prod_t,
+        if(rn=1,0, if(max_idle_t<anc_idle_t, max_idle_t-min_idle_t, max_idle_t-anc_idle_t)) AS delta_idle_t,
+        if(rn=1,0, if(max_error_t<anc_error_t, max_error_t-min_error_t, max_error_t-anc_error_t)) AS delta_error_t,
+        if(rn=1,0, if(max_discard<anc_discard, max_discard-min_discard, max_discard-anc_discard)) AS delta_discard
+      FROM (
+        SELECT *, row_number() OVER w AS rn,
+          lagInFrame(max_swabs) OVER w AS anc_swabs, lagInFrame(max_boxes) OVER w AS anc_boxes,
+          lagInFrame(max_prod_t) OVER w AS anc_prod_t, lagInFrame(max_idle_t) OVER w AS anc_idle_t,
+          lagInFrame(max_error_t) OVER w AS anc_error_t, lagInFrame(max_discard) OVER w AS anc_discard
+        FROM (
+          SELECT machine_id, toStartOfInterval(plc_timestamp, INTERVAL 5 SECOND) AS bucket_ts,
+            argMax(shift_crew, plc_timestamp) AS shift_crew,
+            max(produced_swabs) AS max_swabs, min(produced_swabs) AS min_swabs,
+            max(produced_boxes) AS max_boxes, min(produced_boxes) AS min_boxes,
+            max(production_time_seconds) AS max_prod_t, min(production_time_seconds) AS min_prod_t,
+            max(idle_time_seconds) AS max_idle_t, min(idle_time_seconds) AS min_idle_t,
+            max(error_time_seconds) AS max_error_t, min(error_time_seconds) AS min_error_t,
+            max(discarded_swabs) AS max_discard, min(discarded_swabs) AS min_discard,
+            count() AS reading_count
+          FROM shift_readings
+          WHERE plc_timestamp >= (toDateTime64({start:String}, 3, 'UTC') - INTERVAL 30 SECOND)
+            AND plc_timestamp <  toDateTime64({end:String}, 3, 'UTC')
+            AND plc_timestamp IS NOT NULL AND shift_crew != ''
+            AND (length({machines:Array(String)}) = 0 OR machine_id IN {machines:Array(String)})
+          GROUP BY machine_id, bucket_ts
+        ) WINDOW w AS (PARTITION BY machine_id ORDER BY bucket_ts)
+      ) WHERE bucket_ts >= toDateTime64({start:String}, 3, 'UTC')
+    )
+    GROUP BY bucket_ts
+    ORDER BY bucket_ts`;
+
+  const queryAgg = `
         SELECT
           ${bucketSel}                                                                  AS bucket,
           round(sum(delta_prod_t) / (count() * ${g.per}) * 100, 1)                      AS avg_uptime,
@@ -1281,7 +1330,11 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
           AND bucket_ts <  toDateTime64({end:String}, 3, 'UTC')
           AND (length({machines:Array(String)}) = 0 OR machine_id IN {machines:Array(String)})
         GROUP BY ${g.ts}
-        ORDER BY ${g.ts}`,
+        ORDER BY ${g.ts}`;
+
+  try {
+    const rs = await clickhouse.query({
+      query: gran === "5s" ? query5s : queryAgg,
       query_params: { start: fmt(start), end: fmt(end), machines },
       format: "JSONEachRow",
     });
