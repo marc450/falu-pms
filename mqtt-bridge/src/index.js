@@ -1303,7 +1303,7 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
           FROM shift_readings
           WHERE plc_timestamp >= (toDateTime64({start:String}, 3, 'UTC') - INTERVAL 30 SECOND)
             AND plc_timestamp <  toDateTime64({end:String}, 3, 'UTC')
-            AND plc_timestamp IS NOT NULL AND shift_crew != ''
+            AND plc_timestamp IS NOT NULL AND shift_readings.shift_crew != ''
             AND (length({machines:Array(String)}) = 0 OR machine_id IN {machines:Array(String)})
           GROUP BY machine_id, bucket_ts
         ) WINDOW w AS (PARTITION BY machine_id ORDER BY bucket_ts)
