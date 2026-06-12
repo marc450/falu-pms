@@ -181,8 +181,22 @@ export default function Analytics() {
     }
   }, [activePresetId, dateRange, factoryTz, grainPref]);
 
-  // Initial load + reload whenever period changes
-  useEffect(() => { load(); }, [load]);
+  // Initial load + reload whenever period/grain changes. A grain-only change
+  // (same window) refreshes SILENTLY: the chart stays on screen and swaps when
+  // the new grain's data arrives (instant from the per-grain cache, or a cheap
+  // background query) instead of flashing a full reload. Window and initial
+  // loads use the normal loading state.
+  const prevWindowKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    const windowKey = activePresetId === "custom"
+      ? `custom:${dateRange.start.getTime()}-${dateRange.end.getTime()}`
+      : `preset:${activePresetId}`;
+    const firstRun = prevWindowKeyRef.current === null;
+    const windowChanged = prevWindowKeyRef.current !== windowKey;
+    prevWindowKeyRef.current = windowKey;
+    load(false, !firstRun && !windowChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- windowKey derived from load's deps
+  }, [load]);
 
   // Auto-refresh every 5 minutes so live production data stays current
   useEffect(() => {
