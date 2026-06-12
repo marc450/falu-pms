@@ -70,6 +70,8 @@ function ProductionContent() {
   // routing below (5s < 6h, 5m ≤ 25h, daily beyond); an explicit grain (incl.
   // "Shift") routes through the ClickHouse proxy.
   const [trendGrainPref, setTrendGrainPref] = useState<GrainPref>("auto");
+  // True when the rendered grain is "shift" → ProductionTrendSection draws bars.
+  const [trendShiftMode, setTrendShiftMode] = useState(false);
   const [trendLoading, setTrendLoading] = useState(true);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [peerRows, setPeerRows] = useState<FleetTrendRow[]>([]);
@@ -169,6 +171,7 @@ function ProductionContent() {
     const explicitGrain = trendGrainPref !== "auto" && ANALYTICS_SOURCE === "clickhouse"
       ? resolveGrain(effectiveRange, trendGrainPref, shiftMs)
       : null;
+    setTrendShiftMode(explicitGrain === "shift");
     // Short windows (a current shift that has only run a few hours) zoom into
     // 5-second buckets so brief standstills and errors are visible. 5s lives
     // only in ClickHouse, so this needs the clickhouse source; below it falls
@@ -559,9 +562,13 @@ function ProductionContent() {
             peerCount={peerCount}
             errorEvents={errorEvents}
             errorLookup={errorLookup}
-            showUptimeChart={trendGranularity !== "hour"}
+            shiftMode={trendShiftMode}
+            shiftSlots={shiftConfig?.slots ?? []}
+            // Show the uptime chart whenever it isn't the intraday line view —
+            // the shift bar view benefits from per-shift uptime bars too.
+            showUptimeChart={trendShiftMode || trendGranularity !== "hour"}
             afterKpis={
-              trendGranularity === "hour" && trendRows.length > 0 ? (
+              !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 ? (
                 <MachineStateTimeline
                   rows={trendRows}
                   errorEvents={errorEvents}

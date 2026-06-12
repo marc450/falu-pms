@@ -55,6 +55,7 @@ export default function Analytics() {
   const [tab, setTab]                     = useState<AnalyticsTab>("fleet");
   const [rows, setRows]                   = useState<FleetTrendRow[]>([]);
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
+  const [chartGrain, setChartGrain]       = useState<GrainId>("1d"); // resolved grain actually rendered (drives shift bar mode)
   const [grainPref, setGrainPref]         = useState<GrainPref>("auto"); // user override of the auto bucket size
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [buTargetPerShift, setBuTargetPerShift]       = useState<number | null>(null); // sum of all machines' BU targets (per shift)
@@ -151,6 +152,7 @@ export default function Analytics() {
       setShiftAssignments(Object.fromEntries(normalisedRows.map(a => [a.shift_date, a])));
       setRows(result.rows);
       setGranularity(result.granularity);
+      setChartGrain(effGrain);
       setMachines(machines);
 
       // Derive zone thresholds from per-machine targets (same values as the
@@ -320,8 +322,10 @@ export default function Analytics() {
           buMediocrePerShift={buMediocrePerShift}
           dateRange={kpiRange}
           kpiSubLabel="Park average · selected period"
-          chartTitleSuffix={granularity === "hour" ? "— intraday park total" : "— daily park total"}
+          chartTitleSuffix={chartGrain === "shift" ? "— by shift · park total" : granularity === "hour" ? "— intraday park total" : "— daily park total"}
           fleetSize={machines.length}
+          shiftMode={chartGrain === "shift"}
+          shiftSlots={shiftSlots}
         />
       )}
     </div>

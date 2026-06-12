@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 // @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
 import { createPortal } from "react-dom";
 import {
-  LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, ComposedChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceArea, ReferenceLine, usePlotArea,
 } from "recharts";
 import {
@@ -13,7 +13,7 @@ import {
 } from "date-fns";
 import { fmtPct } from "@/lib/fmt";
 import { applyEfficiencyColor, applyScrapColor, pickGranularity, sensibleGrains, TREND_GRAINS } from "@/lib/supabase";
-import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode, GrainId, GrainPref } from "@/lib/supabase";
+import type { DateRange, FleetTrendRow, Thresholds, ErrorEvent, PlcErrorCode, GrainId, GrainPref, TimeSlot } from "@/lib/supabase";
 import {
   useFactoryTimezone,
   formatHourMinute,
@@ -262,6 +262,50 @@ function RangeTick({ x, y, payload, granularity, angled, tz, dateKeys }: any) {
       <text x={0} y={0} dy={isDate ? 13 : 12} textAnchor="middle" fill={fill} fontWeight={weight} fontSize={size}>
         {label}
       </text>
+    </g>
+  );
+}
+
+// ─── Shift-grain axis labels ─────────────────────────────────────────────────
+// The shift grain renders as bars (one per shift); each bar names its crew so
+// shifts can be compared directly. A bucket key is the UTC instant of the shift
+// start — render it at the factory wall clock, then match the start hour to a
+// configured slot to recover the crew name.
+function shiftSlotShort(key: string, tz: string, slots: TimeSlot[]): string {
+  const p = getZonedParts(parseBucketKey(key), tz);
+  const slot = slots.find(s => s.startHour === p.hour);
+  if (!slot) return `${pad2s(p.hour)}:00`;
+  return slot.name.replace(/^shift\s+/i, "");   // "Shift A" -> "A"
+}
+function shiftDayLabel(key: string, tz: string): string {
+  const p = getZonedParts(parseBucketKey(key), tz);
+  return `${weekdayAbbr(p.year, p.month, p.day)} ${pad2s(p.day)}.${pad2s(p.month)}`;
+}
+function fmtShiftTooltipLabel(key: string, tz: string, slots: TimeSlot[]): string {
+  const p = getZonedParts(parseBucketKey(key), tz);
+  const slot = slots.find(s => s.startHour === p.hour);
+  const name = slot ? slot.name : `${pad2s(p.hour)}:00`;
+  return `${name} · ${shiftDayLabel(key, tz)}`;
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function ShiftTick({ x, y, payload, tz, slots, angled }: any) {
+  const key = payload?.value ?? "";
+  const day  = shiftDayLabel(key, tz);
+  const name = shiftSlotShort(key, tz, slots ?? []);
+  if (angled) {
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text transform="rotate(-45)" textAnchor="end" fill="#f3f4f6" fontWeight={600} fontSize={10} dy={4} dx={-4}>
+          {day} · {name}
+        </text>
+      </g>
+    );
+  }
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10}>{day}</text>
+      <text x={0} y={0} dy={25} textAnchor="middle" fill="#f3f4f6" fontWeight={700} fontSize={11}>{name}</text>
     </g>
   );
 }
@@ -1222,6 +1266,8 @@ export function ProductionTrendSection({
   showUptimeChart = true,
   afterKpis,
   fleetSize = 0,
+  shiftMode = false,
+  shiftSlots = [],
 }: {
   rows: FleetTrendRow[];
   granularity: "hour" | "day";
@@ -1251,6 +1297,11 @@ export function ProductionTrendSection({
   // The Machine Monitor uses this to position its state timeline directly
   // under the KPIs without leaking layout details into this component.
   afterKpis?: React.ReactNode;
+  // "Shift" grain: render the trend metrics as one bar per shift (self + peer
+  // side by side) instead of lines — shifts are discrete units to compare, not
+  // a continuous series. shiftSlots names each bar's crew on the x-axis.
+  shiftMode?: boolean;
+  shiftSlots?: TimeSlot[];
 }) {
   // Factory timezone — used by every label/tooltip formatter on this chart
   // so the X-axis reads in the operator's wall-clock time, not the browser's.
@@ -1469,7 +1520,7 @@ export function ProductionTrendSection({
   // Lane-pack errors against a dummy 1-unit-wide range first so we know the
   // lane count without depending on rendered chart width. The actual pixel
   // positions are computed inside the Customized layer where offset is known.
-  const showErrorStrip = granularity === "hour" && hasData && errorEvents.length > 0;
+  const showErrorStrip = !shiftMode && granularity === "hour" && hasData && errorEvents.length > 0;
   const firstBucketTime = showErrorStrip ? parseBucketKey(rows[0].date).getTime() : 0;
   const lastBucketTime  = showErrorStrip ? parseBucketKey(rows[rows.length - 1].date).getTime() : 0;
   const errorLaneCount = showErrorStrip
@@ -1508,13 +1559,27 @@ export function ProductionTrendSection({
     ? (fmtDeltaBU(totalBUs, peerTotalBUs) ?? (buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`))
     : (buKpiGood !== null ? `Target: ${Math.round(buKpiGood).toLocaleString()} BUs` : `Business units · ${kpiSubLabel.toLowerCase()}`);
 
-  const chartTitle = chartTitleSuffix ?? (granularity === "hour" ? "— intraday" : "— daily");
+  const chartTitle = chartTitleSuffix ?? (shiftMode ? "— by shift" : granularity === "hour" ? "— intraday" : "— daily");
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity, factoryTz);
   // In the day-split view the x-axis bands already name the day, so the tooltip
   // drops the date and shows time only, coloured like the x-axis date labels
-  // (gray-100 = #f3f4f6).
-  const fmtTooltipLabel = multiDayHourly ? (key: string) => fmtBucketTime(key, factoryTz) : fmtLabel;
-  const tooltipLabelClass = multiDayHourly ? "text-gray-100 font-medium" : undefined;
+  // (gray-100 = #f3f4f6). Shift mode names the crew + day instead.
+  const fmtTooltipLabel = shiftMode
+    ? (key: string) => fmtShiftTooltipLabel(key, factoryTz, shiftSlots)
+    : multiDayHourly ? (key: string) => fmtBucketTime(key, factoryTz) : fmtLabel;
+  const tooltipLabelClass = (shiftMode || multiDayHourly) ? "text-gray-100 font-medium" : undefined;
+
+  // Shared x-axis config — bars (shift) get the crew-naming tick + every-bar
+  // labels + no day-divider lines (the date is in each label); lines keep the
+  // existing time-axis tick strategy.
+  const shiftAngle = shiftMode && rows.length > 10;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const xTick: any = shiftMode
+    ? <ShiftTick tz={factoryTz} slots={shiftSlots} angled={shiftAngle} />
+    : <RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} dateKeys={dateKeys} />;
+  const xTicks       = shiftMode ? undefined : explicitTicks;
+  const xBoundaries  = shiftMode ? [] : dayBoundaries;
+  const xAxisHeight  = shiftMode ? (shiftAngle ? 56 : 44) : (shouldAngle ? 56 : 36);
 
   if (loading) {
     // Skeleton that mirrors the real layout (KPI tiles + 3 chart cards) so the
@@ -1629,7 +1694,7 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={buRows} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <ComposedChart data={buRows} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                 {buTargetLine !== null && (
                   <ReferenceArea y1={buTargetLine} y2={buMax} fill="#4ade80" fillOpacity={0.15} />
                 )}
@@ -1642,14 +1707,14 @@ export function ProductionTrendSection({
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} dateKeys={dateKeys} />}
+                  tick={xTick}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
-                  height={shouldAngle ? 56 : 36}
-                  {...(explicitTicks ? { ticks: explicitTicks } : {})}
+                  height={xAxisHeight}
+                  {...(xTicks ? { ticks: xTicks } : {})}
                 />
-                {dayBoundaries.map((k) => (
+                {xBoundaries.map((k) => (
                   <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
                 ))}
                 <YAxis
@@ -1676,16 +1741,22 @@ export function ProductionTrendSection({
                     />
                   )}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="totalBU"
-                  name="BU Output"
-                  stroke="#22d3ee"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
-                />
-                {hasPeers && (
+                {shiftMode ? (
+                  <Bar dataKey="totalBU" name="BU Output" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                ) : (
+                  <Line
+                    type="monotone"
+                    dataKey="totalBU"
+                    name="BU Output"
+                    stroke="#22d3ee"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
+                  />
+                )}
+                {hasPeers && (shiftMode ? (
+                  <Bar dataKey="peerBU" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} fillOpacity={0.5} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                ) : (
                   <Line
                     type="monotone"
                     dataKey="peerBU"
@@ -1698,8 +1769,8 @@ export function ProductionTrendSection({
                     connectNulls
                     isAnimationActive={false}
                   />
-                )}
-              </LineChart>
+                ))}
+              </ComposedChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
@@ -1721,21 +1792,21 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <LineChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <ComposedChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
                 <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={thresholds.scrap.mediocre} y2={scrapMax} fill="#ef4444" fillOpacity={0.12} />
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} dateKeys={dateKeys} />}
+                  tick={xTick}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
-                  height={shouldAngle ? 56 : 36}
-                  {...(explicitTicks ? { ticks: explicitTicks } : {})}
+                  height={xAxisHeight}
+                  {...(xTicks ? { ticks: xTicks } : {})}
                 />
-                {dayBoundaries.map((k) => (
+                {xBoundaries.map((k) => (
                   <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
                 ))}
                 <YAxis
@@ -1762,16 +1833,22 @@ export function ProductionTrendSection({
                     />
                   )}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="avgScrap"
-                  name="Scrap"
-                  stroke="#22d3ee"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
-                />
-                {hasPeers && (
+                {shiftMode ? (
+                  <Bar dataKey="avgScrap" name="Scrap" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                ) : (
+                  <Line
+                    type="monotone"
+                    dataKey="avgScrap"
+                    name="Scrap"
+                    stroke="#22d3ee"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
+                  />
+                )}
+                {hasPeers && (shiftMode ? (
+                  <Bar dataKey="peerScrap" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} fillOpacity={0.5} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                ) : (
                   <Line
                     type="monotone"
                     dataKey="peerScrap"
@@ -1784,8 +1861,8 @@ export function ProductionTrendSection({
                     connectNulls
                     isAnimationActive={false}
                   />
-                )}
-              </LineChart>
+                ))}
+              </ComposedChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
@@ -1814,21 +1891,21 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
-              <LineChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
+              <ComposedChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
                 <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
                 <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
                 <XAxis
                   dataKey="date"
-                  tick={<RangeTick granularity={granularity} angled={shouldAngle} tz={factoryTz} dateKeys={dateKeys} />}
+                  tick={xTick}
                   tickLine={false}
                   axisLine={{ stroke: AXIS_COLOR }}
                   interval={0}
-                  height={shouldAngle ? 56 : 36}
-                  {...(explicitTicks ? { ticks: explicitTicks } : {})}
+                  height={xAxisHeight}
+                  {...(xTicks ? { ticks: xTicks } : {})}
                 />
-                {dayBoundaries.map((k) => (
+                {xBoundaries.map((k) => (
                   <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
                 ))}
                 <YAxis
@@ -1855,16 +1932,22 @@ export function ProductionTrendSection({
                     />
                   )}
                 />
-                <Line
-                  type="monotone"
-                  dataKey="avgUptime"
-                  name="Uptime"
-                  stroke="#22d3ee"
-                  strokeWidth={2}
-                  dot={false}
-                  activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
-                />
-                {hasPeers && (
+                {shiftMode ? (
+                  <Bar dataKey="avgUptime" name="Uptime" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                ) : (
+                  <Line
+                    type="monotone"
+                    dataKey="avgUptime"
+                    name="Uptime"
+                    stroke="#22d3ee"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
+                  />
+                )}
+                {hasPeers && (shiftMode ? (
+                  <Bar dataKey="peerUptime" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} fillOpacity={0.5} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                ) : (
                   <Line
                     type="monotone"
                     dataKey="peerUptime"
@@ -1877,7 +1960,7 @@ export function ProductionTrendSection({
                     connectNulls
                     isAnimationActive={false}
                   />
-                )}
+                ))}
                 {showErrorStrip && (
                   <ErrorBracketLayer
                     events={errorEvents}
@@ -1887,7 +1970,7 @@ export function ProductionTrendSection({
                     stripTopY={220 + ERROR_STRIP_PADDING}
                   />
                 )}
-              </LineChart>
+              </ComposedChart>
             </ResponsiveContainer>
           )}
         </ChartCard>
