@@ -1336,6 +1336,9 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
     const rs = await clickhouse.query({
       query: gran === "5s" ? query5s : queryAgg,
       query_params: { start: fmt(start), end: fmt(end), machines },
+      // Fail fast + legibly: a runaway query is killed at 20s (and returns a
+      // clear error the endpoint surfaces as 500) instead of hanging ~90s.
+      clickhouse_settings: { max_execution_time: 20 },
       format: "JSONEachRow",
     });
     res.json(await rs.json());

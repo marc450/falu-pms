@@ -1,0 +1,40 @@
+name: Analytics Smoke Test
+
+# Deploy gate: after a bridge change is pushed (Railway redeploys the bridge),
+# wait for it to settle, then hit /api/analytics/fleet-trend for every
+# granularity tier (5s/5m/1h/1d) and fail if any tier 500s, times out, or
+# returns garbage. Turns "a user found a 500" into a red X on the commit.
+on:
+  push:
+    branches: [main]
+    paths: ['mqtt-bridge/**']
+  workflow_dispatch: {}
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      # Railway redeploys the bridge asynchronously after the push lands.
+      - name: Wait for the bridge redeploy to settle
+        run: sleep 150
+
+      - name: Smoke test every granularity tier
+        env:
+          BRIDGE_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+        run: |
+          # Retry to ride out a still-rolling deploy.
+          for i in 1 2 3 4 5; do
+            if node mqtt-bridge/scripts/analytics-smoke.js "$BRIDGE_URL"; then
+              exit 0
+            fi
+            echo "::warning::smoke attempt $i failed; deploy may still be rolling, retrying in 30s"
+            sleep 30
+          done
+          echo "::error::analytics smoke test failed after retries — a granularity tier is broken"
+          exit 1
