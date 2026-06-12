@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { format } from "date-fns";
 import {
-  fetchFleetTrend, fetchHourlyAnalytics, fetchTrendClickHouse, ANALYTICS_SOURCE,
+  fetchFleetTrend, fetchHourlyAnalytics, fetchTrendClickHouse, ANALYTICS_SOURCE, pickGranularity,
   fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments,
   DEFAULT_THRESHOLDS,
@@ -11,7 +11,7 @@ import {
 import type { DateRange, FleetTrendRow, Thresholds, RegisteredMachine, TimeSlot, ShiftAssignment } from "@/lib/supabase";
 import { ProductionTrendSection, PeriodSelector, PRESETS, DEFAULT_PRESET_ID } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
-import { useFactoryTimezone } from "@/lib/useFactoryTimezone";
+import { useFactoryTimezone, getZonedParts } from "@/lib/useFactoryTimezone";
 import MachineAnalytics from "./MachineAnalytics";
 import ShiftAnalytics   from "./ShiftAnalytics";
 import DowntimeAnalytics from "./DowntimeAnalytics";
@@ -21,6 +21,21 @@ import DowntimeAnalytics from "./DowntimeAnalytics";
 
 type AnalyticsTab = "fleet" | "machines" | "shifts" | "downtime";
 
+// Freshness token = the current (incomplete) bucket boundary for the view's
+// granularity. The chart only shows COMPLETE buckets, so the data can't change
+// until this token does. We cache the payload against it: same token -> serve
+// cache instantly; token changed -> a new bucket exists -> refetch. Daily uses
+// the factory CALENDAR date (00:00 boundary); sub-daily align to the clock.
+function trendFreshnessToken(range: DateRange, tz: string): string {
+  const gran = pickGranularity(range);
+  if (gran === "1d") {
+    const p = getZonedParts(new Date(), tz);   // factory calendar date (rolls at 00:00 local)
+    return `1d:${p.year}-${p.month}-${p.day}`;
+  }
+  const ms = gran === "5s" ? 5_000 : gran === "5m" ? 300_000 : 3_600_000;
+  return `${gran}:${Math.floor(Date.now() / ms)}`;
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Analytics() {
@@ -29,6 +44,10 @@ export default function Analytics() {
   // factory's tz this is the difference between "Last 7 days" meaning
   // their week or the factory's week.
   const factoryTz = useFactoryTimezone();
+
+  // Last freshness token actually fetched — lets the auto-refresh skip the
+  // network entirely when no new bucket is available yet.
+  const lastTokenRef = useRef<string>("");
 
   const [activePresetId, setActivePresetId] = useState<PresetId | "custom">(DEFAULT_PRESET_ID);
   const [dateRange, setDateRange]           = useState<DateRange>(() =>
@@ -48,8 +67,6 @@ export default function Analytics() {
   const [shiftAssignments, setShiftAssignments] = useState<Record<string, ShiftAssignment>>({});
 
   const load = useCallback(async (bustCache = false, silent = false) => {
-    if (!silent) setLoading(true);   // silent = background refresh, keep charts on screen
-    setError(null);
     // For presets, always recompute the range so `end` = now() at call time.
     // Storing the range at mount would freeze the window and miss readings
     // that arrive after the page first loaded.
@@ -57,14 +74,22 @@ export default function Analytics() {
       activePresetId !== "custom"
         ? PRESETS.find(p => p.id === activePresetId)!.getRange(factoryTz)
         : dateRange;
+    const token = trendFreshnessToken(effectiveRange, factoryTz);
+
+    // Silent auto-refresh: nothing visible changes until a new complete bucket
+    // exists, so skip the round-trip entirely when the token is unchanged.
+    if (silent && lastTokenRef.current === token) return;
+
+    if (!silent) setLoading(true);   // silent = background refresh, keep charts on screen
+    setError(null);
     try {
       const rangeFrom = effectiveRange.start.toISOString().slice(0, 10);
       const rangeTo   = effectiveRange.end.toISOString().slice(0, 10);
 
-      // ── SessionStorage cache (2-minute TTL) ──────────────────────────────
-      // get_fleet_trend is expensive (~3-8s). Cache the full payload so that
-      // navigating away and back within two minutes skips the DB round-trip.
-      const CACHE_TTL_MS = 2 * 60 * 1000;
+      // ── SessionStorage cache keyed to the bucket-boundary token ──────────
+      // The chart shows only COMPLETE buckets, so a cached payload stays valid
+      // until the token changes (a new bucket finishes): the 12-month/daily view
+      // caches until the next factory day, 7-day/hourly until the next hour, etc.
       const cacheKey = `fleet_trend_${activePresetId}_${rangeFrom}_${rangeTo}`;
 
       let cachedResult: Awaited<ReturnType<typeof fetchFleetTrend>> | null = null;
@@ -72,8 +97,8 @@ export default function Analytics() {
         try {
           const raw = sessionStorage.getItem(cacheKey);
           if (raw) {
-            const { ts, payload } = JSON.parse(raw);
-            if (Date.now() - ts < CACHE_TTL_MS) cachedResult = payload;
+            const { token: cachedToken, payload } = JSON.parse(raw);
+            if (cachedToken === token) cachedResult = payload;
             else sessionStorage.removeItem(cacheKey);
           }
         } catch { /* sessionStorage unavailable — ignore */ }
@@ -95,9 +120,10 @@ export default function Analytics() {
 
       if (!cachedResult) {
         try {
-          sessionStorage.setItem(cacheKey, JSON.stringify({ ts: Date.now(), payload: result }));
+          sessionStorage.setItem(cacheKey, JSON.stringify({ token, payload: result }));
         } catch { /* quota exceeded or unavailable — ignore */ }
       }
+      lastTokenRef.current = token;   // remember the bucket boundary we now hold
       setShiftSlots(shiftCfg.slots);
       // Build a lookup map keyed by shift_date for O(1) access in child components.
       // Normalise team names against the configured list (case-insensitive) so legacy
@@ -149,7 +175,7 @@ export default function Analytics() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [activePresetId, dateRange]);
+  }, [activePresetId, dateRange, factoryTz]);
 
   // Initial load + reload whenever period changes
   useEffect(() => { load(); }, [load]);

@@ -1251,7 +1251,7 @@ const TREND_GRAN = {
   "5s": { src: "v_bucket_deltas_5s", per: 5,   ts: "bucket_ts",                                                              label: "%Y-%m-%dT%H:%i:%S" },
   "5m": { src: "v_bucket_deltas_5m", per: 300, ts: "bucket_ts",                                                              label: "%Y-%m-%dT%H:%i" },
   "1h": { src: "v_bucket_deltas_5m", per: 300, ts: "toStartOfInterval(bucket_ts, INTERVAL 1 HOUR)",                          label: "%Y-%m-%dT%H:00" },
-  "1d": { src: "v_bucket_deltas_5m", per: 300, ts: "toDate(toTimeZone(bucket_ts, 'Europe/Zurich') - INTERVAL 7 HOUR)",       label: null },
+  "1d": { src: "v_bucket_deltas_5m", per: 300, ts: "toDate(toTimeZone(bucket_ts, 'Europe/Zurich'))",                         label: null },
 };
 app.get("/api/analytics/fleet-trend", async (req, res) => {
   if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });

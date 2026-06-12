@@ -660,7 +660,7 @@ async function fetchIntradayTrend(
 // and end at NOW, so their span exceeds the nominal duration by up to a day.
 // The thresholds carry slack so each preset lands in its intended tier:
 //   Last hour = 1h exactly, Last 24h = 24h+ε, Last 7 days = up to ~8d.
-function pickGranularity(range: DateRange): "5s" | "5m" | "1h" | "1d" {
+export function pickGranularity(range: DateRange): "5s" | "5m" | "1h" | "1d" {
   const ms = range.end.getTime() - range.start.getTime();
   const H = 3_600_000;
   const D = 24 * H;

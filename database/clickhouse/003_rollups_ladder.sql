@@ -7,7 +7,7 @@
 --   window <= 1h  -> 5s   (v_fleet_trend_5s, per-reading grain)
 --   window <= 24h -> 5min (v_fleet_trend_5m, in 002)
 --   window <= 7d  -> 1h   (v_fleet_trend_1h)
---   window <= 12m -> 1d   (v_fleet_trend_1d, factory work-day)
+--   window <= 12m -> 1d   (v_fleet_trend_1d, factory calendar day)
 --
 -- Coarser tiers (1h, 1d) roll up the proven 5-min deltas (sum), so no logic is
 -- duplicated and daily intra-shift resets are handled correctly. Fleet uptime
@@ -28,19 +28,20 @@ FROM v_bucket_deltas_5m
 GROUP BY toStartOfInterval(bucket_ts, INTERVAL 1 HOUR)
 ORDER BY 1;
 
--- ── 1-day trend (<= 12 months) — factory work-day buckets ──
--- Work-day boundary = 07:00 factory-local (Europe/Zurich) => -7h offset, exactly
--- mirroring Postgres: DATE_TRUNC('day', (ts AT TIME ZONE tz) - INTERVAL '7 hours').
+-- ── 1-day trend (<= 12 months) — factory CALENDAR-day buckets ──
+-- Day boundary = 00:00 factory-local (Europe/Zurich). Days are an independent
+-- concept from shifts (a calendar day, NOT the 07:00 work-day). The night shift
+-- (19:00-07:00) therefore splits across two calendar days, by design.
 CREATE OR REPLACE VIEW v_fleet_trend_1d AS
 SELECT
-    toString(toDate(toTimeZone(bucket_ts, 'Europe/Zurich') - INTERVAL 7 HOUR))       AS bucket,
+    toString(toDate(toTimeZone(bucket_ts, 'Europe/Zurich')))                         AS bucket,
     round(sum(delta_prod_t) / (count() * 300) * 100, 1)                              AS avg_uptime,
     if(sum(delta_swabs) > 0, round(sum(delta_discard) / sum(delta_swabs) * 100, 1), 0) AS avg_scrap,
     toInt64(sum(delta_boxes))                                                        AS total_boxes,
     toInt64(sum(delta_swabs))                                                        AS total_swabs,
     uniqExact(machine_id)                                                            AS machine_count
 FROM v_bucket_deltas_5m
-GROUP BY toDate(toTimeZone(bucket_ts, 'Europe/Zurich') - INTERVAL 7 HOUR)
+GROUP BY toDate(toTimeZone(bucket_ts, 'Europe/Zurich'))
 ORDER BY 1;
 
 -- ── 5-second grain (<= 1 hour) — per-reading deltas straight from raw ──
