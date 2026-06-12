@@ -5,7 +5,7 @@ import { useEffect, useState, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip,
-  ResponsiveContainer, ReferenceArea, usePlotArea,
+  ResponsiveContainer, ReferenceArea, ReferenceLine, usePlotArea,
 } from "recharts";
 import {
   format, parseISO,
@@ -214,10 +214,16 @@ function fmtReadingCount(n: number): string {
 function RangeTick({ x, y, payload, granularity, angled, tz }: any) {
   const label = fmtBucketLabel(payload?.value ?? "", granularity, tz);
   if (!label) return null;
+  // Date labels (day boundaries) read "dd.MM"; times read "HH:mm". Make the
+  // day markers stand out so the days are visually delimited, not lost in a
+  // uniform strip of grey time labels.
+  const isDay = label.includes(".");
+  const fill = isDay ? "#e5e7eb" : "#9ca3af";
+  const weight = isDay ? 700 : 400;
   if (angled) {
     return (
       <g transform={`translate(${x},${y})`}>
-        <text transform="rotate(-40)" textAnchor="end" fill="#9ca3af" fontSize={10} dy={4} dx={-4}>
+        <text transform="rotate(-40)" textAnchor="end" fill={fill} fontWeight={weight} fontSize={10} dy={4} dx={-4}>
           {label}
         </text>
       </g>
@@ -225,7 +231,7 @@ function RangeTick({ x, y, payload, granularity, angled, tz }: any) {
   }
   return (
     <g transform={`translate(${x},${y})`}>
-      <text x={0} y={0} dy={12} textAnchor="middle" fill="#9ca3af" fontSize={10}>
+      <text x={0} y={0} dy={12} textAnchor="middle" fill={fill} fontWeight={weight} fontSize={10}>
         {label}
       </text>
     </g>
@@ -1110,6 +1116,19 @@ export function ProductionTrendSection({
     : undefined;
   const explicitTicks = dailyTicks ?? hourTicks;
 
+  // Factory-midnight bucket keys -> draw a faint vertical divider at each day
+  // boundary so the intraday multi-day view is visually split into days. Only
+  // when the window actually spans more than one day (≥2 boundaries would be
+  // noise on a single day; one divider is still useful to anchor "today").
+  const dayBoundaries = granularity === "hour" && bucketMinutes >= 1
+    ? rows
+        .filter(r => {
+          const p = getZonedParts(parseBucketKey(r.date), factoryTz);
+          return p.minute === 0 && p.hour === 0;
+        })
+        .map(r => r.date)
+    : [];
+
   const visibleTicks = granularity === "day"
     ? dailyTickIndices.length
     : (hourTicks?.length ?? rows.length);
@@ -1294,6 +1313,9 @@ export function ProductionTrendSection({
                   height={shouldAngle ? 56 : 36}
                   {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
+                {dayBoundaries.map((k) => (
+                  <ReferenceLine key={k} x={k} stroke="#6b7280" strokeOpacity={0.4} strokeDasharray="2 3" ifOverflow="visible" />
+                ))}
                 <YAxis
                   domain={[0, buMax]}
                   tick={TICK_STYLE}
@@ -1376,6 +1398,9 @@ export function ProductionTrendSection({
                   height={shouldAngle ? 56 : 36}
                   {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
+                {dayBoundaries.map((k) => (
+                  <ReferenceLine key={k} x={k} stroke="#6b7280" strokeOpacity={0.4} strokeDasharray="2 3" ifOverflow="visible" />
+                ))}
                 <YAxis
                   domain={[0, scrapMax]}
                   tick={TICK_STYLE}
@@ -1465,6 +1490,9 @@ export function ProductionTrendSection({
                   height={shouldAngle ? 56 : 36}
                   {...(explicitTicks ? { ticks: explicitTicks } : {})}
                 />
+                {dayBoundaries.map((k) => (
+                  <ReferenceLine key={k} x={k} stroke="#6b7280" strokeOpacity={0.4} strokeDasharray="2 3" ifOverflow="visible" />
+                ))}
                 <YAxis
                   domain={[0, 100]}
                   tick={TICK_STYLE}
