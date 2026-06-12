@@ -1302,7 +1302,25 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
   const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");  // -> CH 'YYYY-MM-DD HH:MM:SS'
   const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
   const gran = String(req.query.granularity);
-  const g = TREND_GRAN[gran] || TREND_GRAN["5m"];   // whitelist -> no injection
+  let g = TREND_GRAN[gran] || TREND_GRAN["5m"];   // whitelist -> no injection
+
+  // "shift" grain: align buckets to the factory's configured shift system
+  // (duration + first-shift start hour) in the factory timezone. Built from
+  // validated integers + a sanitized tz (no injection), then tagged UTC so the
+  // bucket key stays in the UTC-keyed convention the frontend converts back to
+  // factory-local for display — same as 1h/5m. Boundary math, in local time:
+  // floor((t − startHour) to a shiftHours interval) + startHour.
+  let qmsShift = null;
+  if (gran === "shift") {
+    const sh = [6, 8, 12].includes(Number(req.query.shiftHours)) ? Number(req.query.shiftHours) : 12;
+    const ss = Number.isFinite(Number(req.query.shiftStartHour))
+      ? ((Math.trunc(Number(req.query.shiftStartHour)) % 24) + 24) % 24 : 7;
+    const tz = /^[A-Za-z0-9_/+-]{1,40}$/.test(String(req.query.tz || "")) ? String(req.query.tz) : "Europe/Zurich";
+    const shiftStart =
+      `toTimeZone(toStartOfInterval(bucket_ts - INTERVAL ${ss} HOUR, INTERVAL ${sh} HOUR, '${tz}') + INTERVAL ${ss} HOUR, 'UTC')`;
+    g = { src: "v_bucket_deltas_5m", per: 300, ts: shiftStart, label: "%Y-%m-%dT%H:%i" };
+    qmsShift = sh * 3_600_000;
+  }
 
   // ── Bucket-grid snapping (makes the cache real) ──────────────────────────
   // The chart only ever renders complete buckets, so the exact sub-bucket
@@ -1312,7 +1330,7 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
   // no rendered data point changes. With a stable query the ClickHouse query
   // cache (below) and the HTTP cache both actually hit instead of recomputing.
   const Q_MS = { "5s": 5_000, "5m": 300_000, "1h": 3_600_000, "1d": 3_600_000 };
-  const qms = Q_MS[gran] || 300_000;
+  const qms = qmsShift || Q_MS[gran] || 300_000;
   const startSnap = new Date(Math.floor(new Date(start).getTime() / qms) * qms);
   const endSnap   = new Date(Math.ceil(new Date(end).getTime()  / qms) * qms);
   const bucketSel = g.label ? `formatDateTime(${g.ts}, '${g.label}')` : `toString(${g.ts})`;

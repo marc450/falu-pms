@@ -66,6 +66,15 @@ export default function Analytics() {
   const [shiftSlots, setShiftSlots]             = useState<TimeSlot[]>([]);
   const [shiftAssignments, setShiftAssignments] = useState<Record<string, ShiftAssignment>>({});
 
+  // Configured shift system, derived from the live slots, for the "Shift" grain.
+  // Even slot spacing → 24/count = shift length; slot[0] = first-shift start.
+  // Falls back to 12h @ 07:00 until the config loads (only matters once the user
+  // picks the Shift grain, by which point the slots are populated).
+  const shiftHours     = shiftSlots.length > 0 ? Math.round(24 / shiftSlots.length) : 12;
+  const shiftStartHour = shiftSlots[0]?.startHour ?? 7;
+  const shiftMs        = shiftHours * 3_600_000;
+  const shiftOpts      = { shiftHours, shiftStartHour, tz: factoryTz };
+
   const load = useCallback(async (bustCache = false, silent = false) => {
     // For presets, always recompute the range so `end` = now() at call time.
     // Storing the range at mount would freeze the window and miss readings
@@ -77,7 +86,7 @@ export default function Analytics() {
     // Effective bucket grain = the user's choice if still sensible for this
     // window, else the auto pick. Drives the cache key, freshness token, and the
     // ClickHouse query so all three stay consistent.
-    const effGrain = resolveGrain(effectiveRange, grainPref);
+    const effGrain = resolveGrain(effectiveRange, grainPref, shiftMs);
     const token = trendFreshnessToken(effectiveRange, factoryTz, effGrain);
 
     // Silent auto-refresh: nothing visible changes until a new complete bucket
@@ -112,7 +121,7 @@ export default function Analytics() {
         cachedResult
           ? Promise.resolve(cachedResult)
           : ANALYTICS_SOURCE === "clickhouse"
-            ? fetchTrendClickHouse(effectiveRange, null, effGrain)
+            ? fetchTrendClickHouse(effectiveRange, null, effGrain, shiftOpts)
             : (activePresetId === "24h" || activePresetId === "1h" || activePresetId === "curshift" || activePresetId === "lastshift")
               ? fetchHourlyAnalytics(effectiveRange)
               : fetchFleetTrend(effectiveRange),
@@ -179,7 +188,7 @@ export default function Analytics() {
     } finally {
       if (!silent) setLoading(false);
     }
-  }, [activePresetId, dateRange, factoryTz, grainPref]);
+  }, [activePresetId, dateRange, factoryTz, grainPref, shiftHours, shiftStartHour, shiftMs]);
 
   // Initial load + reload whenever period/grain changes. A grain-only change
   // (same window) refreshes SILENTLY: the chart stays on screen and swaps when
@@ -250,6 +259,7 @@ export default function Analytics() {
                 dateRange={kpiRange}
                 value={grainPref}
                 onChange={setGrainPref}
+                shiftMs={shiftMs}
               />
             )}
           </div>

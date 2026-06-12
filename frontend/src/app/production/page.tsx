@@ -6,18 +6,19 @@ import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments, fetchRegisteredMachines, fetchMachineDailyTrend, fetchMachineHourlyTrend,
   fetchMachineFineTrend, fetchMachinePeers, fetchPeersDailyTrend, fetchPeersHourlyTrend, fetchPeersFineTrend,
+  fetchMachineTrendAtGrain, fetchPeersTrendAtGrain, resolveGrain,
   fetchMachineErrorEvents, fetchErrorCodeLookup, ANALYTICS_SOURCE,
   PACKING_FORMATS,
 } from "@/lib/supabase";
 import type {
   MachineData, MachineTargets, ShiftDataMessage, SavedShiftLog, PackingFormat,
   Thresholds, ShiftConfig, FleetTrendRow, DateRange, MachineType,
-  ErrorEvent, PlcErrorCode,
+  ErrorEvent, PlcErrorCode, GrainPref,
 } from "@/lib/supabase";
 import { formatSecondsToTime, getStatusColor, formatStatus } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
 import {
-  ProductionTrendSection, PeriodSelector, PRESETS,
+  ProductionTrendSection, PeriodSelector, GranularitySelector, PRESETS,
 } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
 import MachineStateTimeline from "@/components/MachineStateTimeline";
@@ -65,6 +66,10 @@ function ProductionContent() {
   }, [factoryTz]);
   const [trendRows, setTrendRows] = useState<FleetTrendRow[]>([]);
   const [trendGranularity, setTrendGranularity] = useState<"hour" | "day">("day");
+  // User override of the auto bucket size. "auto" keeps the bespoke window-based
+  // routing below (5s < 6h, 5m ≤ 25h, daily beyond); an explicit grain (incl.
+  // "Shift") routes through the ClickHouse proxy.
+  const [trendGrainPref, setTrendGrainPref] = useState<GrainPref>("auto");
   const [trendLoading, setTrendLoading] = useState(true);
   const [trendError, setTrendError] = useState<string | null>(null);
   const [peerRows, setPeerRows] = useState<FleetTrendRow[]>([]);
@@ -153,11 +158,22 @@ function ProductionContent() {
     // filters summary_date < today, so a window living entirely inside the
     // current day matched zero rows and rendered "No data for this period".
     const windowMs = effectiveRange.end.getTime() - effectiveRange.start.getTime();
+    // Configured shift system for the "Shift" grain (aligns buckets to the
+    // factory's wall clock). Falls back to 12h @ 07:00 until the config loads.
+    const shiftHours     = shiftConfig?.shiftDurationHours ?? 12;
+    const shiftStartHour = shiftConfig?.firstShiftStartHour ?? 7;
+    const shiftMs        = shiftHours * 3_600_000;
+    const shiftOpts      = { shiftHours, shiftStartHour, tz: factoryTz };
+    // An explicit grain (anything but "auto") routes through the ClickHouse
+    // proxy, which owns every grain incl. "shift". ClickHouse-only by design.
+    const explicitGrain = trendGrainPref !== "auto" && ANALYTICS_SOURCE === "clickhouse"
+      ? resolveGrain(effectiveRange, trendGrainPref, shiftMs)
+      : null;
     // Short windows (a current shift that has only run a few hours) zoom into
     // 5-second buckets so brief standstills and errors are visible. 5s lives
     // only in ClickHouse, so this needs the clickhouse source; below it falls
     // back to the 5-min intraday rollup. 6h cap matches the analytics 5s ladder.
-    const isFine   = ANALYTICS_SOURCE === "clickhouse" && windowMs <= 6 * 60 * 60 * 1000;
+    const isFine   = !explicitGrain && ANALYTICS_SOURCE === "clickhouse" && windowMs <= 6 * 60 * 60 * 1000;
     const isHourly = windowMs <= 25 * 60 * 60 * 1000;
 
     (async () => {
@@ -165,11 +181,13 @@ function ProductionContent() {
         // Self trend first; peer info second. Peers depends on the machine's
         // machine_type which is read by fetchMachinePeers.
         const [selfResult, peers] = await Promise.all([
-          isFine
-            ? fetchMachineFineTrend(machineName, effectiveRange)
-            : isHourly
-              ? fetchMachineHourlyTrend(machineName, effectiveRange)
-              : fetchMachineDailyTrend(machineName, effectiveRange),
+          explicitGrain
+            ? fetchMachineTrendAtGrain(machineName, effectiveRange, explicitGrain, shiftOpts)
+            : isFine
+              ? fetchMachineFineTrend(machineName, effectiveRange)
+              : isHourly
+                ? fetchMachineHourlyTrend(machineName, effectiveRange)
+                : fetchMachineDailyTrend(machineName, effectiveRange),
           fetchMachinePeers(machineName),
         ]);
         setTrendRows(selfResult.rows);
@@ -180,11 +198,13 @@ function ProductionContent() {
         if (peers.peerCodes.length === 0) {
           setPeerRows([]);
         } else {
-          const peerResult = isFine
-            ? await fetchPeersFineTrend(peers.peerIds, effectiveRange)
-            : isHourly
-              ? await fetchPeersHourlyTrend(peers.peerIds, effectiveRange)
-              : await fetchPeersDailyTrend(peers.peerCodes, effectiveRange);
+          const peerResult = explicitGrain
+            ? await fetchPeersTrendAtGrain(peers.peerIds, effectiveRange, explicitGrain, shiftOpts)
+            : isFine
+              ? await fetchPeersFineTrend(peers.peerIds, effectiveRange)
+              : isHourly
+                ? await fetchPeersHourlyTrend(peers.peerIds, effectiveRange)
+                : await fetchPeersDailyTrend(peers.peerCodes, effectiveRange);
           setPeerRows(peerResult.rows);
         }
 
@@ -206,7 +226,7 @@ function ProductionContent() {
         setTrendLoading(false);
       }
     })();
-  }, [machineName, trendPresetId, trendRange]);
+  }, [machineName, trendPresetId, trendRange, trendGrainPref, shiftConfig, factoryTz]);
 
   const status = getStatusColor(machine?.machineStatus?.Status);
 
@@ -469,20 +489,32 @@ function ProductionContent() {
             </h2>
           </div>
           {thresholds && (
-            <PeriodSelector
-              activePresetId={trendPresetId}
-              dateRange={trendRange}
-              onPresetSelect={(preset: Preset) => {
-                setTrendPresetId(preset.id);
-                setTrendRange(preset.getRange(factoryTz));
-              }}
-              onCustomRange={(range) => {
-                setTrendPresetId("custom");
-                setTrendRange(range);
-              }}
-              factoryTz={factoryTz}
-              fleetSize={1}
-            />
+            <div className="flex items-center gap-2">
+              <PeriodSelector
+                activePresetId={trendPresetId}
+                dateRange={trendRange}
+                onPresetSelect={(preset: Preset) => {
+                  setTrendPresetId(preset.id);
+                  setTrendRange(preset.getRange(factoryTz));
+                  setTrendGrainPref("auto"); // a new window invalidates a manual grain choice
+                }}
+                onCustomRange={(range) => {
+                  setTrendPresetId("custom");
+                  setTrendRange(range);
+                  setTrendGrainPref("auto");
+                }}
+                factoryTz={factoryTz}
+                fleetSize={1}
+              />
+              {ANALYTICS_SOURCE === "clickhouse" && (
+                <GranularitySelector
+                  dateRange={trendRange}
+                  value={trendGrainPref}
+                  onChange={setTrendGrainPref}
+                  shiftMs={(shiftConfig?.shiftDurationHours ?? 12) * 3_600_000}
+                />
+              )}
+            </div>
           )}
         </div>
       </div>

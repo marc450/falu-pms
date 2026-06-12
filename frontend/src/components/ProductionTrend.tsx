@@ -823,10 +823,14 @@ export function GranularitySelector({
   dateRange,
   value,
   onChange,
+  shiftMs,
 }: {
   dateRange: DateRange;
   value:     GrainPref;
   onChange:  (pref: GrainPref) => void;
+  // Live shift length (ms) so the "Shift" grain is offered exactly when the
+  // window spans ≥2 configured shifts. Defaults to 12h inside sensibleGrains.
+  shiftMs?:  number;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -841,7 +845,7 @@ export function GranularitySelector({
 
   const labelOf = (id: GrainId) => TREND_GRAINS.find(g => g.id === id)?.label ?? id;
   const autoGrain = pickGranularity(dateRange);
-  const options = sensibleGrains(dateRange);
+  const options = sensibleGrains(dateRange, shiftMs);
 
   // Button label reflects what's actually rendered: "Auto · Hourly" or the grain.
   const buttonLabel =
@@ -1379,13 +1383,29 @@ export function ProductionTrendSection({
   // positions, which is what gives the x-axis the "10:00 11:00 12:00" feel.
   // Factory-midnight bucket keys -> vertical day-divider lines. Computed first
   // because the tick strategy below depends on how many day boundaries exist.
+  // Shift-sized buckets (≥6h, the "Shift" grain) never land on factory midnight,
+  // so for those mark the FIRST bucket of each new factory day as the divider
+  // instead — otherwise a multi-day shift view detects zero days and the x-axis
+  // loses all its labels.
+  const COARSE_BUCKET_MIN = 360;
   const dayBoundaries = granularity === "hour" && bucketMinutes >= 1
-    ? rows
-        .filter(r => {
-          const p = getZonedParts(parseBucketKey(r.date), factoryTz);
-          return p.minute === 0 && p.hour === 0;
-        })
-        .map(r => r.date)
+    ? bucketMinutes >= COARSE_BUCKET_MIN
+      ? (() => {
+          const seen = new Set<string>();
+          const out: string[] = [];
+          for (const r of rows) {
+            const p = getZonedParts(parseBucketKey(r.date), factoryTz);
+            const dk = `${p.year}-${p.month}-${p.day}`;
+            if (!seen.has(dk)) { seen.add(dk); out.push(r.date); }
+          }
+          return out;
+        })()
+      : rows
+          .filter(r => {
+            const p = getZonedParts(parseBucketKey(r.date), factoryTz);
+            return p.minute === 0 && p.hour === 0;
+          })
+          .map(r => r.date)
     : [];
   // "Multi-day" = the intraday view spans more than one calendar day. There we
   // switch the x-axis from times to one bold DATE centered in each day's band.

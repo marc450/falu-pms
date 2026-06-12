@@ -677,15 +677,25 @@ export function pickGranularity(range: DateRange): "5s" | "5m" | "1h" | "1d" {
 //     only offered for short windows.
 //   * a finer grain on a long window produces too many points for the chart, so
 //     each grain is gated to a sane point budget.
-export type GrainId = "5s" | "5m" | "1h" | "1d";
+export type GrainId = "5s" | "5m" | "1h" | "shift" | "1d";
 export type GrainPref = GrainId | "auto";
 
+// "shift" sits between 1h and 1d: each bucket is one configured shift. Its ms is
+// the factory's shift length, which is configurable (6/8/12h), so the entry here
+// carries a representative 12h and callers pass the live length via `shiftMs`.
 export const TREND_GRAINS: { id: GrainId; label: string; ms: number }[] = [
-  { id: "5s", label: "5 seconds", ms: 5_000 },
-  { id: "5m", label: "5 minutes", ms: 300_000 },
-  { id: "1h", label: "Hourly",    ms: 3_600_000 },
-  { id: "1d", label: "Daily",     ms: 86_400_000 },
+  { id: "5s",    label: "5 seconds", ms: 5_000 },
+  { id: "5m",    label: "5 minutes", ms: 300_000 },
+  { id: "1h",    label: "Hourly",    ms: 3_600_000 },
+  { id: "shift", label: "Shift",     ms: 12 * 3_600_000 },
+  { id: "1d",    label: "Daily",     ms: 86_400_000 },
 ];
+
+// Factory shift system passed to the "shift" grain so buckets align to the
+// configured shift boundaries (length + first-shift start hour) in the factory
+// timezone. Mirrors ShiftConfig.shiftDurationHours / firstShiftStartHour.
+export interface ShiftGrainOpts { shiftHours: number; shiftStartHour: number; tz: string; }
+const DEFAULT_SHIFT_MS = 12 * 3_600_000;
 
 const GRAIN_MAX_POINTS = 1500;          // recharts stays smooth below this
 const GRAIN_MIN_POINTS = 2;             // need at least a couple of buckets
@@ -696,12 +706,15 @@ const GRAIN_MIN_POINTS = 2;             // need at least a couple of buckets
 // coarse point budget that keeps 5m/1h/1d smooth.
 const GRAIN_5S_MAX_MS  = 6 * 3_600_000; // 5s: cap to 6h windows
 
-// Which explicit grains make sense for a window (point budget + 5s gating).
-export function sensibleGrains(range: DateRange): GrainId[] {
+// Which explicit grains make sense for a window (point budget + 5s gating). The
+// "shift" grain is sized by the live shift length (shiftMs) instead of its
+// nominal 12h, so it's offered exactly when the window spans ≥2 actual shifts.
+export function sensibleGrains(range: DateRange, shiftMs: number = DEFAULT_SHIFT_MS): GrainId[] {
   const ms = range.end.getTime() - range.start.getTime();
   return TREND_GRAINS
     .filter(g => {
-      const pts = ms / g.ms;
+      const gms = g.id === "shift" ? shiftMs : g.ms;
+      const pts = ms / gms;
       if (pts < GRAIN_MIN_POINTS) return false;
       if (g.id === "5s") return ms <= GRAIN_5S_MAX_MS;   // bounded by window, not the coarse budget
       return pts <= GRAIN_MAX_POINTS;
@@ -712,9 +725,9 @@ export function sensibleGrains(range: DateRange): GrainId[] {
 // Resolve a preference to a concrete grain: "auto" -> the window-based pick; an
 // explicit grain only if it is still sensible for the window, else fall back to
 // auto (defends against a stale selection after the window changes).
-export function resolveGrain(range: DateRange, pref: GrainPref): GrainId {
+export function resolveGrain(range: DateRange, pref: GrainPref, shiftMs: number = DEFAULT_SHIFT_MS): GrainId {
   if (pref === "auto") return pickGranularity(range);
-  return sensibleGrains(range).includes(pref) ? pref : pickGranularity(range);
+  return sensibleGrains(range, shiftMs).includes(pref) ? pref : pickGranularity(range);
 }
 
 interface CHTrendRow {
@@ -730,6 +743,7 @@ export async function fetchTrendClickHouse(
   range: DateRange,
   machineIds: string[] | null,
   grain?: GrainId,
+  shift?: ShiftGrainOpts,
 ): Promise<FleetTrendResult> {
   const gran = grain ?? pickGranularity(range);
   // Snap the window to the bucket grid (must match the bridge exactly) so the
@@ -737,8 +751,11 @@ export async function fetchTrendClickHouse(
   // stable URL lets the browser serve the reload from its HTTP cache without a
   // network round-trip; `end` rounds up into the empty future so no rendered
   // data point changes. Falls back to the raw instants if the grain is unknown.
+  // "shift" snaps to the live shift length (matches the bridge's qmsShift).
   const Q_MS: Record<string, number> = { "5s": 5_000, "5m": 300_000, "1h": 3_600_000, "1d": 3_600_000 };
-  const qms = Q_MS[gran];
+  const qms = gran === "shift"
+    ? (shift?.shiftHours ?? 12) * 3_600_000
+    : Q_MS[gran];
   const startISO = qms ? new Date(Math.floor(range.start.getTime() / qms) * qms).toISOString() : range.start.toISOString();
   const endISO   = qms ? new Date(Math.ceil(range.end.getTime()   / qms) * qms).toISOString() : range.end.toISOString();
   const qs = new URLSearchParams({
@@ -746,6 +763,13 @@ export async function fetchTrendClickHouse(
     end:   endISO,
     granularity: gran,
   });
+  // Shift bucketing needs the configured shift system so the bridge can align
+  // boundaries to the factory's wall clock.
+  if (gran === "shift" && shift) {
+    qs.set("shiftHours",     String(shift.shiftHours));
+    qs.set("shiftStartHour", String(shift.shiftStartHour));
+    qs.set("tz",             shift.tz);
+  }
   if (machineIds && machineIds.length) qs.set("machines", machineIds.join(","));
   const resp = await fetchRetry(`${API_BASE}/api/analytics/fleet-trend?${qs.toString()}`, { headers: API_HEADERS });
   if (!resp.ok) throw new Error(`fleet-trend ${resp.status}`);
@@ -879,6 +903,25 @@ export async function fetchMachineFineTrend(machineCode: string, range: DateRang
   if (!machineRow) return { rows: [], granularity: "hour", totalReadings: 0 };
 
   return fetchTrendClickHouse(range, [(machineRow as { id: string }).id], "5s");
+}
+
+// Per-machine trend at an explicit grain (5s/5m/1h/shift/1d), via the ClickHouse
+// proxy. Backs the Machine Monitor's granularity override; "auto" keeps the
+// bespoke window-based routing on the page. ClickHouse-only by construction
+// (the bridge owns every grain incl. shift), so callers gate on ANALYTICS_SOURCE.
+export async function fetchMachineTrendAtGrain(
+  machineCode: string, range: DateRange, grain: GrainId, shift?: ShiftGrainOpts,
+): Promise<FleetTrendResult> {
+  const sb = getSupabase();
+  const { data: machineRow, error: machineErr } = await sb
+    .from("machines")
+    .select("id")
+    .eq("machine_code", machineCode)
+    .maybeSingle();
+  if (machineErr) throw new Error(machineErr.message);
+  if (!machineRow) return { rows: [], granularity: grain === "1d" ? "day" : "hour", totalReadings: 0 };
+
+  return fetchTrendClickHouse(range, [(machineRow as { id: string }).id], grain, shift);
 }
 
 // ============================================
@@ -1030,6 +1073,23 @@ export async function fetchPeersFineTrend(peerIds: string[], range: DateRange): 
     return { rows: [], granularity: "hour", totalReadings: 0 };
   }
   const result = await fetchTrendClickHouse(range, peerIds, "5s");
+  const perPeerRows = result.rows.map(r => {
+    const n = Math.max(1, r.machineCount);
+    return { ...r, totalBoxes: r.totalBoxes / n, totalSwabs: r.totalSwabs / n };
+  });
+  return { ...result, rows: perPeerRows };
+}
+
+// Peer benchmark at an explicit grain (the sibling of fetchMachineTrendAtGrain).
+// fetchTrendClickHouse sums across peers; post-divide by the per-bucket machine
+// count for the per-peer average, directly comparable to one machine's trend.
+export async function fetchPeersTrendAtGrain(
+  peerIds: string[], range: DateRange, grain: GrainId, shift?: ShiftGrainOpts,
+): Promise<FleetTrendResult> {
+  if (peerIds.length === 0) {
+    return { rows: [], granularity: grain === "1d" ? "day" : "hour", totalReadings: 0 };
+  }
+  const result = await fetchTrendClickHouse(range, peerIds, grain, shift);
   const perPeerRows = result.rows.map(r => {
     const n = Math.max(1, r.machineCount);
     return { ...r, totalBoxes: r.totalBoxes / n, totalSwabs: r.totalSwabs / n };
