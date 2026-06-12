@@ -656,13 +656,18 @@ async function fetchIntradayTrend(
 
 // Window length -> bucket granularity.
 //   <= 1h -> 5s,  <= 24h -> 5m,  <= 7d -> 1h,  else -> 1d (factory work-day)
+// NOTE: calendar presets ("Last 7 days") start at factory MIDNIGHT N days ago
+// and end at NOW, so their span exceeds the nominal duration by up to a day.
+// The thresholds carry slack so each preset lands in its intended tier:
+//   Last hour = 1h exactly, Last 24h = 24h+ε, Last 7 days = up to ~8d.
 function pickGranularity(range: DateRange): "5s" | "5m" | "1h" | "1d" {
   const ms = range.end.getTime() - range.start.getTime();
   const H = 3_600_000;
-  if (ms <= H + 60_000) return "5s";   // <= ~1h (+1min slack so "Last hour" lands here)
-  if (ms <= 24 * H)     return "5m";
-  if (ms <= 7 * 24 * H) return "1h";
-  return "1d";
+  const D = 24 * H;
+  if (ms <= H + 5 * 60_000) return "5s";   // <= ~1h  (Last hour)
+  if (ms <= 25 * H)         return "5m";    // <= ~24h (Last 24h, shifts) + slack
+  if (ms <= 8 * D)          return "1h";    // <= ~7d  (Last 7 days spans up to ~8d)
+  return "1d";                              // 4 weeks and beyond
 }
 
 interface CHTrendRow {
