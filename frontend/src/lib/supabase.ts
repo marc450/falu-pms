@@ -1799,7 +1799,34 @@ export interface ErrorShiftSummaryRow {
   total_duration_secs: number;
 }
 
+// Downtime rows reconstructed from ClickHouse (error_events mirror). Returns
+// the same ErrorShiftSummaryRow shape as the Supabase RPC so the Downtime
+// Analytics component treats both backends identically.
+async function fetchDowntimeRowsClickHouse(range: DateRange): Promise<ErrorShiftSummaryRow[]> {
+  // Snap to a 1d grid (must match the bridge) so the URL is stable across
+  // reloads and the browser / ClickHouse caches actually hit. End is rounded
+  // up to the next day so the end day is fully included (RPC end_date is inclusive).
+  const DAY = 86_400_000;
+  const startISO = new Date(Math.floor(range.start.getTime() / DAY) * DAY).toISOString();
+  const endISO   = new Date((Math.floor(range.end.getTime() / DAY) + 1) * DAY).toISOString();
+  const qs = new URLSearchParams({ start: startISO, end: endISO });
+  const resp = await fetchRetry(`${API_BASE}/api/analytics/downtime-summary?${qs.toString()}`, { headers: API_HEADERS });
+  if (!resp.ok) throw new Error(`downtime-summary ${resp.status}`);
+  return (await resp.json()) as ErrorShiftSummaryRow[];
+}
+
 export async function fetchErrorShiftSummary(range: DateRange): Promise<ErrorShiftSummaryRow[]> {
+  // ClickHouse path: aggregate the error_events mirror, gated by the same flag
+  // as the other analytics tabs. Identical row shape downstream.
+  if (ANALYTICS_SOURCE === "clickhouse") {
+    try {
+      return await fetchDowntimeRowsClickHouse(range);
+    } catch (e) {
+      console.error("fetchErrorShiftSummary ClickHouse error:", e);
+      return [];
+    }
+  }
+
   const sb = getSupabase();
   const startStr = range.start.toISOString().slice(0, 10);
   const endStr   = range.end.toISOString().slice(0, 10);

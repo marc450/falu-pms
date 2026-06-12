@@ -76,6 +76,7 @@ const supabase = createClient(
 const CLICKHOUSE_ENABLED = process.env.CLICKHOUSE_ENABLED === "true";
 let clickhouse = null;
 let chBuffer = [];
+let chErrorBuffer = [];        // completed error events, mirrored to CH for Downtime Analytics
 const CH_BUFFER_MAX = 50000;   // safety cap so a long CH outage can't exhaust memory
 
 if (CLICKHOUSE_ENABLED) {
@@ -112,8 +113,32 @@ async function flushClickHouse() {
   }
 }
 
+// Flush completed error-event rows as one batched INSERT. Never throws into
+// the caller. Same isolation guarantees as flushClickHouse: a ClickHouse
+// outage re-queues (capped) and can never affect the Supabase ingest path.
+async function flushClickHouseErrors() {
+  if (!clickhouse || chErrorBuffer.length === 0) return;
+  const batch = chErrorBuffer;
+  chErrorBuffer = [];            // swap first so new rows accumulate during the await
+  try {
+    await clickhouse.insert({
+      table: "error_events",
+      values: batch,
+      format: "JSONEachRow",
+    });
+    logger.debug(`ClickHouse: flushed ${batch.length} error events`);
+  } catch (err) {
+    if (chErrorBuffer.length + batch.length <= CH_BUFFER_MAX) {
+      chErrorBuffer = batch.concat(chErrorBuffer);
+    } else {
+      logger.error(`ClickHouse error buffer full (${CH_BUFFER_MAX}), dropping ${batch.length} rows`);
+    }
+    logger.error(`ClickHouse error flush failed: ${err.message}`);
+  }
+}
+
 if (CLICKHOUSE_ENABLED) {
-  setInterval(flushClickHouse, 5000);   // batch every 5s — well within CH insert limits
+  setInterval(() => { flushClickHouse(); flushClickHouseErrors(); }, 5000);   // batch every 5s
 }
 
 // ============================================
@@ -750,6 +775,23 @@ async function handleErrorMessage(payload) {
         ended_at: now.toISOString(),
         duration_secs: durationSecs,
       }).eq("id", eventId);
+
+      // ── ClickHouse dual-write: one complete fact row per closed event ──
+      // Additive, buffered, never throws into this handler. ClickHouse keeps
+      // these indefinitely (no 48h cap) so Downtime Analytics has full history.
+      if (CLICKHOUSE_ENABLED) {
+        const startedAt = ev ? new Date(ev.started_at) : now;
+        chErrorBuffer.push({
+          machine_id: machineId,
+          machine_code: machineCode,
+          error_code: code,
+          shift_crew: crew,
+          started_at: startedAt.toISOString(),
+          ended_at: now.toISOString(),
+          duration_secs: durationSecs,
+          ingested_at: new Date().toISOString(),
+        });
+      }
 
       // Add duration to in-memory shift aggregation
       if (m.shiftErrorCounts[crew]?.[code]) {
@@ -1442,6 +1484,58 @@ app.get("/api/analytics/crew-shifts", async (req, res) => {
   }
 });
 
+// Downtime Analytics: per error code / machine / crew / day aggregation from
+// the ClickHouse error_events mirror. Returns the exact ErrorShiftSummaryRow
+// shape produced by the Supabase RPC get_error_shift_summary, so the frontend
+// treats both backends identically.
+app.get("/api/analytics/downtime-summary", async (req, res) => {
+  if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: "start and end (ISO) required" });
+  const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");
+
+  // Snap to a 1d grid (matching the frontend) so reloads within the day reuse
+  // the cached result and the cache key stays stable. shift_date buckets by
+  // toDate(started_at) in UTC, mirroring the Supabase RPC's started_at::DATE.
+  const Q_MS = 86_400_000;
+  const startSnap = new Date(Math.floor(new Date(start).getTime() / Q_MS) * Q_MS);
+  const endSnap   = new Date(Math.ceil(new Date(end).getTime()  / Q_MS) * Q_MS);
+
+  const query = `
+    SELECT
+      machine_id,
+      any(machine_code)            AS machine_code,
+      toString(toDate(started_at)) AS shift_date,
+      shift_crew,
+      error_code,
+      toInt32(count())             AS occurrence_count,
+      toInt32(sum(duration_secs))  AS total_duration_secs
+    FROM error_events
+    WHERE started_at >= toDateTime64({start:String}, 3, 'UTC')
+      AND started_at <  toDateTime64({end:String}, 3, 'UTC')
+    GROUP BY machine_id, shift_date, shift_crew, error_code
+    ORDER BY shift_date`;
+
+  try {
+    const rs = await clickhouse.query({
+      query,
+      query_params: { start: fmt(startSnap), end: fmt(endSnap) },
+      clickhouse_settings: {
+        max_execution_time: 20,
+        use_query_cache: 1,
+        query_cache_ttl: 3600,
+      },
+      format: "JSONEachRow",
+    });
+    const payload = await rs.json();
+    res.set("Cache-Control", "public, max-age=3600");
+    res.json(payload);
+  } catch (err) {
+    logger.error(`downtime-summary query failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Get single machine
 app.get("/api/machines/:code", (req, res) => {
   const machine = allMachines[req.params.code];
@@ -1517,6 +1611,7 @@ async function gracefulShutdown(signal) {
   if (mqttClient) mqttClient.end(true);
   try { await flushShiftReadings(); } catch (e) { logger.error(`shutdown flush failed: ${e.message}`); }
   try { await flushClickHouse(); } catch (e) { logger.error(`shutdown CH flush failed: ${e.message}`); }
+  try { await flushClickHouseErrors(); } catch (e) { logger.error(`shutdown CH error flush failed: ${e.message}`); }
   process.exit(0);
 }
 
