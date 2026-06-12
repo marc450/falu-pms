@@ -689,16 +689,22 @@ export const TREND_GRAINS: { id: GrainId; label: string; ms: number }[] = [
 
 const GRAIN_MAX_POINTS = 1500;          // recharts stays smooth below this
 const GRAIN_MIN_POINTS = 2;             // need at least a couple of buckets
-const GRAIN_5S_MAX_MS  = 2 * 3_600_000; // raw-scan grain: cap to ~2h windows
+// 5s is a deliberate "zoom into detail" grain. The PLC emits ~1 row/machine/5s,
+// so even a 6h window is only ~65k raw rows — trivial for ClickHouse. The real
+// limit is rendering: 5s = 720 points/hour, so 6h ≈ 4.3k points, about as dense
+// as recharts stays responsive at. Hence 5s is bounded by window length, not the
+// coarse point budget that keeps 5m/1h/1d smooth.
+const GRAIN_5S_MAX_MS  = 6 * 3_600_000; // 5s: cap to 6h windows
 
 // Which explicit grains make sense for a window (point budget + 5s gating).
 export function sensibleGrains(range: DateRange): GrainId[] {
   const ms = range.end.getTime() - range.start.getTime();
   return TREND_GRAINS
     .filter(g => {
-      if (g.id === "5s" && ms > GRAIN_5S_MAX_MS) return false;
       const pts = ms / g.ms;
-      return pts >= GRAIN_MIN_POINTS && pts <= GRAIN_MAX_POINTS;
+      if (pts < GRAIN_MIN_POINTS) return false;
+      if (g.id === "5s") return ms <= GRAIN_5S_MAX_MS;   // bounded by window, not the coarse budget
+      return pts <= GRAIN_MAX_POINTS;
     })
     .map(g => g.id);
 }
