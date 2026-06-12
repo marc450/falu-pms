@@ -473,10 +473,24 @@ export function PeriodSelector({
     return () => document.removeEventListener("mousedown", onOutside);
   }, [open]);
 
+  // Custom-range label: date bold/white, time muted gray, so the two are easy to
+  // tell apart. Same-day ranges collapse to one date + a time span. Factory tz.
+  const pad2 = (n: number) => String(n).padStart(2, "0");
+  const sp = getZonedParts(dateRange.start, factoryTz);
+  const ep = getZonedParts(dateRange.end, factoryTz);
+  const sameDay = sp.year === ep.year && sp.month === ep.month && sp.day === ep.day;
   const buttonLabel =
     activePresetId === "custom"
-      ? `${format(dateRange.start, "dd.MM HH:mm")} – ${format(dateRange.end, "dd.MM HH:mm")}`
-      : PRESETS.find(p => p.id === activePresetId)?.label ?? "Select period";
+      ? (
+        <span className="flex items-center gap-1.5">
+          <span className="font-semibold text-gray-100">{pad2(sp.day)}.{pad2(sp.month)}</span>
+          <span className="text-gray-400 tabular-nums">{pad2(sp.hour)}:{pad2(sp.minute)}</span>
+          <span className="text-gray-600">{sameDay ? "–" : "→"}</span>
+          {!sameDay && <span className="font-semibold text-gray-100">{pad2(ep.day)}.{pad2(ep.month)}</span>}
+          <span className="text-gray-400 tabular-nums">{pad2(ep.hour)}:{pad2(ep.minute)}</span>
+        </span>
+      )
+      : (PRESETS.find(p => p.id === activePresetId)?.label ?? "Select period");
 
   // Validate the inputs and preview the resulting query. The granularity ladder
   // guarantees a sane resolution (5s only for <=1h windows, coarser otherwise),
