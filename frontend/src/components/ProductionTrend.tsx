@@ -139,6 +139,16 @@ function fmtBucketFull(key: string, granularity: "hour" | "day", tz?: string): s
   } catch { return key; }
 }
 
+// Time-only bucket label ("13:00") for the tooltip in the day-split view, where
+// the day is already clear from the x-axis bands so repeating the date is noise.
+function fmtBucketTime(key: string, tz?: string): string {
+  try {
+    const d = parseBucketKey(key);
+    const base = tz ? formatHourMinute(d, tz) : format(d, "HH:mm");
+    return key.length >= 19 ? `${base}:${String(d.getUTCSeconds()).padStart(2, "0")}` : base;
+  } catch { return key; }
+}
+
 // Instant label for the x-axis. For sub-hour buckets we only label the
 // integer-hour positions ("10:00", "11:00", "12:00", …) and leave the
 // in-between buckets unlabelled, giving a continuous timeline feel. The
@@ -254,7 +264,7 @@ function RangeTick({ x, y, payload, granularity, angled, tz, dateKeys }: any) {
 // requiring the operator to mentally compare against the green/amber/red
 // zone bands. recharts passes `active`, `payload`, `label` automatically.
 function BuTooltipContent({
-  active, payload, label, target, granularity, fmtLabelFn, peerLabel,
+  active, payload, label, target, granularity, fmtLabelFn, peerLabel, labelClassName,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   active?: boolean; payload?: any[]; label?: string;
@@ -262,6 +272,7 @@ function BuTooltipContent({
   granularity: "hour" | "day";
   fmtLabelFn: (key: string) => string;
   peerLabel?: string;
+  labelClassName?: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
 
@@ -279,7 +290,7 @@ function BuTooltipContent({
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-md text-xs text-gray-200 px-3 py-2 shadow-lg">
-      {label && <div className="text-gray-400 mb-1.5">{fmtLabelFn(label)}</div>}
+      {label && <div className={`${labelClassName ?? "text-gray-400"} mb-1.5`}>{fmtLabelFn(label)}</div>}
 
       {/* Self */}
       <div className="flex items-baseline gap-2">
@@ -335,7 +346,7 @@ function PctTargetTooltipContent({
   active, payload, label,
   selfKey, peerKey,
   target, invert,
-  fmtLabelFn, peerLabel,
+  fmtLabelFn, peerLabel, labelClassName,
 }: {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   active?: boolean; payload?: any[]; label?: string;
@@ -345,6 +356,7 @@ function PctTargetTooltipContent({
   invert: boolean;
   fmtLabelFn: (key: string) => string;
   peerLabel?: string;
+  labelClassName?: string;
 }) {
   if (!active || !payload || payload.length === 0) return null;
 
@@ -358,7 +370,7 @@ function PctTargetTooltipContent({
 
   return (
     <div className="bg-gray-800 border border-gray-700 rounded-md text-xs text-gray-200 px-3 py-2 shadow-lg">
-      {label && <div className="text-gray-400 mb-1.5">{fmtLabelFn(label)}</div>}
+      {label && <div className={`${labelClassName ?? "text-gray-400"} mb-1.5`}>{fmtLabelFn(label)}</div>}
 
       <div className="flex items-baseline gap-2">
         <span className="text-cyan-300 font-semibold tabular-nums">{fmtPct(val, 1)}</span>
@@ -1394,6 +1406,11 @@ export function ProductionTrendSection({
 
   const chartTitle = chartTitleSuffix ?? (granularity === "hour" ? "— intraday" : "— daily");
   const fmtLabel = (key: string) => fmtBucketFull(key, granularity, factoryTz);
+  // In the day-split view the x-axis bands already name the day, so the tooltip
+  // drops the date and shows time only, coloured like the x-axis date labels
+  // (gray-100 = #f3f4f6).
+  const fmtTooltipLabel = multiDayHourly ? (key: string) => fmtBucketTime(key, factoryTz) : fmtLabel;
+  const tooltipLabelClass = multiDayHourly ? "text-gray-100 font-medium" : undefined;
 
   if (loading) {
     // Skeleton that mirrors the real layout (KPI tiles + 3 chart cards) so the
@@ -1549,7 +1566,8 @@ export function ProductionTrendSection({
                       {...props}
                       target={buTargetLine}
                       granularity={granularity}
-                      fmtLabelFn={fmtLabel}
+                      fmtLabelFn={fmtTooltipLabel}
+                      labelClassName={tooltipLabelClass}
                       peerLabel={peerLabel}
                     />
                   )}
@@ -1634,7 +1652,8 @@ export function ProductionTrendSection({
                       peerKey="peerScrap"
                       target={thresholds.scrap.good}
                       invert={true}
-                      fmtLabelFn={fmtLabel}
+                      fmtLabelFn={fmtTooltipLabel}
+                      labelClassName={tooltipLabelClass}
                       peerLabel={peerLabel}
                     />
                   )}
@@ -1726,7 +1745,8 @@ export function ProductionTrendSection({
                       peerKey="peerUptime"
                       target={thresholds.efficiency.good}
                       invert={false}
-                      fmtLabelFn={fmtLabel}
+                      fmtLabelFn={fmtTooltipLabel}
+                      labelClassName={tooltipLabelClass}
                       peerLabel={peerLabel}
                     />
                   )}
