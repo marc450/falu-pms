@@ -1110,9 +1110,12 @@ export async function fetchPeersTrendAtGrain(
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 
-// Analytics source flag (Phase 3). "supabase" (default) reads the existing
-// RPCs; "clickhouse" reads the same trend via the bridge's ClickHouse proxy.
-export const ANALYTICS_SOURCE = (process.env.NEXT_PUBLIC_ANALYTICS_SOURCE || "supabase").toLowerCase();
+// Analytics source flag. Default is now "clickhouse": all analytics (fleet
+// trend, crew comparison, downtime) read the bridge's ClickHouse proxy, which
+// is the accurate/complete record. The Supabase RPC paths proved lossy
+// (saved_shift_logs / error_shift_summary drop data on missed Save flags) and
+// are being retired. Set NEXT_PUBLIC_ANALYTICS_SOURCE=supabase to fall back.
+export const ANALYTICS_SOURCE = (process.env.NEXT_PUBLIC_ANALYTICS_SOURCE || "clickhouse").toLowerCase();
 
 // Include ngrok bypass header so the free-tier warning page is skipped
 const API_HEADERS: HeadersInit = {
@@ -1366,6 +1369,30 @@ export interface SavedShiftLog {
  * Returns one row per shift_crew (the latest save for that crew).
  */
 export async function fetchSavedShiftLogs(machineCode: string): Promise<SavedShiftLog[]> {
+  // ClickHouse path: latest save_flag rows per crew from the shift_readings
+  // mirror — same PLC end-of-shift counters Supabase saved_shift_logs stored,
+  // but complete. Endpoint returns rows newest-first; keep the first per crew.
+  if (ANALYTICS_SOURCE === "clickhouse") {
+    try {
+      const resp = await fetchRetry(
+        `${API_BASE}/api/analytics/machine-shifts?machine=${encodeURIComponent(machineCode)}`,
+        { headers: API_HEADERS },
+      );
+      if (!resp.ok) throw new Error(`machine-shifts ${resp.status}`);
+      const rows = (await resp.json()) as SavedShiftLog[];
+      const seen = new Set<string>();
+      const result: SavedShiftLog[] = [];
+      for (const row of rows) {
+        const key = row.shift_crew ?? 'Unassigned';
+        if (!seen.has(key)) { seen.add(key); result.push(row); }
+      }
+      return result;
+    } catch (e) {
+      console.error("fetchSavedShiftLogs ClickHouse error:", e);
+      return [];
+    }
+  }
+
   const sb = getSupabase();
   const { data, error } = await sb
     .from("saved_shift_logs")
@@ -1999,7 +2026,7 @@ export async function fetchErrorShiftSummary(range: DateRange): Promise<ErrorShi
 // PER MACHINE ERROR EVENT SPANS (for 24h chart annotation)
 // ============================================
 export interface ErrorEvent {
-  id:            number;
+  id:            number | string;   // Supabase: bigint id. ClickHouse: synthesised code_startMs.
   machine_code:  string;
   error_code:    string;
   started_at:    string;        // ISO timestamp
@@ -2013,9 +2040,37 @@ export async function fetchMachineErrorEvents(
   machineCode: string,
   range: DateRange,
 ): Promise<ErrorEvent[]> {
-  const sb = getSupabase();
   const startIso = range.start.toISOString();
   const endIso   = range.end.toISOString();
+
+  // ClickHouse path: completed events from the full-history mirror (no 48h cap,
+  // so 7-day annotations are complete), merged with the currently-open event(s)
+  // which ClickHouse doesn't hold until they close — those come from the live
+  // Supabase error_events rows (always recent, within the 48h retention).
+  if (ANALYTICS_SOURCE === "clickhouse") {
+    try {
+      const qs = new URLSearchParams({ machine: machineCode, start: startIso, end: endIso });
+      const resp = await fetchRetry(`${API_BASE}/api/analytics/machine-errors?${qs.toString()}`, { headers: API_HEADERS });
+      if (!resp.ok) throw new Error(`machine-errors ${resp.status}`);
+      const completed = (await resp.json()) as ErrorEvent[];
+
+      const sbLive = getSupabase();
+      const { data: open } = await sbLive
+        .from("error_events")
+        .select("id, machine_code, error_code, started_at, ended_at, duration_secs")
+        .eq("machine_code", machineCode)
+        .is("ended_at", null)
+        .lt("started_at", endIso);
+
+      return [...completed, ...((open ?? []) as ErrorEvent[])]
+        .sort((a, b) => new Date(a.started_at).getTime() - new Date(b.started_at).getTime());
+    } catch (e) {
+      console.error("fetchMachineErrorEvents ClickHouse error:", e);
+      return [];
+    }
+  }
+
+  const sb = getSupabase();
 
   const { data, error } = await sb
     .from("error_events")

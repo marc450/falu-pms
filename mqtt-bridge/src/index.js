@@ -510,6 +510,26 @@ async function handleShiftMessage(payload) {
           ended_at: plcEnd.toISOString(),
           duration_secs: durationSecs,
         }).eq("id", eventId);
+
+        // ── ClickHouse dual-write ──
+        // Mirror events closed via the running-transition path too, not just
+        // the ErrorStatus=false path. Without this, an event closed here lands
+        // in Supabase but never in ClickHouse, so the long-term CH downtime
+        // history would silently undercount. Same buffered, non-throwing write.
+        const chMachineId = machineIdCache[machineCode];
+        if (CLICKHOUSE_ENABLED && chMachineId && ev) {
+          chErrorBuffer.push({
+            machine_id: chMachineId,
+            machine_code: machineCode,
+            error_code: errCode,
+            shift_crew: crew,
+            started_at: new Date(ev.started_at).toISOString(),
+            ended_at: plcEnd.toISOString(),
+            duration_secs: durationSecs,
+            ingested_at: new Date().toISOString(),
+          });
+        }
+
         // Add to shift aggregation (keyed by crew name)
         if (!m.shiftErrorCounts) m.shiftErrorCounts = {};
         if (!m.shiftErrorCounts[crew]) m.shiftErrorCounts[crew] = {};
@@ -1550,6 +1570,110 @@ app.get("/api/analytics/downtime-summary", async (req, res) => {
     res.json(payload);
   } catch (err) {
     logger.error(`downtime-summary query failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-machine error spans for the production page's hourly (24h–7d) error
+// annotation layer, from the ClickHouse error_events mirror. Unlike the 48h
+// Supabase table this carries the full history, so a 7-day chart no longer
+// truncates at 48h. CH stores only COMPLETED events, so the currently-open
+// event (if any) is merged in by the frontend from live Supabase state.
+// Returns the ErrorEvent row shape (id synthesised from code + start).
+app.get("/api/analytics/machine-errors", async (req, res) => {
+  if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
+  const { machine, start, end } = req.query;
+  if (!machine || !start || !end) return res.status(400).json({ error: "machine, start and end (ISO) required" });
+  const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");
+  const Q_MS = 300_000; // snap to 5m grid so reloads within the bucket reuse the cache
+  const startSnap = new Date(Math.floor(new Date(start).getTime() / Q_MS) * Q_MS);
+  const endSnap   = new Date(Math.ceil(new Date(end).getTime()  / Q_MS) * Q_MS);
+
+  // Raw timestamp columns are renamed in the subquery (s_raw/e_raw) so the
+  // formatted output aliases can reuse started_at/ended_at without ClickHouse
+  // alias-shadowing the DateTime64 source (toUnixTimestamp64Milli needs it).
+  const query = `
+    SELECT
+      concat(error_code, '_', toString(toUnixTimestamp64Milli(s_raw)))  AS id,
+      machine_code,
+      error_code,
+      concat(formatDateTime(s_raw, '%Y-%m-%dT%H:%i:%S'), 'Z')           AS started_at,
+      concat(formatDateTime(e_raw, '%Y-%m-%dT%H:%i:%S'), 'Z')           AS ended_at,
+      toInt32(dur)                                                      AS duration_secs
+    FROM (
+      SELECT machine_code, error_code,
+             started_at AS s_raw, ended_at AS e_raw, duration_secs AS dur
+      FROM error_events
+      WHERE machine_code = {machine:String}
+        AND started_at <  toDateTime64({end:String}, 3, 'UTC')
+        AND ended_at   >  toDateTime64({start:String}, 3, 'UTC')
+    )
+    ORDER BY s_raw`;
+
+  try {
+    const rs = await clickhouse.query({
+      query,
+      query_params: { machine: String(machine), start: fmt(startSnap), end: fmt(endSnap) },
+      clickhouse_settings: { max_execution_time: 20, use_query_cache: 1, query_cache_ttl: 300 },
+      format: "JSONEachRow",
+    });
+    const payload = await rs.json();
+    res.set("Cache-Control", "public, max-age=300");
+    res.json(payload);
+  } catch (err) {
+    logger.error(`machine-errors query failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-machine latest saved-shift rows for the production page's per-crew shift
+// history cards, from ClickHouse shift_readings save_flag rows. Each save_flag=1
+// reading carries the PLC's cumulative end-of-shift counters — the exact data
+// Supabase saved_shift_logs stored, but CH holds every save the bridge mirrored.
+// Returns the SavedShiftLog row shape; frontend keeps the latest row per crew.
+app.get("/api/analytics/machine-shifts", async (req, res) => {
+  if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
+  const { machine } = req.query;
+  if (!machine) return res.status(400).json({ error: "machine required" });
+  const limit = Math.min(Math.max(Number(req.query.limit) || 50, 1), 200);
+
+  const query = `
+    SELECT
+      shift_crew,
+      toFloat64(production_time_seconds)   AS production_time_seconds,
+      toFloat64(idle_time_seconds)         AS idle_time_seconds,
+      toFloat64(error_time_seconds)        AS error_time_seconds,
+      toInt64(cotton_tears)                AS cotton_tears,
+      toInt64(missing_sticks)              AS missing_sticks,
+      toInt64(faulty_pickups)              AS faulty_pickups,
+      toInt64(other_errors)                AS other_errors,
+      toInt64(produced_swabs)              AS produced_swabs,
+      toInt64(packaged_swabs)              AS packaged_swabs,
+      toInt64(produced_boxes)              AS produced_boxes,
+      toInt64(produced_boxes_layer_plus)   AS produced_boxes_layer_plus,
+      toInt64(discarded_swabs)             AS discarded_swabs,
+      toFloat64(efficiency)                AS efficiency,
+      toFloat64(scrap_rate)                AS scrap_rate,
+      concat(formatDateTime(ingested_at, '%Y-%m-%dT%H:%i:%S'), 'Z') AS saved_at
+    FROM shift_readings
+    WHERE machine_code = {machine:String} AND save_flag = 1
+    ORDER BY ingested_at DESC
+    LIMIT {limit:UInt32}`;
+
+  try {
+    const rs = await clickhouse.query({
+      query,
+      query_params: { machine: String(machine), limit },
+      // 64-bit ints as JSON numbers (not strings) so the frontend reads them
+      // straight into arithmetic, matching the Supabase saved_shift_logs shape.
+      clickhouse_settings: { max_execution_time: 20, output_format_json_quote_64bit_integers: 0 },
+      format: "JSONEachRow",
+    });
+    const payload = await rs.json();
+    res.set("Cache-Control", "public, max-age=30");
+    res.json(payload);
+  } catch (err) {
+    logger.error(`machine-shifts query failed: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
