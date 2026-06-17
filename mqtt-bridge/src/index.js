@@ -35,7 +35,9 @@ const cors = require("cors");
 const winston = require("winston");
 const fs = require("fs");
 const path = require("path");
-const { startDataQualityMonitor } = require("./dataQualityMonitor");
+// Data-quality monitor retired: it read the Supabase bucket_analytics_5m
+// pipeline, which is gone now that ClickHouse is the sole analytics store.
+// (src/dataQualityMonitor.js is kept in the tree but no longer wired up.)
 
 // ============================================
 // LOGGER
@@ -141,39 +143,10 @@ if (CLICKHOUSE_ENABLED) {
   setInterval(() => { flushClickHouse(); flushClickHouseErrors(); }, 5000);   // batch every 5s
 }
 
-// ============================================
-// SHIFT_READINGS WRITE BUFFER (throughput)
-// ============================================
-// Previously every message did an immediate `await ...insert()` for
-// shift_readings PLUS two machines updates. Under a simulator reconnect
-// burst that became hundreds of concurrent Supabase requests, saturating
-// connections so the bridge fell minutes behind real time. Buffer the
-// reading rows and flush them as one batched insert, mirroring the
-// ClickHouse path. Analytics read shift_readings on a cron, and the
-// 5-min buckets window by plc_timestamp (migration 096), so a ~1.5s
-// batch delay is invisible to every consumer.
-let srBuffer = [];
-const SR_BUFFER_MAX = 50000;            // memory cap if Supabase is unreachable for a while
-
-async function flushShiftReadings() {
-  if (srBuffer.length === 0) return;
-  const batch = srBuffer;
-  srBuffer = [];                         // swap first so new rows accumulate during the await
-  const { error } = await supabase.from("shift_readings").insert(batch);
-  if (error) {
-    // Re-queue on failure (capped) so transient errors don't silently drop data
-    if (srBuffer.length + batch.length <= SR_BUFFER_MAX) {
-      srBuffer = batch.concat(srBuffer);
-    } else {
-      logger.error(`shift_readings buffer full (${SR_BUFFER_MAX}), dropping ${batch.length} rows`);
-    }
-    logger.error(`shift_readings batch insert failed: ${error.message} | code: ${error.code}`);
-  } else {
-    logger.debug(`shift_readings: flushed ${batch.length} rows`);
-  }
-}
-
-setInterval(flushShiftReadings, 1500);
+// shift_readings is no longer written to Supabase — ClickHouse is the sole
+// store for raw readings now (see the chBuffer dual-write below). The Supabase
+// batch buffer + flush that used to live here was removed with the analytics
+// cutover; only the ClickHouse buffer remains.
 
 /**
  * PLC timestamps are set by hand on the machine and may drift from real time.
@@ -631,12 +604,7 @@ async function handleShiftMessage(payload) {
       plc_timestamp: data.Timestamp ? new Date(data.Timestamp).toISOString() : null,
     };
 
-    // ── Supabase write (buffered batch insert; see flushShiftReadings) ──
-    // recorded_at = true receipt time so it's accurate despite the batch delay.
-    srBuffer.push({ ...readingRow, recorded_at: new Date().toISOString() });
-    if (srBuffer.length >= 500) flushShiftReadings();   // burst guard: flush early
-
-    // ── ClickHouse dual-write (additive, buffered, never blocks/throws) ──
+    // ── ClickHouse write (sole store for raw readings; buffered, never blocks) ──
     if (CLICKHOUSE_ENABLED) {
       chBuffer.push({
         ...readingRow,
@@ -652,46 +620,13 @@ async function handleShiftMessage(payload) {
     const saveCrew = resolveMessageCrew(data) || "Unassigned";
     logger.info(`Save flag (end of shift) received for ${machineCode}, crew ${saveCrew}`);
 
-    // ── Flush in-memory error counts to error_shift_summary ──
-    // Error counts are keyed by crew name
-    const shiftCounts = m.shiftErrorCounts?.[saveCrew];
-    if (shiftCounts && Object.keys(shiftCounts).length > 0) {
-      const today = new Date().toISOString().slice(0, 10);
-      for (const [errCode, agg] of Object.entries(shiftCounts)) {
-        if (agg.count === 0 && agg.totalSecs === 0) continue;
-        await supabase.from("error_shift_summary").upsert({
-          machine_id: machineId,
-          machine_code: machineCode,
-          shift_date: today,
-          shift_crew: saveCrew,
-          error_code: errCode,
-          occurrence_count: agg.count,
-          total_duration_secs: agg.totalSecs,
-        }, { onConflict: "machine_id,shift_date,shift_crew,error_code" });
-      }
-      logger.info(`Flushed error_shift_summary for ${machineCode} crew ${saveCrew}: ${Object.keys(shiftCounts).length} codes`);
-      delete m.shiftErrorCounts[saveCrew];
-    }
-
-    await supabase.from("saved_shift_logs").insert({
-      machine_id:               machineId,
-      machine_code:             machineCode,
-      shift_crew:               saveCrew,
-      production_time_seconds:  Math.round(data.ProductionTime  || 0),  // seconds, from PLC
-      idle_time_seconds:        Math.round(data.IdleTime        || 0),  // seconds, from PLC
-      error_time_seconds:       Math.round(data.ErrorTime       || 0),  // seconds, from PLC
-      cotton_tears:             data.CottonTears               || 0,
-      missing_sticks:           data.MissingSticks             || 0,
-      faulty_pickups:           data.FaultyPickups             || 0,
-      other_errors:             data.OtherErrors               || 0,
-      produced_swabs:           data.ProducedSwabs             || 0,
-      packaged_swabs:           data.PackagedSwabs             || 0,
-      produced_boxes:           data.ProducedBoxes             || 0,
-      produced_boxes_layer_plus: data.ProducedBoxesLayerPlus   || 0,
-      discarded_swabs:          data.DiscardedSwabs            || 0,
-      efficiency:               data.Efficiency                || 0,
-      scrap_rate:               data.Reject                    || 0,
-    });
+    // error_shift_summary and saved_shift_logs are no longer written to Supabase.
+    // Downtime Analytics, Crew Comparison and the per-machine shift cards all read
+    // ClickHouse now (shift_readings save_flag rows + the error_events mirror).
+    // The Supabase aggregates proved lossy on missed Save flags, so they are
+    // retired. We still clear the in-memory per-crew error tally that used to
+    // feed error_shift_summary, so it cannot grow unbounded across shifts.
+    if (m.shiftErrorCounts) delete m.shiftErrorCounts[saveCrew];
   }
 
   logger.debug(`Shift updated: ${machineCode} - ${data.Status} | Shift ${data.Shift} | Speed: ${data.Speed} | Eff: ${data.Efficiency}%`);
@@ -1242,21 +1177,13 @@ function connectMqtt() {
 // ============================================
 // PERIODIC CLEANUP (replaces pg_cron dependency)
 // ============================================
-// Runs every hour. Deletes rows older than 48h from shift_readings
-// and error_events. Self-correcting: if it misses a run, the next
-// one catches up automatically.
+// Runs every hour. Deletes error_events rows older than 48h (error_events is
+// still written to Supabase to drive the tablet's Realtime error alerts; only
+// the last 48h is needed there, ClickHouse keeps the full history). shift_readings
+// is no longer written to Supabase, so it no longer needs cleaning up here.
+// Self-correcting: if it misses a run, the next one catches up automatically.
 async function periodicCleanup() {
   const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString();
-
-  const { count: srCount, error: srErr } = await supabase
-    .from("shift_readings")
-    .delete({ count: "exact" })
-    .lt("recorded_at", cutoff);
-  if (srErr) {
-    logger.error(`shift_readings cleanup failed: ${srErr.message}`);
-  } else if (srCount > 0) {
-    logger.info(`Cleaned up ${srCount} shift_readings rows older than 48h`);
-  }
 
   const { count: eeCount, error: eeErr } = await supabase
     .from("error_events")
@@ -1737,21 +1664,15 @@ app.listen(PORT, () => {
   // Reload alert config every 60 seconds so admin changes take effect without restart
   setInterval(() => loadAlertConfig(), 60000);
 
-  // Periodic cleanup: delete shift_readings and error_events older than 48h (every hour)
+  // Periodic cleanup: delete error_events older than 48h (every hour)
   periodicCleanup(); // run once on startup
   setInterval(() => periodicCleanup(), 60 * 60 * 1000);
-
-  // Data-quality monitor: polls data_quality_alerts (filled by pg_cron job
-  // `data-quality-check`, migration 095) and posts a Claude root-cause report
-  // to Slack when impossible values appear. Cheap until an incident fires.
-  startDataQualityMonitor({ supabase, logger });
 });
 
 // Graceful shutdown
 async function gracefulShutdown(signal) {
   logger.info(`Received ${signal} — shutting down`);
   if (mqttClient) mqttClient.end(true);
-  try { await flushShiftReadings(); } catch (e) { logger.error(`shutdown flush failed: ${e.message}`); }
   try { await flushClickHouse(); } catch (e) { logger.error(`shutdown CH flush failed: ${e.message}`); }
   try { await flushClickHouseErrors(); } catch (e) { logger.error(`shutdown CH error flush failed: ${e.message}`); }
   process.exit(0);
