@@ -4,8 +4,7 @@ import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
-  fetchShiftAssignments, fetchRegisteredMachines, fetchMachineDailyTrend, fetchMachineHourlyTrend,
-  fetchMachineFineTrend, fetchMachinePeers, fetchPeersDailyTrend, fetchPeersHourlyTrend, fetchPeersFineTrend,
+  fetchShiftAssignments, fetchRegisteredMachines, fetchMachinePeers,
   fetchMachineTrendAtGrain, fetchPeersTrendAtGrain, resolveGrain,
   fetchMachineErrorEvents, fetchErrorCodeLookup, ANALYTICS_SOURCE,
   PACKING_FORMATS,
@@ -152,13 +151,7 @@ function ProductionContent() {
       trendPresetId !== "custom"
         ? PRESETS.find(p => p.id === trendPresetId)!.getRange(factoryTz)
         : trendRange;
-    // Any window up to ~a day (Last hour, Current/Last shift, Last 24 hours,
-    // and short custom ranges) renders from the 5-min intraday rollup. Longer
-    // windows roll up to the daily summary. Keying this on the window length
-    // instead of just the "24h" preset fixes "Last hour" and the shift presets,
-    // which previously fell through to fetchMachineDailyTrend — that query
-    // filters summary_date < today, so a window living entirely inside the
-    // current day matched zero rows and rendered "No data for this period".
+    // windowMs gates the error-annotation overlay (a <=24h feature) below.
     const windowMs = effectiveRange.end.getTime() - effectiveRange.start.getTime();
     // Configured shift system for the "Shift" grain (aligns buckets to the
     // factory's wall clock). Falls back to 12h @ 07:00 until the config loads.
@@ -166,31 +159,23 @@ function ProductionContent() {
     const shiftStartHour = shiftConfig?.firstShiftStartHour ?? 7;
     const shiftMs        = shiftHours * 3_600_000;
     const shiftOpts      = { shiftHours, shiftStartHour, tz: factoryTz };
-    // An explicit grain (anything but "auto") routes through the ClickHouse
-    // proxy, which owns every grain incl. "shift". ClickHouse-only by design.
-    const explicitGrain = trendGrainPref !== "auto" && ANALYTICS_SOURCE === "clickhouse"
-      ? resolveGrain(effectiveRange, trendGrainPref, shiftMs)
-      : null;
-    setTrendShiftMode(explicitGrain === "shift");
-    // Short windows (a current shift that has only run a few hours) zoom into
-    // 5-second buckets so brief standstills and errors are visible. 5s lives
-    // only in ClickHouse, so this needs the clickhouse source; below it falls
-    // back to the 5-min intraday rollup. 6h cap matches the analytics 5s ladder.
-    const isFine   = !explicitGrain && ANALYTICS_SOURCE === "clickhouse" && windowMs <= 6 * 60 * 60 * 1000;
-    const isHourly = windowMs <= 25 * 60 * 60 * 1000;
+    // Single grain source of truth: resolve the ladder grain (auto resolves via
+    // pickGranularity) and render at exactly that grain. This is the SAME path
+    // the analytics/park page uses, so the dropdown label always matches the
+    // drawn charts and the per-machine view agrees with the park overview. The
+    // ClickHouse proxy owns every grain incl. 5s and "shift".
+    const grain = resolveGrain(effectiveRange, trendGrainPref, shiftMs);
+    setTrendShiftMode(grain === "shift");
+    // Error annotation is a short-window (<=24h) overlay only; skip the fetch on
+    // longer windows to keep daily/weekly views snappy.
+    const wantErrors = windowMs <= 25 * 60 * 60 * 1000;
 
     (async () => {
       try {
         // Self trend first; peer info second. Peers depends on the machine's
         // machine_type which is read by fetchMachinePeers.
         const [selfResult, peers] = await Promise.all([
-          explicitGrain
-            ? fetchMachineTrendAtGrain(machineName, effectiveRange, explicitGrain, shiftOpts)
-            : isFine
-              ? fetchMachineFineTrend(machineName, effectiveRange)
-              : isHourly
-                ? fetchMachineHourlyTrend(machineName, effectiveRange)
-                : fetchMachineDailyTrend(machineName, effectiveRange),
+          fetchMachineTrendAtGrain(machineName, effectiveRange, grain, shiftOpts),
           fetchMachinePeers(machineName),
         ]);
         setTrendRows(selfResult.rows);
@@ -201,19 +186,13 @@ function ProductionContent() {
         if (peers.peerCodes.length === 0) {
           setPeerRows([]);
         } else {
-          const peerResult = explicitGrain
-            ? await fetchPeersTrendAtGrain(peers.peerIds, effectiveRange, explicitGrain, shiftOpts)
-            : isFine
-              ? await fetchPeersFineTrend(peers.peerIds, effectiveRange)
-              : isHourly
-                ? await fetchPeersHourlyTrend(peers.peerIds, effectiveRange)
-                : await fetchPeersDailyTrend(peers.peerCodes, effectiveRange);
+          const peerResult = await fetchPeersTrendAtGrain(peers.peerIds, effectiveRange, grain, shiftOpts);
           setPeerRows(peerResult.rows);
         }
 
         // Error events are only relevant for the 24h chart annotation layer.
         // Skip the fetch on other presets to keep daily/weekly views snappy.
-        if (isHourly) {
+        if (wantErrors) {
           const [events, lookup] = await Promise.all([
             fetchMachineErrorEvents(machineName, effectiveRange),
             fetchErrorCodeLookup(),

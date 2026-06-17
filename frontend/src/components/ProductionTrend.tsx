@@ -1308,8 +1308,18 @@ export function ProductionTrendSection({
   const factoryTz = useFactoryTimezone();
 
   const hasData    = rows.length > 0;
-  const avgScrap   = hasData ? rows.reduce((s, d) => s + d.avgScrap,  0) / rows.length : null;
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
+  // Volume-weighted scrap (grain-invariant): Σ(scrap_i · swabs_i) / Σ swabs_i,
+  // i.e. total discarded / total produced. A simple mean of per-bucket rates
+  // drifts with the chart grain — idle and busy buckets weigh equally — so the
+  // same window reads e.g. 3.9% daily but 3.5% hourly. Weighting by produced
+  // volume pins the KPI to the true rate, identical across 5s/5m/1h/1d/shift.
+  // Falls back to the simple mean only when the window produced nothing.
+  const avgScrap   = !hasData
+    ? null
+    : totalSwabs > 0
+      ? rows.reduce((s, d) => s + d.avgScrap * d.totalSwabs, 0) / totalSwabs
+      : rows.reduce((s, d) => s + d.avgScrap, 0) / rows.length;
   const totalBUs   = Math.round(totalSwabs / 7200);
 
   const shiftHours   = thresholds.bu.shiftLengthMinutes / 60 || 8;
@@ -1372,10 +1382,16 @@ export function ProductionTrendSection({
         peerPlannedSecs,
       )
     : (hasPeers ? peerRows.reduce((s, d) => s + d.avgUptime, 0) / peerRows.length : null);
-  const peerAvgScrap  = hasPeers ? peerRows.reduce((s, d) => s + d.avgScrap,  0) / peerRows.length : null;
   // Peer fetchers already return per-peer averages, so summing into BUs gives
   // "BUs per peer in this period" — directly comparable to the machine's own.
   const peerTotalSwabs = peerRows.reduce((s, d) => s + d.totalSwabs, 0);
+  // Volume-weighted peer scrap, matching the machine's own scrap math above so
+  // the "vs peers" delta compares like with like and is grain-invariant.
+  const peerAvgScrap  = !hasPeers
+    ? null
+    : peerTotalSwabs > 0
+      ? peerRows.reduce((s, d) => s + d.avgScrap * d.totalSwabs, 0) / peerTotalSwabs
+      : peerRows.reduce((s, d) => s + d.avgScrap, 0) / peerRows.length;
   const peerTotalBUs   = Math.round(peerTotalSwabs / 7200);
 
   const rowsWithPeer = rows.map(r => {
