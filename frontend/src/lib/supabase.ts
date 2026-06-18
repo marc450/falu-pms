@@ -676,6 +676,8 @@ const GRAIN_5S_MAX_MS  = 6 * 3_600_000; // 5s: cap to 6h windows
 // Which explicit grains make sense for a window (point budget + 5s gating). The
 // "shift" grain is sized by the live shift length (shiftMs) instead of its
 // nominal 12h, so it's offered exactly when the window spans ≥2 actual shifts.
+const GRAIN_SHIFT_MAX_MS = 28 * 24 * 3_600_000; // shift grain: cap to 4-week windows
+
 export function sensibleGrains(range: DateRange, shiftMs: number = DEFAULT_SHIFT_MS): GrainId[] {
   const ms = range.end.getTime() - range.start.getTime();
   return TREND_GRAINS
@@ -683,7 +685,8 @@ export function sensibleGrains(range: DateRange, shiftMs: number = DEFAULT_SHIFT
       const gms = g.id === "shift" ? shiftMs : g.ms;
       const pts = ms / gms;
       if (pts < GRAIN_MIN_POINTS) return false;
-      if (g.id === "5s") return ms <= GRAIN_5S_MAX_MS;   // bounded by window, not the coarse budget
+      if (g.id === "5s")    return ms <= GRAIN_5S_MAX_MS;    // bounded by window
+      if (g.id === "shift") return ms <= GRAIN_SHIFT_MAX_MS; // too dense beyond 4 weeks
       return pts <= GRAIN_MAX_POINTS;
     })
     .map(g => g.id);

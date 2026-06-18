@@ -1741,6 +1741,7 @@ export function ProductionTrendSection({
                   tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
                 />
                 <Tooltip
+                  cursor={shiftMode ? { fill: "rgba(255,255,255,0.07)" } : undefined}
                   // Custom content so we can render target + delta + hit/miss
                   // alongside the per-bucket value. The standard formatter
                   // only sees one (value, name) tuple at a time and can't
@@ -1833,6 +1834,7 @@ export function ProductionTrendSection({
                   tickFormatter={(v) => `${v}%`}
                 />
                 <Tooltip
+                  cursor={shiftMode ? { fill: "rgba(255,255,255,0.07)" } : undefined}
                   // Custom content with target + delta + hit/miss. Scrap is
                   // inverted: lower is better, so hit = actual <= target.
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1932,6 +1934,7 @@ export function ProductionTrendSection({
                   tickFormatter={(v) => `${v}%`}
                 />
                 <Tooltip
+                  cursor={shiftMode ? { fill: "rgba(255,255,255,0.07)" } : undefined}
                   // Custom content with target + delta + hit/miss. Uptime
                   // is non-inverted: higher is better, hit = actual >= target.
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
