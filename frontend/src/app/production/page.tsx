@@ -594,28 +594,27 @@ function ProductionContent() {
             // Show the uptime chart whenever it isn't the intraday line view —
             // the shift bar view benefits from per-shift uptime bars too.
             showUptimeChart={trendShiftMode || trendGranularity !== "hour"}
-            afterKpis={
-              !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 ? (
-                <div className="flex flex-col gap-4">
-                  <MachineStateTimeline
-                    rows={timelineRows}
-                    errorEvents={errorEvents}
-                    errorLookup={errorLookup}
-                  />
-                  <ErrorSummary
-                    errorEvents={errorEvents}
-                    errorLookup={errorLookup}
-                  />
-                </div>
-              ) : null
-            }
           />
-          {/* Error summary for non-intraday views (intraday renders it inside afterKpis above) */}
-          {(trendShiftMode || trendGranularity !== "hour") && !trendLoading && (
-            <ErrorSummary
-              errorEvents={errorEvents}
-              errorLookup={errorLookup}
-            />
+
+          {/* State timeline sits directly below the charts (intraday only). */}
+          {!trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 && (
+            <div className="mt-4">
+              <MachineStateTimeline
+                rows={timelineRows}
+                errorEvents={errorEvents}
+                errorLookup={errorLookup}
+              />
+            </div>
+          )}
+
+          {/* Error summary is always the lowest element in the overview. */}
+          {!trendLoading && (
+            <div className="mt-4">
+              <ErrorSummary
+                errorEvents={errorEvents}
+                errorLookup={errorLookup}
+              />
+            </div>
           )}
         </div>
       )}
