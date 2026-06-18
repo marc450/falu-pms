@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { useUrlSync } from "@/lib/useUrlState";
 import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments, fetchRegisteredMachines, fetchMachinePeers,
@@ -43,15 +44,25 @@ function ProductionContent() {
   // Factory timezone — drives all preset date ranges so "Last 7 days" is
   // anchored to the factory's calendar day, not the browser's.
   const factoryTz = useFactoryTimezone();
+  const url       = useUrlSync();
 
   // Production Trend state — mirrors the Analytics fleet tab.
   // Defaults to 24h on the machine page (vs 7d on Analytics) to match the
   // "right now" framing of the Machine Monitor.
   const MACHINE_DEFAULT_PRESET: PresetId = "24h";
-  const [trendPresetId, setTrendPresetId] = useState<PresetId | "custom">(MACHINE_DEFAULT_PRESET);
-  const [trendRange, setTrendRange] = useState<DateRange>(() =>
-    PRESETS.find(p => p.id === MACHINE_DEFAULT_PRESET)!.getRange(factoryTz)
-  );
+  const [trendPresetId, setTrendPresetId] = useState<PresetId | "custom">(() => {
+    const p = url.get("preset");
+    return (p && (PRESETS.some(pr => pr.id === p) || p === "custom") ? p : MACHINE_DEFAULT_PRESET) as PresetId | "custom";
+  });
+  const [trendRange, setTrendRange] = useState<DateRange>(() => {
+    const p = url.get("preset") as PresetId | "custom" | null;
+    if (p === "custom") {
+      const s = url.get("start"); const e = url.get("end");
+      if (s && e) return { start: new Date(s), end: new Date(e) };
+    }
+    const preset = p ? PRESETS.find(pr => pr.id === p) : null;
+    return (preset ?? PRESETS.find(pr => pr.id === MACHINE_DEFAULT_PRESET)!).getRange(factoryTz);
+  });
 
   // If the factory tz resolves after first render (the hook starts with a
   // fallback), recompute any non-custom range so it lines up with factory
@@ -64,12 +75,16 @@ function ProductionContent() {
     // their own range update in the click handler.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [factoryTz]);
+
   const [trendRows, setTrendRows] = useState<FleetTrendRow[]>([]);
   const [trendGranularity, setTrendGranularity] = useState<"hour" | "day">("day");
   // User override of the auto bucket size. "auto" keeps the bespoke window-based
   // routing below (5s < 6h, 5m ≤ 25h, daily beyond); an explicit grain (incl.
   // "Shift") routes through the ClickHouse proxy.
-  const [trendGrainPref, setTrendGrainPref] = useState<GrainPref>("auto");
+  const [trendGrainPref, setTrendGrainPref] = useState<GrainPref>(() => {
+    const g = url.get("grain");
+    return (g && ["auto","5s","5m","1h","shift","1d"].includes(g) ? g : "auto") as GrainPref;
+  });
   // True when the rendered grain is "shift" → ProductionTrendSection draws bars.
   const [trendShiftMode, setTrendShiftMode] = useState(false);
   const [trendLoading, setTrendLoading] = useState(true);
@@ -82,6 +97,17 @@ function ProductionContent() {
   // Always 5-min resolution regardless of trendGrainPref — the state timeline
   // needs fine buckets to show individual running/idle/error segments correctly.
   const [timelineRows, setTimelineRows] = useState<FleetTrendRow[]>([]);
+
+  // Sync trend controls to URL so reloads land on the same view.
+  useEffect(() => {
+    url.set({
+      preset: trendPresetId,
+      grain:  trendGrainPref === "auto" ? null : trendGrainPref,
+      start:  trendPresetId === "custom" ? trendRange.start.toISOString() : null,
+      end:    trendPresetId === "custom" ? trendRange.end.toISOString()   : null,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trendPresetId, trendGrainPref, trendRange]);
 
   const loadData = useCallback(async () => {
     if (!machineName) return;

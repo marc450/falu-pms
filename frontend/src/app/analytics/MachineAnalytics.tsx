@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useCallback } from "react";
+import { useUrlSync } from "@/lib/useUrlState";
 import { format, parseISO } from "date-fns";
 import { fmtN, fmtPct, fmtH } from "@/lib/fmt";
 import {
@@ -146,14 +147,21 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
   // Falls back to the configured slot name when no assignment exists.
   // shift_crew already contains the crew name from the bridge, no calendar lookup needed
   const slotName = (_workDay: string, label: string) => label;
+  const url = useUrlSync();
   const [rows,       setRows]       = useState<MachineShiftRow[]>([]);
   const [cells,      setCells]      = useState<ProductionCell[]>([]);
   const [loading,    setLoading]    = useState(true);
   const [error,      setError]      = useState<string | null>(null);
-  const [metric,     setMetric]     = useState<Metric>("bu");
-  const [cellFilter, setCellFilter] = useState<string | null>(null);  // null = All
-  const [normalized, setNormalized] = useState(false);
-  const [colorMode,  setColorMode]  = useState<ColorMode>("simple");
+  const [metric,     setMetric]     = useState<Metric>(() => {
+    const m = url.get("metric");
+    return (["bu","hours","efficiency","scrap"].includes(m ?? "") ? m : "bu") as Metric;
+  });
+  const [cellFilter, setCellFilter] = useState<string | null>(() => url.get("cell"));
+  const [normalized, setNormalized] = useState(() => url.get("norm") === "1");
+  const [colorMode,  setColorMode]  = useState<ColorMode>(() => {
+    const c = url.get("color");
+    return (["simple","gradient"].includes(c ?? "") ? c : "simple") as ColorMode;
+  });
   const [thresholds, setThresholds] = useState<Thresholds | null>(null);
 
   // bu_normalized in the table is computed against available production
@@ -183,6 +191,16 @@ export default function MachineAnalytics({ dateRange, machines, shiftSlots, shif
   }, [dateRange, thresholds]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    url.set({
+      metric,
+      cell:  cellFilter,
+      norm:  normalized ? "1" : null,
+      color: colorMode === "simple" ? null : colorMode,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [metric, cellFilter, normalized, colorMode]);
 
   // Load production cells once on mount
   useEffect(() => {

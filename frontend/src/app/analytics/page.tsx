@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { format } from "date-fns";
+import { useUrlSync } from "@/lib/useUrlState";
 import {
   fetchFleetTrend, fetchHourlyAnalytics, fetchTrendClickHouse, ANALYTICS_SOURCE, resolveGrain,
   fetchRegisteredMachines, fetchThresholds, fetchShiftConfig,
@@ -38,25 +39,49 @@ function trendFreshnessToken(range: DateRange, tz: string, gran: GrainId): strin
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Analytics() {
+  return (
+    <Suspense>
+      <AnalyticsContent />
+    </Suspense>
+  );
+}
+
+function AnalyticsContent() {
   // Factory timezone — every preset's date math is computed against the
   // factory's calendar (see useFactoryTimezone). For viewers outside the
   // factory's tz this is the difference between "Last 7 days" meaning
   // their week or the factory's week.
   const factoryTz = useFactoryTimezone();
+  const url       = useUrlSync();
 
   // Last freshness token actually fetched — lets the auto-refresh skip the
   // network entirely when no new bucket is available yet.
   const lastTokenRef = useRef<string>("");
 
-  const [activePresetId, setActivePresetId] = useState<PresetId | "custom">(DEFAULT_PRESET_ID);
-  const [dateRange, setDateRange]           = useState<DateRange>(() =>
-    PRESETS.find(p => p.id === DEFAULT_PRESET_ID)!.getRange(factoryTz)
-  );
-  const [tab, setTab]                     = useState<AnalyticsTab>("fleet");
+  const [activePresetId, setActivePresetId] = useState<PresetId | "custom">(() => {
+    const p = url.get("preset");
+    return (p && (PRESETS.some(pr => pr.id === p) || p === "custom") ? p : DEFAULT_PRESET_ID) as PresetId | "custom";
+  });
+  const [dateRange, setDateRange] = useState<DateRange>(() => {
+    const p = url.get("preset") as PresetId | "custom" | null;
+    if (p === "custom") {
+      const s = url.get("start"); const e = url.get("end");
+      if (s && e) return { start: new Date(s), end: new Date(e) };
+    }
+    const preset = p ? PRESETS.find(pr => pr.id === p) : null;
+    return (preset ?? PRESETS.find(pr => pr.id === DEFAULT_PRESET_ID)!).getRange(factoryTz);
+  });
+  const [tab, setTab] = useState<AnalyticsTab>(() => {
+    const t = url.get("tab");
+    return (["fleet", "machines", "shifts", "downtime"].includes(t ?? "") ? t : "fleet") as AnalyticsTab;
+  });
   const [rows, setRows]                   = useState<FleetTrendRow[]>([]);
   const [granularity, setGranularity]     = useState<"hour" | "day">("day");
   const [chartGrain, setChartGrain]       = useState<GrainId>("1d"); // resolved grain actually rendered (drives shift bar mode)
-  const [grainPref, setGrainPref]         = useState<GrainPref>("auto"); // user override of the auto bucket size
+  const [grainPref, setGrainPref]         = useState<GrainPref>(() => {
+    const g = url.get("grain");
+    return (g && ["auto","5s","5m","1h","shift","1d"].includes(g) ? g : "auto") as GrainPref;
+  });
   const [thresholds, setThresholds]       = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [buTargetPerShift, setBuTargetPerShift]       = useState<number | null>(null); // sum of all machines' BU targets (per shift)
   const [buMediocrePerShift, setBuMediocrePerShift]   = useState<number | null>(null);
@@ -214,6 +239,18 @@ export default function Analytics() {
     const timer = setInterval(() => load(true, true), 5 * 60 * 1000);   // silent background refresh
     return () => clearInterval(timer);
   }, [load]);
+
+  // Sync navigable state to URL whenever it changes.
+  useEffect(() => {
+    url.set({
+      tab,
+      preset: activePresetId,
+      grain:  grainPref === "auto" ? null : grainPref,
+      start:  activePresetId === "custom" ? dateRange.start.toISOString() : null,
+      end:    activePresetId === "custom" ? dateRange.end.toISOString()   : null,
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, activePresetId, grainPref, dateRange]);
 
   function handlePresetSelect(preset: Preset) {
     setActivePresetId(preset.id);

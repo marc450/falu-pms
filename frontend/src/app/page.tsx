@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback, useRef, Suspense } from "react";
 import { useRouter } from "next/navigation";
+import { useUrlSync } from "@/lib/useUrlState";
 import {
   fetchMachines,
   fetchRegisteredMachines,
@@ -984,11 +985,24 @@ function ShiftAndBUProgress({
 // Dashboard
 // ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
+  return (
+    <Suspense>
+      <DashboardContent />
+    </Suspense>
+  );
+}
+
+function DashboardContent() {
+  const url = useUrlSync();
   const [machines, setMachines] = useState<Record<string, DashboardMachine>>({});
   const [cells, setCells] = useState<ProductionCell[]>([]);
   const [currentShift, setCurrentShift] = useState<number>(0);
-  const [sortColumn, setSortColumn] = useState<SortColumn>("Machine");
-  const [sortAsc, setSortAsc] = useState(true);
+  const [sortColumn, setSortColumn] = useState<SortColumn>(() => {
+    const s = url.get("sort");
+    const valid: SortColumn[] = ["Machine","Status","Speed","IdleTime","ErrorTime","Efficiency","Reject","LastSync"];
+    return (valid.includes(s as SortColumn) ? s : "Machine") as SortColumn;
+  });
+  const [sortAsc, setSortAsc] = useState(() => url.get("asc") !== "0");
   const [currentTime, setCurrentTime] = useState(new Date());
   const [dbError, setDbError] = useState<string | null>(null);
   const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
@@ -1195,6 +1209,14 @@ export default function Dashboard() {
       sb.removeChannel(channel);
     };
   }, [loadData, loadConfig]);
+
+  useEffect(() => {
+    url.set({
+      sort: sortColumn === "Machine" ? null : sortColumn,
+      asc:  sortAsc ? null : "0",
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortColumn, sortAsc]);
 
   const handleSort = (col: SortColumn) => {
     if (sortColumn === col) setSortAsc(!sortAsc);
