@@ -78,6 +78,9 @@ function ProductionContent() {
   const [peerCount, setPeerCount] = useState<number>(0);
   const [errorEvents, setErrorEvents] = useState<ErrorEvent[]>([]);
   const [errorLookup, setErrorLookup] = useState<Record<string, PlcErrorCode>>({});
+  // Always 5-min resolution regardless of trendGrainPref — the state timeline
+  // needs fine buckets to show individual running/idle/error segments correctly.
+  const [timelineRows, setTimelineRows] = useState<FleetTrendRow[]>([]);
 
   const loadData = useCallback(async () => {
     if (!machineName) return;
@@ -190,17 +193,21 @@ function ProductionContent() {
           setPeerRows(peerResult.rows);
         }
 
-        // Error events are only relevant for the 24h chart annotation layer.
-        // Skip the fetch on other presets to keep daily/weekly views snappy.
+        // Error events + state timeline are only relevant for the <=24h view.
         if (wantErrors) {
-          const [events, lookup] = await Promise.all([
+          const [events, lookup, timelineResult] = await Promise.all([
             fetchMachineErrorEvents(machineName, effectiveRange),
             fetchErrorCodeLookup(),
+            // Always fetch at 5m regardless of the selected trend grain so the
+            // state timeline keeps per-5-min bucket resolution.
+            fetchMachineTrendAtGrain(machineName, effectiveRange, "5m", shiftOpts),
           ]);
           setErrorEvents(events);
           setErrorLookup(lookup);
+          setTimelineRows(timelineResult.rows);
         } else {
           setErrorEvents([]);
+          setTimelineRows([]);
         }
       } catch (e) {
         setTrendError(e instanceof Error ? e.message : "Failed to load trend");
@@ -549,7 +556,7 @@ function ProductionContent() {
             afterKpis={
               !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 ? (
                 <MachineStateTimeline
-                  rows={trendRows}
+                  rows={timelineRows}
                   errorEvents={errorEvents}
                   errorLookup={errorLookup}
                 />
