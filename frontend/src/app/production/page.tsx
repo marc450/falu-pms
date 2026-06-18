@@ -170,9 +170,8 @@ function ProductionContent() {
     // ClickHouse proxy owns every grain incl. 5s and "shift".
     const grain = resolveGrain(effectiveRange, trendGrainPref, shiftMs);
     setTrendShiftMode(grain === "shift");
-    // Error annotation is a short-window (<=24h) overlay only; skip the fetch on
-    // longer windows to keep daily/weekly views snappy.
-    const wantErrors = windowMs <= 25 * 60 * 60 * 1000;
+    // State timeline (5m rows) and error annotation strip are intraday-only.
+    const wantTimeline = windowMs <= 25 * 60 * 60 * 1000;
 
     (async () => {
       try {
@@ -194,20 +193,21 @@ function ProductionContent() {
           setPeerRows(peerResult.rows);
         }
 
-        // Error events + state timeline are only relevant for the <=24h view.
-        if (wantErrors) {
-          const [events, lookup, timelineResult] = await Promise.all([
-            fetchMachineErrorEvents(machineName, effectiveRange),
-            fetchErrorCodeLookup(),
-            // Always fetch at 5m regardless of the selected trend grain so the
-            // state timeline keeps per-5-min bucket resolution.
-            fetchMachineTrendAtGrain(machineName, effectiveRange, "5m", shiftOpts),
-          ]);
-          setErrorEvents(events);
-          setErrorLookup(lookup);
+        // Error events are always fetched — the summary card is useful at any range.
+        // The 5m timeline rows are intraday-only (too many points otherwise).
+        const [events, lookup] = await Promise.all([
+          fetchMachineErrorEvents(machineName, effectiveRange),
+          fetchErrorCodeLookup(),
+        ]);
+        setErrorEvents(events);
+        setErrorLookup(lookup);
+
+        if (wantTimeline) {
+          // Always fetch at 5m regardless of the selected trend grain so the
+          // state timeline keeps per-5-min bucket resolution.
+          const timelineResult = await fetchMachineTrendAtGrain(machineName, effectiveRange, "5m", shiftOpts);
           setTimelineRows(timelineResult.rows);
         } else {
-          setErrorEvents([]);
           setTimelineRows([]);
         }
       } catch (e) {
@@ -570,6 +570,13 @@ function ProductionContent() {
               ) : null
             }
           />
+          {/* Error summary for non-intraday views (intraday renders it inside afterKpis above) */}
+          {(trendShiftMode || trendGranularity !== "hour") && !trendLoading && (
+            <ErrorSummary
+              errorEvents={errorEvents}
+              errorLookup={errorLookup}
+            />
+          )}
         </div>
       )}
     </div>
