@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { format } from "date-fns";
 import { useUrlSync } from "@/lib/useUrlState";
 import {
@@ -39,14 +39,6 @@ function trendFreshnessToken(range: DateRange, tz: string, gran: GrainId): strin
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function Analytics() {
-  return (
-    <Suspense>
-      <AnalyticsContent />
-    </Suspense>
-  );
-}
-
-function AnalyticsContent() {
   // Factory timezone — every preset's date math is computed against the
   // factory's calendar (see useFactoryTimezone). For viewers outside the
   // factory's tz this is the difference between "Last 7 days" meaning

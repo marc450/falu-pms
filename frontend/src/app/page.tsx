@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useUrlSync } from "@/lib/useUrlState";
 import {
@@ -985,14 +985,6 @@ function ShiftAndBUProgress({
 // Dashboard
 // ─────────────────────────────────────────────────────────────
 export default function Dashboard() {
-  return (
-    <Suspense>
-      <DashboardContent />
-    </Suspense>
-  );
-}
-
-function DashboardContent() {
   const url = useUrlSync();
   const [machines, setMachines] = useState<Record<string, DashboardMachine>>({});
   const [cells, setCells] = useState<ProductionCell[]>([]);
