@@ -1645,6 +1645,90 @@ app.get("/api/settings/broker", (req, res) => {
 });
 
 // ============================================
+// DATA EXPORT ENDPOINTS
+// ============================================
+
+// Per-machine daily breakdown — one row per (date, machine_code) for a date range.
+// Used by the Settings > Export tab to generate CSV reports for monthly analysis.
+app.get("/api/export/machines-daily", async (req, res) => {
+  if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: "start and end (ISO) required" });
+  const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");
+  const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
+
+  const query = `
+    SELECT
+      toString(toDate(toTimeZone(bucket_ts, 'Europe/Zurich')))             AS date,
+      machine_code,
+      toInt64(sum(delta_swabs))                                            AS total_swabs,
+      toInt64(sum(delta_boxes))                                            AS total_boxes,
+      toInt64(sum(delta_discard))                                          AS total_discarded,
+      round(sum(delta_prod_t) / (count() * 300) * 100, 1)                 AS avg_uptime,
+      if(sum(delta_swabs) > 0,
+         round(sum(delta_discard) / sum(delta_swabs) * 100, 1), 0)        AS avg_scrap,
+      toInt64(sum(delta_prod_t))                                           AS production_seconds,
+      toInt64(sum(delta_idle_t))                                           AS idle_seconds,
+      toInt64(sum(delta_error_t))                                          AS error_seconds,
+      toInt64(sum(reading_count))                                          AS reading_count
+    FROM v_bucket_deltas_5m
+    WHERE bucket_ts >= toDateTime64({start:String}, 3, 'UTC')
+      AND bucket_ts <  toDateTime64({end:String}, 3, 'UTC')
+      AND (length({machines:Array(String)}) = 0 OR machine_id IN {machines:Array(String)})
+    GROUP BY date, machine_id, machine_code
+    ORDER BY date, machine_code`;
+
+  try {
+    const rs = await clickhouse.query({
+      query,
+      query_params: { start: fmt(new Date(start)), end: fmt(new Date(end)), machines },
+      clickhouse_settings: { max_execution_time: 30 },
+      format: "JSONEachRow",
+    });
+    res.json(await rs.json());
+  } catch (err) {
+    logger.error(`export/machines-daily query failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Raw downtime event log — one row per error event for a date range.
+app.get("/api/export/downtime", async (req, res) => {
+  if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
+  const { start, end } = req.query;
+  if (!start || !end) return res.status(400).json({ error: "start and end (ISO) required" });
+  const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");
+  const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
+
+  const query = `
+    SELECT
+      machine_code,
+      error_code,
+      shift_crew,
+      toString(started_at)        AS started_at,
+      toString(ended_at)          AS ended_at,
+      round(duration_secs / 60, 1) AS duration_minutes
+    FROM error_events
+    WHERE started_at >= toDateTime64({start:String}, 3, 'UTC')
+      AND started_at <  toDateTime64({end:String}, 3, 'UTC')
+      AND (length({machines:Array(String)}) = 0 OR machine_id IN {machines:Array(String)})
+    ORDER BY started_at`;
+
+  try {
+    const rs = await clickhouse.query({
+      query,
+      query_params: { start: fmt(new Date(start)), end: fmt(new Date(end)), machines },
+      clickhouse_settings: { max_execution_time: 30 },
+      format: "JSONEachRow",
+    });
+    res.json(await rs.json());
+  } catch (err) {
+    logger.error(`export/downtime query failed: ${err.message}`);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================
 // START
 // ============================================
 const PORT = process.env.PORT || process.env.API_PORT || 3001;

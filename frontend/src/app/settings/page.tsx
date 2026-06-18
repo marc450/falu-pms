@@ -50,7 +50,7 @@ type DropTarget = {
   beforeCode: string | null;  // insert before this machine (null = append to end)
 };
 
-type Tab = "users" | "machines" | "thresholds" | "shifts";
+type Tab = "users" | "machines" | "thresholds" | "shifts" | "export";
 
 // ─────────────────────────────────────────────────────────────
 // Reusable confirmation modal
@@ -2639,6 +2639,272 @@ function EditUserModal({
 }
 
 // ─────────────────────────────────────────────────────────────
+// Export tab
+// ─────────────────────────────────────────────────────────────
+
+const API_EXPORT_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
+
+function fmtDateLocal(d: Date): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
+
+function downloadCSV(filename: string, rows: Record<string, unknown>[]) {
+  if (rows.length === 0) return;
+  const keys = Object.keys(rows[0]);
+  const escape = (v: unknown) => {
+    const s = v == null ? "" : String(v);
+    return s.includes(",") || s.includes('"') || s.includes("\n") ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  const csv = [keys.join(","), ...rows.map(r => keys.map(k => escape(r[k])).join(","))].join("\n");
+  const blob = new Blob([csv], { type: "text/csv" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+
+function ExportTab() {
+  const today = new Date();
+  const firstOfLastMonth = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+  const lastOfLastMonth  = new Date(today.getFullYear(), today.getMonth(), 0);
+
+  const [from, setFrom] = useState(fmtDateLocal(firstOfLastMonth));
+  const [to,   setTo]   = useState(fmtDateLocal(lastOfLastMonth));
+  const [machines, setMachines] = useState<import("@/lib/supabase").RegisteredMachine[]>([]);
+  const [selectedMachines, setSelectedMachines] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchRegisteredMachines().then(ms => { setMachines(ms); setLoading(false); }).catch(console.error);
+  }, []);
+
+  const toggleMachine = (id: string) =>
+    setSelectedMachines(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+
+  const machineFilter = selectedMachines.size > 0 ? [...selectedMachines].join(",") : "";
+
+  const startISO = new Date(from + "T00:00:00Z").toISOString();
+  const endISO   = new Date(to   + "T23:59:59Z").toISOString();
+
+  const run = async (key: string, label: string, endpoint: string, transform?: (rows: Record<string, unknown>[]) => Record<string, unknown>[]) => {
+    setError(null);
+    setBusy(key);
+    try {
+      const base = new URL(`${API_EXPORT_BASE}${endpoint}`);
+      base.searchParams.set("start", startISO);
+      base.searchParams.set("end", endISO);
+      if (machineFilter) base.searchParams.set("machines", machineFilter);
+      const resp = await fetch(base.toString());
+      if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
+      let rows = await resp.json() as Record<string, unknown>[];
+      if (transform) rows = transform(rows);
+      if (rows.length === 0) { setError("No data found for the selected range."); return; }
+      downloadCSV(`${label}_${from}_${to}.csv`, rows);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  const exportFleet = () => run("fleet", "fleet_daily", "/api/analytics/fleet-trend?granularity=1d", rows =>
+    rows.map(r => ({
+      date:             r.bucket,
+      total_swabs:      r.total_swabs,
+      total_boxes:      r.total_boxes,
+      avg_uptime_pct:   r.avg_uptime,
+      avg_scrap_pct:    r.avg_scrap,
+      machine_count:    r.machine_count,
+      reading_count:    r.reading_count,
+    }))
+  );
+
+  const exportMachines = () => run("machines", "machines_daily", "/api/export/machines-daily");
+
+  const exportDowntime = () => run("downtime", "downtime_events", "/api/export/downtime");
+
+  if (loading) return (
+    <div className="flex items-center gap-2 text-gray-400 py-8">
+      <span className="animate-spin text-lg">⟳</span> Loading…
+    </div>
+  );
+
+  const exports = [
+    {
+      key: "fleet",
+      icon: "bi-bar-chart-line",
+      title: "Fleet Daily Summary",
+      description: "One row per calendar day — total swabs, boxes, fleet avg uptime & scrap. Best for monthly management reports.",
+      columns: "date, total_swabs, total_boxes, avg_uptime_pct, avg_scrap_pct, machine_count",
+      color: "text-cyan-400",
+      onExport: exportFleet,
+    },
+    {
+      key: "machines",
+      icon: "bi-cpu",
+      title: "Per-Machine Daily",
+      description: "One row per (day, machine) — production output, uptime, scrap and raw time seconds. Machine filter applies.",
+      columns: "date, machine_code, total_swabs, total_boxes, avg_uptime_pct, avg_scrap_pct, production_seconds, idle_seconds, error_seconds",
+      color: "text-purple-400",
+      onExport: exportMachines,
+    },
+    {
+      key: "downtime",
+      icon: "bi-exclamation-triangle",
+      title: "Downtime Event Log",
+      description: "One row per error event — machine, error code, crew, start/end timestamps and duration. Machine filter applies.",
+      columns: "machine_code, error_code, shift_crew, started_at, ended_at, duration_minutes",
+      color: "text-orange-400",
+      onExport: exportDowntime,
+    },
+  ];
+
+  return (
+    <div className="space-y-6 max-w-3xl">
+      <p className="text-sm text-gray-400">
+        Export production data as CSV for monthly reporting or ad-hoc analysis in Excel / Google Sheets.
+      </p>
+
+      {/* Date range */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5 space-y-4">
+        <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+          <i className="bi bi-calendar-range text-cyan-400"></i>Date Range
+        </h4>
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500">From</label>
+            <input
+              type="date"
+              value={from}
+              max={to}
+              onChange={e => setFrom(e.target.value)}
+              className="bg-gray-900 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:border-cyan-500 outline-none"
+            />
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="text-xs text-gray-500">To</label>
+            <input
+              type="date"
+              value={to}
+              min={from}
+              max={fmtDateLocal(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1))}
+              onChange={e => setTo(e.target.value)}
+              className="bg-gray-900 border border-gray-600 rounded-lg px-3 py-1.5 text-sm text-white focus:border-cyan-500 outline-none"
+            />
+          </div>
+          {/* Quick presets */}
+          <div className="flex gap-2 mt-4">
+            {[
+              { label: "Last month", fn: () => {
+                setFrom(fmtDateLocal(new Date(today.getFullYear(), today.getMonth() - 1, 1)));
+                setTo(fmtDateLocal(new Date(today.getFullYear(), today.getMonth(), 0)));
+              }},
+              { label: "Last 3 months", fn: () => {
+                setFrom(fmtDateLocal(new Date(today.getFullYear(), today.getMonth() - 3, 1)));
+                setTo(fmtDateLocal(new Date(today.getFullYear(), today.getMonth(), 0)));
+              }},
+              { label: "This year", fn: () => {
+                setFrom(`${today.getFullYear()}-01-01`);
+                setTo(fmtDateLocal(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)));
+              }},
+            ].map(p => (
+              <button
+                key={p.label}
+                onClick={p.fn}
+                className="px-3 py-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 hover:text-white rounded-lg transition-colors"
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Machine filter */}
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5 space-y-3">
+        <div className="flex items-center justify-between">
+          <h4 className="text-sm font-semibold text-white flex items-center gap-2">
+            <i className="bi bi-funnel text-cyan-400"></i>
+            Machine Filter
+            <span className="text-xs text-gray-500 font-normal">
+              {selectedMachines.size === 0 ? "All machines" : `${selectedMachines.size} selected`}
+            </span>
+          </h4>
+          {selectedMachines.size > 0 && (
+            <button
+              onClick={() => setSelectedMachines(new Set())}
+              className="text-xs text-gray-400 hover:text-white transition-colors"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+        <div className="flex flex-wrap gap-2">
+          {machines.map(m => {
+            const sel = selectedMachines.has(m.id);
+            return (
+              <button
+                key={m.id}
+                onClick={() => toggleMachine(m.id)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+                  sel
+                    ? "bg-cyan-600/20 border-cyan-500 text-cyan-300"
+                    : "bg-gray-700 border-gray-600 text-gray-400 hover:text-white hover:border-gray-500"
+                }`}
+              >
+                {m.name || m.machine_code}
+              </button>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* Error */}
+      {error && (
+        <div className="flex items-center gap-2 text-sm text-red-400 bg-red-900/20 border border-red-800/40 rounded-lg px-4 py-3">
+          <i className="bi bi-exclamation-circle"></i> {error}
+        </div>
+      )}
+
+      {/* Export cards */}
+      <div className="space-y-3">
+        {exports.map(ex => (
+          <div key={ex.key} className="bg-gray-800/50 border border-gray-700 rounded-lg p-5 flex items-start justify-between gap-6">
+            <div className="flex gap-4 min-w-0">
+              <div className={`shrink-0 w-9 h-9 rounded-lg flex items-center justify-center bg-gray-700 ${ex.color}`}>
+                <i className={`bi ${ex.icon}`}></i>
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-white">{ex.title}</p>
+                <p className="text-xs text-gray-400 mt-0.5">{ex.description}</p>
+                <p className="text-xs text-gray-600 mt-1.5 font-mono">{ex.columns}</p>
+              </div>
+            </div>
+            <button
+              onClick={ex.onExport}
+              disabled={!!busy}
+              className="shrink-0 flex items-center gap-2 px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+            >
+              {busy === ex.key ? (
+                <><span className="animate-spin">⟳</span> Exporting…</>
+              ) : (
+                <><i className="bi bi-download"></i> Export CSV</>
+              )}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 // Main settings page
 // ─────────────────────────────────────────────────────────────
 export default function SettingsPage() {
@@ -2649,6 +2915,7 @@ export default function SettingsPage() {
     { id: "thresholds",  label: "Targets",     icon: "bi-sliders"        },
     { id: "shifts",      label: "Shifts",      icon: "bi-calendar3"      },
     { id: "users",       label: "Users",       icon: "bi-people-fill"    },
+    { id: "export",      label: "Export",      icon: "bi-download"       },
   ];
 
   return (
@@ -2687,6 +2954,9 @@ export default function SettingsPage() {
 
       {/* ── SHIFTS ── */}
       {activeTab === "shifts" && <ShiftsTab />}
+
+      {/* ── EXPORT ── */}
+      {activeTab === "export" && <ExportTab />}
 
     </div>
   );
