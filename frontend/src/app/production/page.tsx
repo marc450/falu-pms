@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef, Suspense } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState, useCallback, useRef } from "react";
+import { useRouter } from "next/navigation";
 import { useUrlSync } from "@/lib/useUrlState";
 import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
@@ -26,9 +26,8 @@ import ErrorSummary from "@/components/ErrorSummary";
 import { useFactoryTimezone } from "@/lib/useFactoryTimezone";
 
 function ProductionContent() {
-  const searchParams = useSearchParams();
-  const machineName = searchParams.get("machine") || "";
-  const packingFormat = (searchParams.get("packing") || null) as PackingFormat | null;
+  const machineName    = typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("machine") || "") : "";
+  const packingFormat  = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("packing") : null) as PackingFormat | null;
   const [machine, setMachine] = useState<MachineData | null>(null);
   const [savedLogs, setSavedLogs] = useState<SavedShiftLog[]>([]);
   const [targets, setTargets] = useState<MachineTargets | null>(null);
@@ -610,18 +609,5 @@ function ProductionContent() {
 }
 
 export default function ProductionPage() {
-  return (
-    <Suspense
-      fallback={
-        <div className="flex items-center justify-center h-64">
-          <div className="text-gray-500 flex items-center gap-2">
-            <span className="inline-block w-4 h-4 border-2 border-gray-500 border-t-transparent rounded-full animate-spin"></span>
-            Loading...
-          </div>
-        </div>
-      }
-    >
-      <ProductionContent />
-    </Suspense>
-  );
+  return <ProductionContent />;
 }
