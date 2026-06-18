@@ -25,24 +25,28 @@ export function useAuth() {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        loadProfile(session.user.id).then(() => setLoading(false));
+        loadProfile(session.user.id).finally(() => setLoading(false));
       } else {
         setLoading(false);
       }
     });
 
-    // Subscribe to auth state changes (login / logout / token refresh)
+    // Subscribe to auth state changes (login / logout / token refresh).
+    // For a logged-in session we must AWAIT the profile load before clearing
+    // `loading` — otherwise consumers (e.g. the admin gate in AuthLayout) run
+    // with profile=null and misclassify an admin as a viewer, bouncing them
+    // off /settings to / on reload.
     const {
       data: { subscription },
     } = sb.auth.onAuthStateChange((_event, session) => {
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
-        loadProfile(session.user.id);
+        loadProfile(session.user.id).finally(() => setLoading(false));
       } else {
         setProfile(null);
+        setLoading(false);
       }
-      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
