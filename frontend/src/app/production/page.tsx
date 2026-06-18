@@ -26,8 +26,19 @@ import ErrorSummary from "@/components/ErrorSummary";
 import { useFactoryTimezone } from "@/lib/useFactoryTimezone";
 
 function ProductionContent() {
-  const machineName    = typeof window !== "undefined" ? (new URLSearchParams(window.location.search).get("machine") || "") : "";
-  const packingFormat  = (typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("packing") : null) as PackingFormat | null;
+  // Query params are read AFTER mount (not in the render body) so the server-
+  // built HTML and the first client render agree (both empty). Reading
+  // window.location during render causes a hydration mismatch on static export,
+  // which makes React discard the server markup and remount — the "flicker".
+  const [mounted, setMounted] = useState(false);
+  const [machineName, setMachineName] = useState("");
+  const [packingFormat, setPackingFormat] = useState<PackingFormat | null>(null);
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    setMachineName(sp.get("machine") || "");
+    setPackingFormat((sp.get("packing") || null) as PackingFormat | null);
+    setMounted(true);
+  }, []);
   const [machine, setMachine] = useState<MachineData | null>(null);
   const [savedLogs, setSavedLogs] = useState<SavedShiftLog[]>([]);
   const [targets, setTargets] = useState<MachineTargets | null>(null);
@@ -133,7 +144,9 @@ function ProductionContent() {
 
   useEffect(() => {
     if (!machineName) {
-      setLoading(false);
+      // Only conclude "no machine" once the param has actually been read
+      // (post-mount). Before that, keep the loading spinner up.
+      if (mounted) setLoading(false);
       return;
     }
     fetchMachineTargets(machineName)
@@ -167,7 +180,7 @@ function ProductionContent() {
       clearInterval(dataInterval);
       clearInterval(savedLogsInterval);
     };
-  }, [machineName, loadData, loadSavedLogs]);
+  }, [machineName, mounted, loadData, loadSavedLogs]);
 
   // Load production trend (machine + peer benchmark) for the selected period.
   // Sub-day windows → 5-min intraday buckets; longer windows → daily summary.
@@ -465,7 +478,9 @@ function ProductionContent() {
     return metric.colorFn(val as number);
   };
 
-  if (!machineName) {
+  // Before mount, the query param hasn't been read yet — show loading rather
+  // than briefly flashing "No machine selected".
+  if (mounted && !machineName) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-gray-500">No machine selected. Go back to the dashboard.</div>
@@ -473,7 +488,7 @@ function ProductionContent() {
     );
   }
 
-  if (loading) {
+  if (!mounted || loading) {
     return (
       <div className="flex items-center justify-center h-64">
         <div className="text-gray-500 flex items-center gap-2">
