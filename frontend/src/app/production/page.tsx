@@ -21,6 +21,7 @@ import {
 } from "@/components/ProductionTrend";
 import type { Preset, PresetId } from "@/components/ProductionTrend";
 import MachineStateTimeline from "@/components/MachineStateTimeline";
+import ErrorSummary from "@/components/ErrorSummary";
 import { useFactoryTimezone } from "@/lib/useFactoryTimezone";
 
 function ProductionContent() {
@@ -555,11 +556,17 @@ function ProductionContent() {
             showUptimeChart={trendShiftMode || trendGranularity !== "hour"}
             afterKpis={
               !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 ? (
-                <MachineStateTimeline
-                  rows={timelineRows}
-                  errorEvents={errorEvents}
-                  errorLookup={errorLookup}
-                />
+                <div className="flex flex-col gap-4">
+                  <MachineStateTimeline
+                    rows={timelineRows}
+                    errorEvents={errorEvents}
+                    errorLookup={errorLookup}
+                  />
+                  <ErrorSummary
+                    errorEvents={errorEvents}
+                    errorLookup={errorLookup}
+                  />
+                </div>
               ) : null
             }
           />
