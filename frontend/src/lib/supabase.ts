@@ -500,47 +500,7 @@ export interface FleetTrendResult {
 }
 
 export async function fetchFleetTrend(range: DateRange): Promise<FleetTrendResult> {
-  const sb = getSupabase();
-
-  const fmtDate = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-  // daily_fleet_summary has one row per calendar day — max ~365 rows/year.
-  // A plain SELECT is safe; the PostgREST row limit is never a concern.
-  // Exclude today (incomplete day) by using lt(today).
-  const { data, error } = await sb
-    .from("daily_fleet_summary")
-    .select("summary_date, total_swabs, total_boxes, total_discarded_swabs, machine_count, shift_count, reading_count, avg_uptime")
-    .gte("summary_date", fmtDate(range.start))
-    .lt("summary_date",  fmtDate(new Date()))
-    .order("summary_date");
-
-  if (error) throw new Error(error.message);
-  if (!data || data.length === 0) {
-    return { rows: [], granularity: "day", totalReadings: 0 };
-  }
-
-  const rows: FleetTrendRow[] = (data as Record<string, unknown>[]).map(r => {
-    const totalSwabs     = Number(r.total_swabs)           || 0;
-    const totalDiscarded = Number(r.total_discarded_swabs) || 0;
-    return {
-      date:         String(r.summary_date),
-      // avg_uptime already includes idle machines (fixed in migration 046)
-      avgUptime:    Number(r.avg_uptime)    || 0,
-      // Scrap: volume-weighted ratio — discarded swabs / produced swabs
-      avgScrap:     totalSwabs > 0
-        ? Math.round((totalDiscarded / totalSwabs) * 1000) / 10
-        : 0,
-      totalBoxes:   Number(r.total_boxes)   || 0,
-      totalSwabs,
-      machineCount: Number(r.machine_count) || 0,
-      readingCount: Number(r.reading_count) || 0,
-      shiftCount:   Number(r.shift_count)   || 1,
-    };
-  });
-
-  const totalReadings = rows.reduce((s, r) => s + r.readingCount, 0);
-  return { rows, granularity: "day", totalReadings };
+  return fetchTrendClickHouse(range, null, "1d");
 }
 
 // ============================================
@@ -811,72 +771,14 @@ export async function fetchHourlyAnalytics(range: DateRange): Promise<FleetTrend
 
 export async function fetchMachineDailyTrend(machineCode: string, range: DateRange): Promise<FleetTrendResult> {
   const sb = getSupabase();
-
-  const fmtDate = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-  const { data, error } = await sb
-    .from("daily_machine_summary")
-    .select("summary_date, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate, production_time_seconds, idle_time_seconds, error_time_seconds")
+  const { data: machineRow, error: machineErr } = await sb
+    .from("machines")
+    .select("id")
     .eq("machine_code", machineCode)
-    .gte("summary_date", fmtDate(range.start))
-    .lt("summary_date",  fmtDate(new Date()))
-    .order("summary_date");
-
-  if (error) throw new Error(error.message);
-  if (!data || data.length === 0) {
-    return { rows: [], granularity: "day", totalReadings: 0 };
-  }
-
-  // daily_machine_summary has one row per (date, shift_label) for this machine.
-  // Roll the shift rows up into one row per day to match FleetTrendRow shape.
-  type DayAcc = {
-    swabs:      number;
-    boxes:      number;
-    discarded:  number;
-    readings:   number;
-    effSum:     number;  // sum of avg_efficiency across shifts (for unweighted day-average)
-    effCount:   number;
-    shiftCount: number;
-    prodSecs:   number;
-    idleSecs:   number;
-    errorSecs:  number;
-  };
-  const byDate = new Map<string, DayAcc>();
-  for (const r of data as Record<string, unknown>[]) {
-    const date = String(r.summary_date);
-    if (!byDate.has(date)) {
-      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, shiftCount: 0, prodSecs: 0, idleSecs: 0, errorSecs: 0 });
-    }
-    const b = byDate.get(date)!;
-    b.swabs     += Number(r.swabs_produced)  || 0;
-    b.boxes     += Number(r.boxes_produced)  || 0;
-    b.discarded += Number(r.discarded_swabs) || 0;
-    b.readings  += Number(r.reading_count)   || 0;
-    const eff = Number(r.avg_efficiency);
-    if (!isNaN(eff)) { b.effSum += eff; b.effCount += 1; }
-    b.shiftCount += 1;
-    b.prodSecs  += Number(r.production_time_seconds) || 0;
-    b.idleSecs  += Number(r.idle_time_seconds)       || 0;
-    b.errorSecs += Number(r.error_time_seconds)      || 0;
-  }
-
-  const rows: FleetTrendRow[] = Array.from(byDate.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, b]) => ({
-      date,
-      avgUptime:        b.effCount > 0 ? b.effSum / b.effCount : 0,
-      avgScrap:         b.swabs > 0 ? Math.round((b.discarded / b.swabs) * 1000) / 10 : 0,
-      totalBoxes:       b.boxes,
-      totalSwabs:       b.swabs,
-      machineCount:     1,
-      readingCount:     b.readings,
-      shiftCount:       b.shiftCount,
-      productionSeconds: b.prodSecs,
-      idleSeconds:       b.idleSecs,
-      errorSeconds:      b.errorSecs,
-    }));
-  return { rows, granularity: "day", totalReadings: rows.reduce((s, r) => s + r.readingCount, 0) };
+    .maybeSingle();
+  if (machineErr) throw new Error(machineErr.message);
+  if (!machineRow) return { rows: [], granularity: "day", totalReadings: 0 };
+  return fetchTrendClickHouse(range, [(machineRow as { id: string }).id], "1d");
 }
 
 export async function fetchMachineHourlyTrend(machineCode: string, range: DateRange): Promise<FleetTrendResult> {
@@ -973,85 +875,12 @@ export async function fetchMachinePeers(machineCode: string): Promise<MachinePee
 // Daily trend aggregated across the given peer machine_codes.
 // Each bucket reports the AVERAGE per peer for swabs/boxes/uptime/scrap,
 // so the line is directly comparable to a single machine's own trend.
-export async function fetchPeersDailyTrend(peerCodes: string[], range: DateRange): Promise<FleetTrendResult> {
-  if (peerCodes.length === 0) {
-    return { rows: [], granularity: "day", totalReadings: 0 };
-  }
-  const sb = getSupabase();
-
-  const fmtDate = (d: Date) =>
-    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-
-  const { data, error } = await sb
-    .from("daily_machine_summary")
-    .select("summary_date, machine_code, swabs_produced, boxes_produced, discarded_swabs, reading_count, avg_efficiency, avg_scrap_rate, production_time_seconds, idle_time_seconds, error_time_seconds")
-    .in("machine_code", peerCodes)
-    .gte("summary_date", fmtDate(range.start))
-    .lt("summary_date",  fmtDate(new Date()))
-    .order("summary_date");
-
-  if (error) throw new Error(error.message);
-  if (!data || data.length === 0) {
-    return { rows: [], granularity: "day", totalReadings: 0 };
-  }
-
-  // One row per (date, shift, peer_machine). Aggregate by day across peers.
-  type DayAcc = {
-    swabs:     number;
-    boxes:     number;
-    discarded: number;
-    readings:  number;
-    effSum:    number;
-    effCount:  number;
-    machineIds: Set<string>;
-    prodSecs:  number;
-    idleSecs:  number;
-    errorSecs: number;
-  };
-  const byDate = new Map<string, DayAcc>();
-  for (const r of data as Record<string, unknown>[]) {
-    const date = String(r.summary_date);
-    if (!byDate.has(date)) {
-      byDate.set(date, { swabs: 0, boxes: 0, discarded: 0, readings: 0, effSum: 0, effCount: 0, machineIds: new Set(), prodSecs: 0, idleSecs: 0, errorSecs: 0 });
-    }
-    const b = byDate.get(date)!;
-    b.swabs     += Number(r.swabs_produced)  || 0;
-    b.boxes     += Number(r.boxes_produced)  || 0;
-    b.discarded += Number(r.discarded_swabs) || 0;
-    b.readings  += Number(r.reading_count)   || 0;
-    const eff = Number(r.avg_efficiency);
-    if (!isNaN(eff)) { b.effSum += eff; b.effCount += 1; }
-    b.machineIds.add(String(r.machine_code));
-    b.prodSecs  += Number(r.production_time_seconds) || 0;
-    b.idleSecs  += Number(r.idle_time_seconds)       || 0;
-    b.errorSecs += Number(r.error_time_seconds)      || 0;
-  }
-
-  const rows: FleetTrendRow[] = Array.from(byDate.entries())
-    .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, b]) => {
-      const n = Math.max(1, b.machineIds.size);
-      return {
-        date,
-        // Average efficiency across shifts (already averages out per-peer).
-        avgUptime:    b.effCount > 0 ? b.effSum / b.effCount : 0,
-        // Volume-weighted scrap, same formula as fleet view.
-        avgScrap:     b.swabs > 0 ? Math.round((b.discarded / b.swabs) * 1000) / 10 : 0,
-        // Per-peer averages so the line is directly comparable to one machine.
-        totalBoxes:   b.boxes / n,
-        totalSwabs:   b.swabs / n,
-        machineCount: b.machineIds.size,
-        readingCount: b.readings,
-        shiftCount:   1, // shift normalisation already baked into per-peer average
-        // Raw seconds carry the peer-aggregate totals; the KPI tile divides
-        // by peer count (in its planned-budget multiplier) so the corrected
-        // uptime represents the per-peer average.
-        productionSeconds: b.prodSecs,
-        idleSeconds:       b.idleSecs,
-        errorSeconds:      b.errorSecs,
-      };
-    });
-  return { rows, granularity: "day", totalReadings: rows.reduce((s, r) => s + r.readingCount, 0) };
+export async function fetchPeersDailyTrend(peerIds: string[], range: DateRange): Promise<FleetTrendResult> {
+  if (peerIds.length === 0) return { rows: [], granularity: "day", totalReadings: 0 };
+  const result = await fetchTrendClickHouse(range, peerIds, "1d");
+  const n = Math.max(1, peerIds.length);
+  const rows = result.rows.map(r => ({ ...r, totalBoxes: r.totalBoxes / n, totalSwabs: r.totalSwabs / n }));
+  return { ...result, rows };
 }
 
 // Intraday trend aggregated across the given peer machine_ids.
