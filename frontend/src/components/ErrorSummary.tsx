@@ -57,6 +57,16 @@ function fmtTime(iso: string): string {
   try { return format(parseISO(iso), "HH:mm"); } catch { return iso; }
 }
 
+// One labelled aggregate shown in the Error Summary header.
+function HeaderStat({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
+  return (
+    <span>
+      <span className="text-gray-500">{label} </span>
+      <span className={`tabular-nums font-medium ${valueClass ?? "text-gray-200"}`}>{value}</span>
+    </span>
+  );
+}
+
 interface CodeGroup {
   code: string;
   description: string;
@@ -118,11 +128,9 @@ export default function ErrorSummary({
   const totalCodes = groups.length;
   const totalCount = errorEvents.length;
 
-  // ── Aggregates for the totals row ──
+  // ── Aggregates for the header totals ──
   // Average duration across every error event, regardless of code.
   const avgSecsAll = totalCount > 0 ? totalSecs / totalCount : 0;
-  // Most recent error start across all codes.
-  const lastSeenAll = groups.reduce((m, g) => (g.lastAt > m ? g.lastAt : m), groups[0]?.lastAt ?? "");
   // This machine's total error time vs the average total error time per peer
   // machine (summed across every code the peer group logged).
   const peerTotalAvg = peerAvgSecs ? Object.values(peerAvgSecs).reduce((s, v) => s + v, 0) : null;
@@ -145,17 +153,14 @@ export default function ErrorSummary({
         className={`flex items-center justify-between px-4 py-3 ${showTable ? "border-b border-gray-700" : ""} ${collapsible ? "cursor-pointer select-none hover:bg-gray-700/20 transition-colors" : ""}`}
         onClick={collapsible ? () => setOpen(o => !o) : undefined}
       >
-        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-          {collapsible && (
-            <i className={`bi bi-chevron-${open ? "down" : "right"} text-gray-500 text-[10px]`} />
-          )}
-          <i className="bi bi-exclamation-octagon text-red-400" />
-          Error Summary
-        </h3>
         <div className="flex items-center gap-3">
-          <span className="text-xs text-gray-500">
-            {totalCount} {totalCount === 1 ? "event" : "events"} · {totalCodes} {totalCodes === 1 ? "code" : "codes"} · {fmtDur(totalSecs)} total downtime
-          </span>
+          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+            {collapsible && (
+              <i className={`bi bi-chevron-${open ? "down" : "right"} text-gray-500 text-[10px]`} />
+            )}
+            <i className="bi bi-exclamation-octagon text-red-400" />
+            Error Summary
+          </h3>
           {/* stopPropagation so following the link doesn't also toggle the
               collapsible card header it sits inside. */}
           <Link
@@ -166,6 +171,25 @@ export default function ErrorSummary({
             Error Analytics
             <i className="bi bi-arrow-right-short text-sm" />
           </Link>
+        </div>
+
+        {/* Aggregate totals — always visible, even when the table is collapsed. */}
+        <div className="flex items-center gap-4 text-xs whitespace-nowrap">
+          <HeaderStat label="Occurrences" value={String(totalCount)} />
+          <HeaderStat label="Codes" value={String(totalCodes)} />
+          <HeaderStat label="Total" value={fmtDur(totalSecs)} />
+          <HeaderStat
+            label="vs peers"
+            value={totalPeerDeltaPct === null ? "—" : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}
+            valueClass={
+              totalPeerDeltaPct === null ? "text-gray-600"
+                : totalPeerDeltaPct > 0 ? "text-red-400"
+                : totalPeerDeltaPct < 0 ? "text-green-400"
+                : "text-gray-300"
+            }
+          />
+          <HeaderStat label="Avg" value={fmtDur(avgSecsAll)} />
+          <HeaderStat label="% of time" value={pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`} />
         </div>
       </div>
 
@@ -241,31 +265,6 @@ export default function ErrorSummary({
             );
           })}
         </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-gray-600 font-semibold text-gray-200">
-            <td className="px-4 py-2.5">Total</td>
-            <td className="px-2 py-2.5 text-gray-500 font-normal">{totalCodes} {totalCodes === 1 ? "code" : "codes"}</td>
-            <td className="px-2 py-2.5 text-right tabular-nums">{totalCount}</td>
-            <td className="px-2 py-2.5 text-right tabular-nums">{fmtDur(totalSecs)}</td>
-            <td
-              className={`px-2 py-2.5 text-right tabular-nums ${
-                totalPeerDeltaPct === null ? "text-gray-600"
-                  : totalPeerDeltaPct > 0 ? "text-red-400"
-                  : totalPeerDeltaPct < 0 ? "text-green-400"
-                  : "text-gray-400"
-              }`}
-              title={peerTotalAvg && peerTotalAvg > 0 ? `Peer average: ${fmtDur(peerTotalAvg)} total per machine` : "No peer data"}
-            >
-              {totalPeerDeltaPct === null
-                ? "—"
-                : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}
-            </td>
-            <td className="px-2 py-2.5 text-right tabular-nums">{fmtDur(avgSecsAll)}</td>
-            <td className="px-2 py-2.5 text-right tabular-nums text-gray-400 font-normal">100%</td>
-            <td className="px-2 py-2.5 text-right tabular-nums">{pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`}</td>
-            <td className="px-4 py-2.5 text-right tabular-nums font-normal text-gray-400">{lastSeenAll ? fmtTime(lastSeenAll) : "—"}</td>
-          </tr>
-        </tfoot>
       </table>
       )}
     </div>
