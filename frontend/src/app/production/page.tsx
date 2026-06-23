@@ -610,6 +610,7 @@ function ProductionContent() {
                         errorLookup={errorLookup}
                         embedded
                         collapsible
+                        windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
                       />
                     ) : null
                   }
@@ -621,6 +622,7 @@ function ProductionContent() {
                     errorEvents={errorEvents}
                     errorLookup={errorLookup}
                     collapsible
+                    windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
                   />
                 ) : null
               )

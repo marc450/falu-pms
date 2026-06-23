@@ -21,6 +21,10 @@ interface Props {
   collapsible?: boolean;
   // Whether a collapsible summary starts expanded. Ignored when not collapsible.
   defaultOpen?: boolean;
+  // Total seconds of the shown period (e.g. the selected date range). Drives
+  // the "% of total time" column — how much of the whole window each error
+  // consumed. Omitted → that column shows "—".
+  windowSecs?: number;
 }
 
 function fmtDur(secs: number): string {
@@ -92,6 +96,7 @@ export default function ErrorSummary({
   embedded = false,
   collapsible = false,
   defaultOpen = false,
+  windowSecs,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -148,19 +153,22 @@ export default function ErrorSummary({
             <th className="text-left font-medium px-4 py-2">Code</th>
             <th className="text-left font-medium px-2 py-2">Description</th>
             <th className="text-right font-medium px-2 py-2">Occurrences</th>
-            <th className="text-right font-medium px-2 py-2">Total time</th>
-            <th className="text-right font-medium px-2 py-2">Avg resolution</th>
-            <th className="text-right font-medium px-2 py-2">% of total</th>
+            <th className="text-right font-medium px-2 py-2">Total duration</th>
+            <th className="text-right font-medium px-2 py-2">Avg duration</th>
+            <th className="text-right font-medium px-2 py-2">% of error time</th>
+            <th className="text-right font-medium px-2 py-2">% of total time</th>
             <th className="text-right font-medium px-4 py-2">Last seen</th>
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => {
-            // Average time to resolution: total time in this error divided by
-            // how many times it occurred over the shown period.
+            // Average duration of a single occurrence: total time in this error
+            // divided by how many times it occurred over the shown period.
             const avgSecs = g.count > 0 ? g.totalSecs / g.count : 0;
             // Share of all error time over the shown period.
-            const pct = totalSecs > 0 ? (g.totalSecs / totalSecs) * 100 : 0;
+            const pctError = totalSecs > 0 ? (g.totalSecs / totalSecs) * 100 : 0;
+            // Share of the whole shown window this error consumed.
+            const pctTotal = windowSecs && windowSecs > 0 ? (g.totalSecs / windowSecs) * 100 : null;
             return (
               <tr
                 key={g.code}
@@ -174,9 +182,10 @@ export default function ErrorSummary({
                 </td>
                 <td className="px-2 py-2.5 text-gray-300 max-w-[280px] truncate">{g.description}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{g.count}</td>
-                <td className="px-2 py-2.5 text-right tabular-nums text-amber-300 font-medium">{fmtDur(g.totalSecs)}</td>
+                <td className="px-2 py-2.5 text-right tabular-nums text-gray-200 font-medium">{fmtDur(g.totalSecs)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{fmtDur(avgSecs)}</td>
-                <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pct.toFixed(1)}%</td>
+                <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pctError.toFixed(1)}%</td>
+                <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pctTotal === null ? "—" : `${pctTotal.toFixed(1)}%`}</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-400">{fmtTime(g.lastAt)}</td>
               </tr>
             );
