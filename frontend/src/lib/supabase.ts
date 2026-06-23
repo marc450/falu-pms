@@ -1919,6 +1919,50 @@ export async function fetchMachineErrorEvents(
   return (data ?? []) as ErrorEvent[];
 }
 
+// Per-error-code total downtime summed across a set of peer machines over the
+// EXACT window — used by the Error Summary's "vs peers" benchmark. Mirrors the
+// self-total logic in ErrorSummary.buildGroups (full event duration for every
+// event overlapping the window, ongoing events counted up to now), so dividing
+// by the peer count yields an apples-to-apples average per peer machine.
+//
+// Reads live error_events directly (48h retention) rather than the daily,
+// day-snapped error_shift_summary aggregate — the aggregate can't be clipped to
+// a sub-day window, which previously inflated the peer average ~2x for the 24h
+// machine-monitor view. For windows beyond ~48h, events older than retention
+// are not available here (the comparison is intended for the intraday view).
+export async function fetchPeerErrorTotals(
+  peerCodes: string[],
+  range: DateRange,
+): Promise<Record<string, number>> {
+  if (peerCodes.length === 0) return {};
+  const startIso = range.start.toISOString();
+  const endIso   = range.end.toISOString();
+
+  const sb = getSupabase();
+  const { data, error } = await sb
+    .from("error_events")
+    .select("error_code, started_at, ended_at, duration_secs")
+    .in("machine_code", peerCodes)
+    .lt("started_at", endIso)
+    .or(`ended_at.is.null,ended_at.gt.${startIso}`)
+    .limit(20000);
+
+  if (error) {
+    console.error("fetchPeerErrorTotals error:", error);
+    return {};
+  }
+
+  const totals: Record<string, number> = {};
+  for (const ev of (data ?? []) as Pick<ErrorEvent, "error_code" | "started_at" | "ended_at" | "duration_secs">[]) {
+    const dur = ev.duration_secs
+      ?? (ev.ended_at
+        ? (new Date(ev.ended_at).getTime() - new Date(ev.started_at).getTime()) / 1000
+        : (Date.now() - new Date(ev.started_at).getTime()) / 1000);
+    totals[ev.error_code] = (totals[ev.error_code] ?? 0) + Math.max(0, dur);
+  }
+  return totals;
+}
+
 // ============================================
 // TABLET KIOSK
 // ============================================

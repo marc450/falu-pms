@@ -7,7 +7,7 @@ import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments, fetchRegisteredMachines, fetchMachinePeers,
   fetchMachineTrendAtGrain, fetchPeersTrendAtGrain, resolveGrain,
-  fetchMachineErrorEvents, fetchErrorCodeLookup, fetchErrorShiftSummary, ANALYTICS_SOURCE,
+  fetchMachineErrorEvents, fetchErrorCodeLookup, fetchPeerErrorTotals, ANALYTICS_SOURCE,
   PACKING_FORMATS,
 } from "@/lib/supabase";
 import type {
@@ -247,24 +247,18 @@ function ProductionContent() {
         setErrorEvents(events);
         setErrorLookup(lookup);
 
-        // Peer benchmark for the Error Summary: pull the fleet error summary
-        // for the same window and reduce it to a per-code average downtime per
-        // peer machine. Comparing this machine's totals against that average
-        // tells the operator whether a code is unusually bad here. The summary
-        // shares the ClickHouse source with the self totals, so it's apples to
-        // apples (both reduced from the same error_events mirror).
+        // Peer benchmark for the Error Summary: per-code total error time across
+        // the peer machines over the EXACT same window, divided by the peer
+        // count → average downtime per peer machine for each code. Reduced from
+        // error_events with the same full-duration logic as this machine's own
+        // totals, so the "vs peers" delta is apples to apples (and not skewed by
+        // the daily aggregate's day-snapped, ~2x-wider window).
         if (peers.peerCodes.length === 0) {
           setErrorPeerAvgSecs(null);
         } else {
-          const peerSet = new Set(peers.peerCodes);
-          const summary = await fetchErrorShiftSummary(effectiveRange);
-          const peerTotalByCode: Record<string, number> = {};
-          for (const row of summary) {
-            if (!peerSet.has(row.machine_code)) continue;
-            peerTotalByCode[row.error_code] = (peerTotalByCode[row.error_code] ?? 0) + row.total_duration_secs;
-          }
+          const peerTotals = await fetchPeerErrorTotals(peers.peerCodes, effectiveRange);
           const avgByCode: Record<string, number> = {};
-          for (const [code, total] of Object.entries(peerTotalByCode)) {
+          for (const [code, total] of Object.entries(peerTotals)) {
             avgByCode[code] = total / peers.peerCodes.length;
           }
           setErrorPeerAvgSecs(avgByCode);
