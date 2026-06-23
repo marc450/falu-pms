@@ -25,6 +25,12 @@ interface Props {
   // the "% of total time" column — how much of the whole window each error
   // consumed. Omitted → that column shows "—".
   windowSecs?: number;
+  // Average total downtime per peer machine (same machine_type) per error code,
+  // over the same window. Drives the "vs peers" column: this machine's total
+  // duration vs the peer average, as a signed %. null → no peers, column "—".
+  peerAvgSecs?: Record<string, number> | null;
+  // Short description of the peer group, shown in the "vs peers" header tooltip.
+  peerLabel?: string;
 }
 
 function fmtDur(secs: number): string {
@@ -88,6 +94,8 @@ export default function ErrorSummary({
   collapsible = false,
   defaultOpen = false,
   windowSecs,
+  peerAvgSecs,
+  peerLabel,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -145,6 +153,12 @@ export default function ErrorSummary({
             <th className="text-left font-medium px-2 py-2">Description</th>
             <th className="text-right font-medium px-2 py-2">Occurrences</th>
             <th className="text-right font-medium px-2 py-2">Total duration</th>
+            <th
+              className="text-right font-medium px-2 py-2 whitespace-nowrap"
+              title={peerLabel ? `This machine's total duration vs the average per peer machine (${peerLabel}) over the shown period` : "Compared to peer machines of the same type"}
+            >
+              vs peers
+            </th>
             <th className="text-right font-medium px-2 py-2">Avg duration</th>
             <th className="text-right font-medium px-2 py-2">% of error time</th>
             <th className="text-right font-medium px-2 py-2">% of total time</th>
@@ -156,6 +170,13 @@ export default function ErrorSummary({
             // Average duration of a single occurrence: total time in this error
             // divided by how many times it occurred over the shown period.
             const avgSecs = g.count > 0 ? g.totalSecs / g.count : 0;
+            // vs peers: this machine's total duration for the code relative to
+            // the average per peer machine. null when there are no peers or the
+            // peer group never logged this code (nothing to compare against).
+            const peerAvg = peerAvgSecs?.[g.code];
+            const peerDeltaPct = peerAvgSecs && peerAvg && peerAvg > 0
+              ? ((g.totalSecs - peerAvg) / peerAvg) * 100
+              : null;
             // Share of all error time over the shown period.
             const pctError = totalSecs > 0 ? (g.totalSecs / totalSecs) * 100 : 0;
             // Share of the whole shown window this error consumed.
@@ -171,6 +192,20 @@ export default function ErrorSummary({
                 <td className="px-2 py-2.5 text-gray-300 max-w-[280px] truncate">{g.description}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{g.count}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-200 font-medium">{fmtDur(g.totalSecs)}</td>
+                <td
+                  className={`px-2 py-2.5 text-right tabular-nums font-medium ${
+                    peerDeltaPct === null ? "text-gray-600"
+                      // Higher than peers = more downtime = worse (red); lower = better (green).
+                      : peerDeltaPct > 0 ? "text-red-400"
+                      : peerDeltaPct < 0 ? "text-green-400"
+                      : "text-gray-400"
+                  }`}
+                  title={peerAvg && peerAvg > 0 ? `Peer average: ${fmtDur(peerAvg)} per machine` : "No peer data for this code"}
+                >
+                  {peerDeltaPct === null
+                    ? "—"
+                    : `${peerDeltaPct > 0 ? "+" : ""}${peerDeltaPct.toFixed(0)}%`}
+                </td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{fmtDur(avgSecs)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pctError.toFixed(1)}%</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pctTotal === null ? "—" : `${pctTotal.toFixed(1)}%`}</td>

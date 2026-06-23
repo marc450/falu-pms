@@ -7,7 +7,7 @@ import {
   fetchMachine, fetchMachineTargets, fetchSavedShiftLogs, fetchThresholds, fetchShiftConfig,
   fetchShiftAssignments, fetchRegisteredMachines, fetchMachinePeers,
   fetchMachineTrendAtGrain, fetchPeersTrendAtGrain, resolveGrain,
-  fetchMachineErrorEvents, fetchErrorCodeLookup, ANALYTICS_SOURCE,
+  fetchMachineErrorEvents, fetchErrorCodeLookup, fetchErrorShiftSummary, ANALYTICS_SOURCE,
   PACKING_FORMATS,
 } from "@/lib/supabase";
 import type {
@@ -104,6 +104,10 @@ function ProductionContent() {
   const [peerCount, setPeerCount] = useState<number>(0);
   const [errorEvents, setErrorEvents] = useState<ErrorEvent[]>([]);
   const [errorLookup, setErrorLookup] = useState<Record<string, PlcErrorCode>>({});
+  // Per error-code peer benchmark for the Error Summary: average total downtime
+  // per peer machine (same machine_type) for each code over the shown window.
+  // null when there are no peers — the "vs peers" column then shows "—".
+  const [errorPeerAvgSecs, setErrorPeerAvgSecs] = useState<Record<string, number> | null>(null);
   // Always 5-min resolution regardless of trendGrainPref — the state timeline
   // needs fine buckets to show individual running/idle/error segments correctly.
   const [timelineRows, setTimelineRows] = useState<FleetTrendRow[]>([]);
@@ -239,6 +243,29 @@ function ProductionContent() {
         ]);
         setErrorEvents(events);
         setErrorLookup(lookup);
+
+        // Peer benchmark for the Error Summary: pull the fleet error summary
+        // for the same window and reduce it to a per-code average downtime per
+        // peer machine. Comparing this machine's totals against that average
+        // tells the operator whether a code is unusually bad here. The summary
+        // shares the ClickHouse source with the self totals, so it's apples to
+        // apples (both reduced from the same error_events mirror).
+        if (peers.peerCodes.length === 0) {
+          setErrorPeerAvgSecs(null);
+        } else {
+          const peerSet = new Set(peers.peerCodes);
+          const summary = await fetchErrorShiftSummary(effectiveRange);
+          const peerTotalByCode: Record<string, number> = {};
+          for (const row of summary) {
+            if (!peerSet.has(row.machine_code)) continue;
+            peerTotalByCode[row.error_code] = (peerTotalByCode[row.error_code] ?? 0) + row.total_duration_secs;
+          }
+          const avgByCode: Record<string, number> = {};
+          for (const [code, total] of Object.entries(peerTotalByCode)) {
+            avgByCode[code] = total / peers.peerCodes.length;
+          }
+          setErrorPeerAvgSecs(avgByCode);
+        }
 
         if (wantTimeline) {
           // Always fetch at 5m regardless of the selected trend grain so the
@@ -611,6 +638,8 @@ function ProductionContent() {
                         embedded
                         collapsible
                         windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
+                        peerAvgSecs={errorPeerAvgSecs}
+                        peerLabel={peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined}
                       />
                     ) : null
                   }
@@ -623,6 +652,8 @@ function ProductionContent() {
                     errorLookup={errorLookup}
                     collapsible
                     windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
+                    peerAvgSecs={errorPeerAvgSecs}
+                    peerLabel={peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined}
                   />
                 ) : null
               )
