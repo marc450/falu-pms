@@ -111,6 +111,9 @@ function ProductionContent() {
   // Always 5-min resolution regardless of trendGrainPref — the state timeline
   // needs fine buckets to show individual running/idle/error segments correctly.
   const [timelineRows, setTimelineRows] = useState<FleetTrendRow[]>([]);
+  // Error code currently hovered in the Error Summary — lights up its
+  // occurrences on the Machine State Timeline.
+  const [hoveredErrorCode, setHoveredErrorCode] = useState<string | null>(null);
 
   // Sync trend controls to URL so reloads land on the same view.
   useEffect(() => {
@@ -630,6 +633,7 @@ function ProductionContent() {
                   rows={timelineRows}
                   errorEvents={errorEvents}
                   errorLookup={errorLookup}
+                  highlightCode={hoveredErrorCode}
                   footer={
                     !trendLoading ? (
                       <ErrorSummary
@@ -641,6 +645,7 @@ function ProductionContent() {
                         peerAvgSecs={errorPeerAvgSecs}
                         peerLabel={peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined}
                         machineCode={machineName}
+                        onHoverCode={setHoveredErrorCode}
                       />
                     ) : null
                   }

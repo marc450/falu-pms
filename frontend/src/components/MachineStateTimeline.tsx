@@ -15,6 +15,10 @@ interface Props {
   // collapsed Error Summary). Lets the timeline and its error breakdown read as
   // one card instead of two stacked boxes.
   footer?: React.ReactNode;
+  // When set, error blocks carrying this code are emphasised and everything
+  // else dims — driven by hovering a row in the Error Summary so its
+  // occurrences light up on the strip.
+  highlightCode?: string | null;
 }
 
 // Match the Good / Mediocre / Poor zone tints used by the Avg Scrap and Avg
@@ -92,8 +96,19 @@ function fmtSecs(s: number): string {
   return mm > 0 ? `${h}h ${mm}m` : `${h}h`;
 }
 
-export default function MachineStateTimeline({ rows, errorEvents, errorLookup, footer }: Props) {
+// Magnifier loupe geometry.
+const LOUPE_W      = 380;   // px
+const LOUPE_H      = 88;    // px — strip height inside the loupe
+const LOUPE_ZOOM   = 8;     // how many times narrower the shown window is
+const LOUPE_GAP    = 12;    // px below the strip
+const LOUPE_MARGIN = 8;     // viewport edge padding
+
+export default function MachineStateTimeline({ rows, errorEvents, errorLookup, footer, highlightCode }: Props) {
   const [hover, setHover] = useState<Hover | null>(null);
+  // Magnifier state: where the cursor is over the strip, plus the strip's
+  // on-screen rect so the loupe can sit directly below it and project the
+  // hovered time window. Null when the cursor isn't over the strip.
+  const [lens, setLens] = useState<{ cx: number; stripBottom: number; centerMs: number } | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
 
   // After the tooltip mounts at its ideal anchor point, measure the real
@@ -276,6 +291,88 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup, f
   };
   const leave = () => setHover(null);
 
+  // Track the cursor over the strip to drive the magnifier loupe. Reading the
+  // strip's rect on every move keeps the loupe correct across resizes/scrolls.
+  const onStripMove = (e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const f = Math.min(1, Math.max(0, (e.clientX - rect.left) / rect.width));
+    setLens({ cx: e.clientX, stripBottom: rect.bottom, centerMs: data.firstMs + f * data.totalMs });
+  };
+  const onStripLeave = () => setLens(null);
+
+  // Render the running/idle/error blocks across an arbitrary time window. The
+  // main strip passes the full range; the loupe passes a narrow window so the
+  // same blocks render magnified. `interactive` wires the hover tooltip (strip
+  // only — the loupe is a read-only zoom). Segments outside the window are
+  // skipped; the rest are clipped to it.
+  const renderSegments = (domainStart: number, domainMs: number, interactive: boolean) => {
+    const domainEnd = domainStart + domainMs;
+    const projLeft = (t: number) => ((t - domainStart) / domainMs) * 100;
+    const dim = highlightCode != null;
+    return data.visual.map((v, i) => {
+      const segStart = Math.max(v.seg.start, domainStart);
+      const segEnd   = Math.min(v.seg.end, domainEnd);
+      if (segEnd <= segStart) return null;   // entirely outside this window
+      const left = projLeft(segStart);
+      const w    = projLeft(segEnd) - left;
+      if (v.kind === "error") {
+        const isMatch = highlightCode != null && v.seg.events.some(ev => ev.error_code === highlightCode);
+        const prev = data.visual[i - 1];
+        const abutsPrevError = prev?.kind === "error" && prev.seg.end === v.seg.start;
+        // Floor matched errors wider so a short occurrence is clearly visible
+        // when its row is hovered; otherwise keep the hairline minimum.
+        const minW = isMatch ? 0.6 : 0.15;
+        return (
+          <div
+            key={`v-${i}`}
+            className={`absolute top-0 bottom-0 ${interactive ? "cursor-pointer" : ""}`}
+            style={{
+              left:  `${left}%`,
+              width: `${Math.max(w, minW)}%`,
+              background: isMatch ? "rgba(239, 68, 68, 0.95)" : "rgba(239, 68, 68, 0.4)",
+              borderLeft: abutsPrevError ? "2px solid #0b1220" : undefined,
+              boxShadow: isMatch ? "0 0 0 1px #fecaca, 0 0 7px 1px rgba(248, 113, 113, 0.85)" : undefined,
+              opacity: dim && !isMatch ? 0.2 : 1,
+              zIndex: isMatch ? 2 : undefined,
+            }}
+            onMouseEnter={interactive ? enterError(v.seg) : undefined}
+            onMouseLeave={interactive ? leave : undefined}
+          />
+        );
+      }
+      const baseOpacity = v.seg.state === "empty" ? 0.45 : 0.4;
+      return (
+        <div
+          key={`v-${i}`}
+          className={`absolute top-0 bottom-0 ${interactive ? "cursor-pointer" : ""}`}
+          style={{
+            left:  `${left}%`,
+            width: `${w}%`,
+            background: v.seg.state === "empty" ? EMPTY_PATTERN : COLORS[v.seg.state],
+            // Dim the running/idle background while a code is highlighted so the
+            // matching error blocks stand out.
+            opacity: baseOpacity * (dim ? 0.5 : 1),
+          }}
+          onMouseEnter={interactive ? enterBucket(v.seg) : undefined}
+          onMouseLeave={interactive ? leave : undefined}
+        />
+      );
+    });
+  };
+
+  // Loupe window — a narrow slice of the full range centred on the cursor,
+  // clamped so it never runs past the strip's start/end.
+  const loupe = (() => {
+    if (!lens) return null;
+    const windowMs = data.totalMs / LOUPE_ZOOM;
+    const winStart = Math.max(data.firstMs, Math.min(lens.centerMs - windowMs / 2, data.endMs - windowMs));
+    const centerPct = ((lens.centerMs - winStart) / windowMs) * 100;
+    const left = typeof window !== "undefined"
+      ? Math.max(LOUPE_MARGIN, Math.min(lens.cx - LOUPE_W / 2, window.innerWidth - LOUPE_W - LOUPE_MARGIN))
+      : lens.cx - LOUPE_W / 2;
+    return { windowMs, winStart, winEnd: winStart + windowMs, centerPct, left, top: lens.stripBottom + LOUPE_GAP };
+  })();
+
   return (
     <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 overflow-hidden">
       <div className="mb-3">
@@ -291,54 +388,10 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup, f
         <div
           className="relative h-24 rounded overflow-hidden"
           style={{ background: COLORS.empty }}
+          onMouseMove={onStripMove}
+          onMouseLeave={onStripLeave}
         >
-          {data.visual.map((v, i) => {
-            const start = v.seg.start;
-            const end   = v.seg.end;
-            const w     = pct(end) - pct(start);
-            if (v.kind === "error") {
-              // When this error block butts directly against the previous one
-              // (a back-to-back sequence), draw a thin dark divider on its left
-              // edge so the two read as separate errors instead of one fused
-              // red stretch. The red fill bakes its own alpha into the rgba so
-              // the divider can stay full-opacity and crisp.
-              const prev = data.visual[i - 1];
-              const abutsPrevError =
-                prev?.kind === "error" && prev.seg.end === v.seg.start;
-              return (
-                <div
-                  key={`v-${i}`}
-                  className="absolute top-0 bottom-0 cursor-pointer"
-                  style={{
-                    left:  `${pct(start)}%`,
-                    // Floor a sub-pixel error to a hairline so brief codes
-                    // (a few seconds) still register visually and remain
-                    // hoverable. Bucket slices don't need this — they're at
-                    // least a 5-min wide chunk after the carve.
-                    width: `${Math.max(w, 0.15)}%`,
-                    background: "rgba(239, 68, 68, 0.4)",
-                    borderLeft: abutsPrevError ? "2px solid #0b1220" : undefined,
-                  }}
-                  onMouseEnter={enterError(v.seg)}
-                  onMouseLeave={leave}
-                />
-              );
-            }
-            return (
-              <div
-                key={`v-${i}`}
-                className="absolute top-0 bottom-0 cursor-pointer"
-                style={{
-                  left:  `${pct(start)}%`,
-                  width: `${w}%`,
-                  background: v.seg.state === "empty" ? EMPTY_PATTERN : COLORS[v.seg.state],
-                  opacity: v.seg.state === "empty" ? 0.45 : 0.4,
-                }}
-                onMouseEnter={enterBucket(v.seg)}
-                onMouseLeave={leave}
-              />
-            );
-          })}
+          {renderSegments(data.firstMs, data.totalMs, true)}
         </div>
 
         <div className="relative h-4 mt-1 text-[10px] text-gray-500">
@@ -358,6 +411,37 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup, f
           negative margins cancel the card's p-4 so the footer's top divider
           spans edge to edge and its bottom reaches the card's rounded corner. */}
       {footer && <div className="mt-4 -mx-4 -mb-4">{footer}</div>}
+
+      {loupe && typeof document !== "undefined" && createPortal(
+        <div
+          className="pointer-events-none fixed z-50 rounded-lg shadow-2xl p-1.5"
+          style={{
+            left: loupe.left,
+            top:  loupe.top,
+            width: LOUPE_W,
+            background: "#0b1220",
+            border: "1px solid #374151",
+          }}
+        >
+          <div
+            className="relative rounded overflow-hidden"
+            style={{ height: LOUPE_H, background: COLORS.empty }}
+          >
+            {renderSegments(loupe.winStart, loupe.windowMs, false)}
+            {/* Cursor line marking the exact hovered moment. */}
+            <div
+              className="absolute top-0 bottom-0"
+              style={{ left: `${loupe.centerPct}%`, width: 1, background: "rgba(255,255,255,0.7)" }}
+            />
+          </div>
+          <div className="flex justify-between mt-1 text-[10px] text-gray-400 tabular-nums px-0.5">
+            <span>{format(new Date(loupe.winStart), "HH:mm:ss")}</span>
+            <span className="text-gray-200">{format(new Date(lens!.centerMs), "HH:mm:ss")}</span>
+            <span>{format(new Date(loupe.winEnd), "HH:mm:ss")}</span>
+          </div>
+        </div>,
+        document.body,
+      )}
 
       {hover && typeof document !== "undefined" && createPortal(
         <div

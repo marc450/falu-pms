@@ -38,6 +38,9 @@ interface Props {
   // Machine code to pre-filter the Error Analytics page to. Omitted → the link
   // opens the Downtime tab across all machines.
   machineCode?: string;
+  // Called with an error code while a row is hovered (null on leave) so a sibling
+  // timeline can highlight that code's occurrences.
+  onHoverCode?: (code: string | null) => void;
 }
 
 function fmtDur(secs: number): string {
@@ -104,6 +107,7 @@ export default function ErrorSummary({
   peerAvgSecs,
   peerLabel,
   machineCode,
+  onHoverCode,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -193,6 +197,8 @@ export default function ErrorSummary({
               <tr
                 key={g.code}
                 className="border-b border-gray-700/40 hover:bg-gray-700/30 transition-colors"
+                onMouseEnter={() => onHoverCode?.(g.code)}
+                onMouseLeave={() => onHoverCode?.(null)}
               >
                 <td className="px-4 py-2.5">
                   <span className="font-mono text-red-300 font-semibold">{g.code}</span>
