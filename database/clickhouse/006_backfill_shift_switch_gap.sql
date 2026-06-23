@@ -64,12 +64,12 @@ SELECT
 FROM shift_readings
 WHERE plc_timestamp IS NOT NULL
   AND plc_timestamp >= toDateTime64('2020-01-01 00:00:00', 3, 'UTC')
-  AND shift_crew != ''
+  AND shift_readings.shift_crew != ''                  -- qualify: the SELECT aliases max(shift_crew) AS shift_crew, so a bare `shift_crew` here resolves to the aggregate -> ILLEGAL_AGGREGATION
   AND save_flag != 1                                   -- drop the redundant closer that caused the gap
   AND (machine_id, toStartOfInterval(assumeNotNull(plc_timestamp), INTERVAL 5 MINUTE)) IN (
         SELECT machine_id, toStartOfInterval(assumeNotNull(plc_timestamp), INTERVAL 5 MINUTE)
         FROM shift_readings
-        WHERE save_flag = 1 AND shift_crew != '' AND plc_timestamp IS NOT NULL
+        WHERE save_flag = 1 AND shift_readings.shift_crew != '' AND plc_timestamp IS NOT NULL
       )
 GROUP BY machine_id, bucket_ts;
 
