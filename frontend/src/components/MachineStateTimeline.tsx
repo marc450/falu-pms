@@ -66,7 +66,11 @@ type ErrorSeg = {
 // proportionally from the parent bucket merge.
 type VisualSeg =
   | { kind: "bucket"; seg: MergedSeg }
-  | { kind: "error";  seg: ErrorSeg };
+  // spanId identifies the source error span. Slices of the SAME span (one
+  // error split across internal state-segment boundaries) share an id so they
+  // can be coalesced back into one block — only slices from DIFFERENT spans get
+  // a divider between them.
+  | { kind: "error";  spanId: number; seg: ErrorSeg };
 
 type Hover =
   | { kind: "bucket"; seg: MergedSeg; x: number; y: number }
@@ -252,10 +256,19 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup, f
         }
         const sliceStart = Math.max(err.start, cursor);
         const sliceEnd   = Math.min(err.end, bucket.end);
-        visual.push({
-          kind: "error",
-          seg: { start: sliceStart, end: sliceEnd, events: err.events },
-        });
+        // Coalesce with the previous slice when it's the same span continued
+        // across a state-segment boundary — so one error reads as one block
+        // instead of several with spurious mid-error dividers.
+        const lastV = visual[visual.length - 1];
+        if (lastV && lastV.kind === "error" && lastV.spanId === i && lastV.seg.end === sliceStart) {
+          lastV.seg.end = sliceEnd;
+        } else {
+          visual.push({
+            kind: "error",
+            spanId: i,
+            seg: { start: sliceStart, end: sliceEnd, events: err.events },
+          });
+        }
         cursor = sliceEnd;
         if (err.end > bucket.end) break;  // remainder belongs to the next bucket
         i++;
