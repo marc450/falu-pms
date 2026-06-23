@@ -41,15 +41,6 @@ function fmtTime(iso: string): string {
   try { return format(parseISO(iso), "HH:mm"); } catch { return iso; }
 }
 
-function severityDot(severity: string | undefined) {
-  const s = (severity ?? "").toLowerCase();
-  const cls =
-    s === "critical" ? "bg-red-500" :
-    s === "warning"  ? "bg-amber-400" :
-    "bg-gray-500";
-  return <span className={`inline-block w-2 h-2 rounded-full ${cls} flex-shrink-0`} />;
-}
-
 interface CodeGroup {
   code: string;
   description: string;
@@ -175,10 +166,7 @@ export default function ErrorSummary({
                 className="border-b border-gray-700/40 hover:bg-gray-700/30 transition-colors"
               >
                 <td className="px-4 py-2.5">
-                  <span className="flex items-center gap-1.5">
-                    {severityDot(g.severity)}
-                    <span className="font-mono text-red-300 font-semibold">{g.code}</span>
-                  </span>
+                  <span className="font-mono text-red-300 font-semibold">{g.code}</span>
                 </td>
                 <td className="px-2 py-2.5 text-gray-300 max-w-[280px] truncate">{g.description}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{g.count}</td>
