@@ -135,11 +135,29 @@ export default function ErrorSummary({
     ? "border-t border-gray-700"
     : "bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden";
 
+  // Inline label above each aggregate in the header row — gives the numbers
+  // context while collapsed, then reserves its space (invisible) once expanded,
+  // since the real column labels appear right below. Mirrors the cell rows on
+  // the live dashboard.
+  const totalLabelCls = `text-[10px] font-normal ${showTable ? "invisible" : "text-gray-500"}`;
+
   return (
     <div className={outerClass}>
-      {/* Single table so the header aggregates line up over the columns of the
-          per-code breakdown below. */}
-      <table className="w-full text-xs">
+      {/* Single fixed-layout table so the header aggregates line up over the
+          columns of the per-code breakdown — identical widths whether the card
+          is collapsed or expanded. */}
+      <table className="w-full text-xs" style={{ tableLayout: "fixed" }}>
+        <colgroup>
+          <col style={{ width: "8%"  }} />{/* Code */}
+          <col style={{ width: "22%" }} />{/* Description */}
+          <col style={{ width: "12%" }} />{/* Total duration */}
+          <col style={{ width: "10%" }} />{/* vs peers */}
+          <col style={{ width: "11%" }} />{/* Occurrences */}
+          <col style={{ width: "12%" }} />{/* Avg duration */}
+          <col style={{ width: "9%"  }} />{/* % of error time */}
+          <col style={{ width: "9%"  }} />{/* % of total time */}
+          <col style={{ width: "7%"  }} />{/* Last seen */}
+        </colgroup>
         <tbody>
           {/* Title + Error Analytics link + aggregate totals, all on the header
               row and column-aligned. Doubles as the collapse toggle. */}
@@ -148,27 +166,36 @@ export default function ErrorSummary({
             onClick={collapsible ? () => setOpen(o => !o) : undefined}
           >
             <td colSpan={2} className="px-4 py-3">
-              <div className="flex items-center gap-3">
-                <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-                  {collapsible && (
-                    <i className={`bi bi-chevron-${open ? "down" : "right"} text-gray-500 text-[10px]`} />
-                  )}
-                  <i className="bi bi-exclamation-octagon text-red-400" />
-                  Error Summary
-                </h3>
-                {/* stopPropagation so following the link doesn't also toggle the
-                    collapsible card header it sits inside. */}
-                <Link
-                  href={errorAnalyticsHref(machineCode)}
-                  onClick={(e) => e.stopPropagation()}
-                  className="text-xs font-normal text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
-                >
-                  Error Analytics
-                  <i className="bi bi-arrow-right-short text-sm" />
-                </Link>
+              <div className="flex flex-col gap-0.5">
+                {/* Reserve the label line so the title aligns with the values. */}
+                <span className="text-[10px] invisible">·</span>
+                <div className="flex items-center gap-3">
+                  <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+                    {collapsible && (
+                      <i className={`bi bi-chevron-${open ? "down" : "right"} text-gray-500 text-[10px]`} />
+                    )}
+                    <i className="bi bi-exclamation-octagon text-red-400" />
+                    Error Summary
+                  </h3>
+                  {/* stopPropagation so following the link doesn't also toggle the
+                      collapsible card header it sits inside. */}
+                  <Link
+                    href={errorAnalyticsHref(machineCode)}
+                    onClick={(e) => e.stopPropagation()}
+                    className="text-xs font-normal text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
+                  >
+                    Error Analytics
+                    <i className="bi bi-arrow-right-short text-sm" />
+                  </Link>
+                </div>
               </div>
             </td>
-            <td className="px-2 py-3 text-right tabular-nums">{fmtDur(totalSecs)}</td>
+            <td className="px-2 py-3 text-right tabular-nums">
+              <div className="flex flex-col gap-0.5 items-end">
+                <span className={totalLabelCls}>Total duration</span>
+                <span>{fmtDur(totalSecs)}</span>
+              </div>
+            </td>
             <td
               className={`px-2 py-3 text-right tabular-nums ${
                 totalPeerDeltaPct === null ? "text-gray-600"
@@ -178,12 +205,35 @@ export default function ErrorSummary({
               }`}
               title={peerTotalAvg && peerTotalAvg > 0 ? `Peer average: ${fmtDur(peerTotalAvg)} total per machine` : "No peer data"}
             >
-              {totalPeerDeltaPct === null ? "—" : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}
+              <div className="flex flex-col gap-0.5 items-end">
+                <span className={totalLabelCls}>vs peers</span>
+                <span>{totalPeerDeltaPct === null ? "—" : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}</span>
+              </div>
             </td>
-            <td className="px-2 py-3 text-right tabular-nums">{totalCount}</td>
-            <td className="px-2 py-3 text-right tabular-nums">{fmtDur(avgSecsAll)}</td>
-            <td className="px-2 py-3 text-right tabular-nums text-gray-400 font-normal">100%</td>
-            <td className="px-2 py-3 text-right tabular-nums">{pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`}</td>
+            <td className="px-2 py-3 text-right tabular-nums">
+              <div className="flex flex-col gap-0.5 items-end">
+                <span className={totalLabelCls}>Occurrences</span>
+                <span>{totalCount}</span>
+              </div>
+            </td>
+            <td className="px-2 py-3 text-right tabular-nums">
+              <div className="flex flex-col gap-0.5 items-end">
+                <span className={totalLabelCls}>Avg duration</span>
+                <span>{fmtDur(avgSecsAll)}</span>
+              </div>
+            </td>
+            <td className="px-2 py-3 text-right tabular-nums text-gray-400 font-normal">
+              <div className="flex flex-col gap-0.5 items-end">
+                <span className={totalLabelCls}>% of error time</span>
+                <span>100%</span>
+              </div>
+            </td>
+            <td className="px-2 py-3 text-right tabular-nums">
+              <div className="flex flex-col gap-0.5 items-end">
+                <span className={totalLabelCls}>% of total time</span>
+                <span>{pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`}</span>
+              </div>
+            </td>
             <td className="px-4 py-3 text-right"></td>
           </tr>
 
