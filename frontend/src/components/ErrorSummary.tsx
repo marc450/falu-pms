@@ -57,16 +57,6 @@ function fmtTime(iso: string): string {
   try { return format(parseISO(iso), "HH:mm"); } catch { return iso; }
 }
 
-// One labelled aggregate shown in the Error Summary header.
-function HeaderStat({ label, value, valueClass }: { label: string; value: string; valueClass?: string }) {
-  return (
-    <span>
-      <span className="text-gray-500">{label} </span>
-      <span className={`tabular-nums font-medium ${valueClass ?? "text-gray-200"}`}>{value}</span>
-    </span>
-  );
-}
-
 interface CodeGroup {
   code: string;
   description: string;
@@ -150,51 +140,30 @@ export default function ErrorSummary({
     <div className={outerClass}>
       {/* Header — a toggle when collapsible. */}
       <div
-        className={`flex items-center justify-between px-4 py-3 ${showTable ? "border-b border-gray-700" : ""} ${collapsible ? "cursor-pointer select-none hover:bg-gray-700/20 transition-colors" : ""}`}
+        className={`flex items-center gap-3 px-4 py-3 border-b border-gray-700 ${collapsible ? "cursor-pointer select-none hover:bg-gray-700/20 transition-colors" : ""}`}
         onClick={collapsible ? () => setOpen(o => !o) : undefined}
       >
-        <div className="flex items-center gap-3">
-          <h3 className="text-sm font-semibold text-white flex items-center gap-2">
-            {collapsible && (
-              <i className={`bi bi-chevron-${open ? "down" : "right"} text-gray-500 text-[10px]`} />
-            )}
-            <i className="bi bi-exclamation-octagon text-red-400" />
-            Error Summary
-          </h3>
-          {/* stopPropagation so following the link doesn't also toggle the
-              collapsible card header it sits inside. */}
-          <Link
-            href={errorAnalyticsHref(machineCode)}
-            onClick={(e) => e.stopPropagation()}
-            className="text-xs text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
-          >
-            Error Analytics
-            <i className="bi bi-arrow-right-short text-sm" />
-          </Link>
-        </div>
-
-        {/* Aggregate totals — always visible, even when the table is collapsed. */}
-        <div className="flex items-center gap-4 text-xs whitespace-nowrap">
-          <HeaderStat label="Occurrences" value={String(totalCount)} />
-          <HeaderStat label="Codes" value={String(totalCodes)} />
-          <HeaderStat label="Total" value={fmtDur(totalSecs)} />
-          <HeaderStat
-            label="vs peers"
-            value={totalPeerDeltaPct === null ? "—" : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}
-            valueClass={
-              totalPeerDeltaPct === null ? "text-gray-600"
-                : totalPeerDeltaPct > 0 ? "text-red-400"
-                : totalPeerDeltaPct < 0 ? "text-green-400"
-                : "text-gray-300"
-            }
-          />
-          <HeaderStat label="Avg" value={fmtDur(avgSecsAll)} />
-          <HeaderStat label="% of time" value={pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`} />
-        </div>
+        <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+          {collapsible && (
+            <i className={`bi bi-chevron-${open ? "down" : "right"} text-gray-500 text-[10px]`} />
+          )}
+          <i className="bi bi-exclamation-octagon text-red-400" />
+          Error Summary
+        </h3>
+        {/* stopPropagation so following the link doesn't also toggle the
+            collapsible card header it sits inside. */}
+        <Link
+          href={errorAnalyticsHref(machineCode)}
+          onClick={(e) => e.stopPropagation()}
+          className="text-xs text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
+        >
+          Error Analytics
+          <i className="bi bi-arrow-right-short text-sm" />
+        </Link>
       </div>
 
-      {/* Table */}
-      {showTable && (
+      {/* Table — column labels and an aligned aggregate row stay visible; the
+          per-code breakdown below collapses with the card. */}
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-500 border-b border-gray-700/60">
@@ -215,7 +184,29 @@ export default function ErrorSummary({
           </tr>
         </thead>
         <tbody>
-          {groups.map((g) => {
+          {/* Aggregate totals — column-aligned and always visible. */}
+          <tr className="border-b border-gray-700 bg-gray-800/40 font-semibold text-gray-200">
+            <td className="px-4 py-2.5">Total</td>
+            <td className="px-2 py-2.5 text-gray-500 font-normal">{totalCodes} {totalCodes === 1 ? "code" : "codes"}</td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{totalCount}</td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{fmtDur(totalSecs)}</td>
+            <td
+              className={`px-2 py-2.5 text-right tabular-nums ${
+                totalPeerDeltaPct === null ? "text-gray-600"
+                  : totalPeerDeltaPct > 0 ? "text-red-400"
+                  : totalPeerDeltaPct < 0 ? "text-green-400"
+                  : "text-gray-400"
+              }`}
+              title={peerTotalAvg && peerTotalAvg > 0 ? `Peer average: ${fmtDur(peerTotalAvg)} total per machine` : "No peer data"}
+            >
+              {totalPeerDeltaPct === null ? "—" : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}
+            </td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{fmtDur(avgSecsAll)}</td>
+            <td className="px-2 py-2.5 text-right tabular-nums text-gray-400 font-normal">100%</td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`}</td>
+            <td className="px-4 py-2.5 text-right"></td>
+          </tr>
+          {showTable && groups.map((g) => {
             // Average duration of a single occurrence: total time in this error
             // divided by how many times it occurred over the shown period.
             const avgSecs = g.count > 0 ? g.totalSecs / g.count : 0;
@@ -266,7 +257,6 @@ export default function ErrorSummary({
           })}
         </tbody>
       </table>
-      )}
     </div>
   );
 }
