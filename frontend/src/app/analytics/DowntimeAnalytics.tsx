@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, useMemo, Fragment, useRef } from "react";
 import { parseISO } from "date-fns";
 import { fmtN } from "@/lib/fmt";
+import { useUrlSync } from "@/lib/useUrlState";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, Line, ComposedChart, Area, AreaChart,
@@ -155,10 +156,18 @@ function KpiTile({ icon, iconClass, label, value }: {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnalyticsProps) {
+  const url = useUrlSync();
   const [rows, setRows]           = useState<ErrorShiftSummaryRow[]>([]);
   const [lookup, setLookup]       = useState<Record<string, PlcErrorCode>>({});
   const [loading, setLoading]     = useState(true);
-  const [machineFilter, setMachineFilter] = useState<string>("all");
+  // Initialise from the URL so a deep link (e.g. the Machine Monitor's "Error
+  // Analytics" link) lands pre-filtered to a specific machine.
+  const [machineFilter, setMachineFilter] = useState<string>(() => url.get("machine") ?? "all");
+
+  // Keep the machine filter in the URL so it survives reloads and is shareable.
+  useEffect(() => {
+    url.set({ machine: machineFilter === "all" ? null : machineFilter });
+  }, [machineFilter, url]);
   const [trendHover, setTrendHover] = useState<Record<string, string | number> | null>(null);
   const [trendRelative, setTrendRelative] = useState(false);
   const [trendHiddenCodes, setTrendHiddenCodes] = useState<Set<string>>(new Set());

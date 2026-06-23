@@ -6,8 +6,12 @@ import { format, parseISO } from "date-fns";
 import type { ErrorEvent, PlcErrorCode } from "@/lib/supabase";
 
 // Where the "Error Analytics" link points — the Downtime tab of the analytics
-// page, which carries the full error breakdown and trends.
-const ERROR_ANALYTICS_HREF = "/analytics?tab=downtime";
+// page, which carries the full error breakdown and trends. When a machine code
+// is given, the Downtime tab opens pre-filtered to that machine.
+function errorAnalyticsHref(machineCode?: string): string {
+  const base = "/analytics?tab=downtime";
+  return machineCode ? `${base}&machine=${encodeURIComponent(machineCode)}` : base;
+}
 
 interface Props {
   errorEvents: ErrorEvent[];
@@ -31,6 +35,9 @@ interface Props {
   peerAvgSecs?: Record<string, number> | null;
   // Short description of the peer group, shown in the "vs peers" header tooltip.
   peerLabel?: string;
+  // Machine code to pre-filter the Error Analytics page to. Omitted → the link
+  // opens the Downtime tab across all machines.
+  machineCode?: string;
 }
 
 function fmtDur(secs: number): string {
@@ -96,6 +103,7 @@ export default function ErrorSummary({
   windowSecs,
   peerAvgSecs,
   peerLabel,
+  machineCode,
 }: Props) {
   const [open, setOpen] = useState(defaultOpen);
 
@@ -134,7 +142,7 @@ export default function ErrorSummary({
           {/* stopPropagation so following the link doesn't also toggle the
               collapsible card header it sits inside. */}
           <Link
-            href={ERROR_ANALYTICS_HREF}
+            href={errorAnalyticsHref(machineCode)}
             onClick={(e) => e.stopPropagation()}
             className="text-xs text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
           >

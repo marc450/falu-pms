@@ -640,6 +640,7 @@ function ProductionContent() {
                         windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
                         peerAvgSecs={errorPeerAvgSecs}
                         peerLabel={peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined}
+                        machineCode={machineName}
                       />
                     ) : null
                   }
@@ -654,6 +655,7 @@ function ProductionContent() {
                     windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
                     peerAvgSecs={errorPeerAvgSecs}
                     peerLabel={peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined}
+                    machineCode={machineName}
                   />
                 ) : null
               )
