@@ -1705,6 +1705,126 @@ export function ProductionTrendSection({
 
       {/* Trend charts — one per row so each gets full width */}
       <div className="flex flex-col gap-4 mb-4">
+        {showUptimeChart && (
+        <ChartCard
+          title={`Avg Uptime ${chartTitle}`}
+          legend={
+            <>
+              {hasPeers && peerLabel && (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: PEER_LINE_COLOR }} />
+                  {peerLabel}
+                </span>
+              )}
+              <ZoneLegend color="#4ade80" label={`Good (≥${fmtPct(thresholds.efficiency.good, 1)})`} />
+              <ZoneLegend color="#eab308" label={`Mediocre (≥${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
+              <ZoneLegend color="#ef4444" label={`Poor (<${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
+              {showErrorStrip && (
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: ERROR_BRACKET_COLOR }} />
+                  Errors
+                </span>
+              )}
+            </>
+          }
+        >
+          {!hasData ? <NoData /> : (
+            <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
+              <ComposedChart
+                data={rowsWithPeer}
+                syncId="analyticsTrend"
+                margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}
+                onMouseMove={shiftMode ? onBarChartMove : undefined}
+                onMouseLeave={shiftMode ? () => setActiveShiftIdx(null) : undefined}
+              >
+                <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
+                <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
+                <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
+                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
+                <XAxis
+                  dataKey="date"
+                  tick={xTick}
+                  tickLine={false}
+                  axisLine={{ stroke: AXIS_COLOR }}
+                  interval={0}
+                  height={xAxisHeight}
+                  {...(xTicks ? { ticks: xTicks } : {})}
+                />
+                {xBoundaries.map((k) => (
+                  <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
+                ))}
+                <YAxis
+                  domain={[0, 100]}
+                  tick={TICK_STYLE}
+                  tickLine={false}
+                  axisLine={false}
+                  tickFormatter={(v) => `${v}%`}
+                />
+                <Tooltip
+                  cursor={shiftMode ? false : undefined}
+                  // Custom content with target + delta + hit/miss. Uptime
+                  // is non-inverted: higher is better, hit = actual >= target.
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  content={(props: any) => (
+                    <PctTargetTooltipContent
+                      {...props}
+                      selfKey="avgUptime"
+                      peerKey="peerUptime"
+                      target={thresholds.efficiency.good}
+                      invert={false}
+                      fmtLabelFn={fmtTooltipLabel}
+                      labelClassName={tooltipLabelClass}
+                      peerLabel={peerLabel}
+                    />
+                  )}
+                />
+                {shiftMode ? (
+                  <Bar dataKey="avgUptime" name="Uptime" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 1, 1)} />)}
+                  </Bar>
+                ) : (
+                  <Line
+                    type="monotone"
+                    dataKey="avgUptime"
+                    name="Uptime"
+                    stroke="#22d3ee"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
+                  />
+                )}
+                {hasPeers && (shiftMode ? (
+                  <Bar dataKey="peerUptime" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 0.5, 0.85)} />)}
+                  </Bar>
+                ) : (
+                  <Line
+                    type="monotone"
+                    dataKey="peerUptime"
+                    name={peerLabel ?? "Peers"}
+                    stroke={PEER_LINE_COLOR}
+                    strokeWidth={1.5}
+                    strokeDasharray="4 3"
+                    dot={false}
+                    activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
+                    connectNulls
+                    isAnimationActive={false}
+                  />
+                ))}
+                {showErrorStrip && (
+                  <ErrorBracketLayer
+                    events={errorEvents}
+                    errorLookup={errorLookup}
+                    firstBucketTime={firstBucketTime}
+                    lastBucketTime={lastBucketTime}
+                    stripTopY={220 + ERROR_STRIP_PADDING}
+                  />
+                )}
+              </ComposedChart>
+            </ResponsiveContainer>
+          )}
+        </ChartCard>
+        )}
         <ChartCard
           title={`Total BU Output ${chartTitle}`}
           legend={
@@ -1921,126 +2041,6 @@ export function ProductionTrendSection({
             </ResponsiveContainer>
           )}
         </ChartCard>
-        {showUptimeChart && (
-        <ChartCard
-          title={`Avg Uptime ${chartTitle}`}
-          legend={
-            <>
-              {hasPeers && peerLabel && (
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: PEER_LINE_COLOR }} />
-                  {peerLabel}
-                </span>
-              )}
-              <ZoneLegend color="#4ade80" label={`Good (≥${fmtPct(thresholds.efficiency.good, 1)})`} />
-              <ZoneLegend color="#eab308" label={`Mediocre (≥${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
-              <ZoneLegend color="#ef4444" label={`Poor (<${fmtPct(thresholds.efficiency.mediocre, 1)})`} />
-              {showErrorStrip && (
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-0.5 rounded-sm" style={{ backgroundColor: ERROR_BRACKET_COLOR }} />
-                  Errors
-                </span>
-              )}
-            </>
-          }
-        >
-          {!hasData ? <NoData /> : (
-            <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
-              <ComposedChart
-                data={rowsWithPeer}
-                syncId="analyticsTrend"
-                margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}
-                onMouseMove={shiftMode ? onBarChartMove : undefined}
-                onMouseLeave={shiftMode ? () => setActiveShiftIdx(null) : undefined}
-              >
-                <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
-                <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
-                <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
-                <CartesianGrid strokeDasharray="3 3" stroke={GRID_COLOR} vertical={false} />
-                <XAxis
-                  dataKey="date"
-                  tick={xTick}
-                  tickLine={false}
-                  axisLine={{ stroke: AXIS_COLOR }}
-                  interval={0}
-                  height={xAxisHeight}
-                  {...(xTicks ? { ticks: xTicks } : {})}
-                />
-                {xBoundaries.map((k) => (
-                  <ReferenceLine key={k} x={k} stroke="#94a3b8" strokeOpacity={0.5} strokeDasharray="4 4" ifOverflow="visible" />
-                ))}
-                <YAxis
-                  domain={[0, 100]}
-                  tick={TICK_STYLE}
-                  tickLine={false}
-                  axisLine={false}
-                  tickFormatter={(v) => `${v}%`}
-                />
-                <Tooltip
-                  cursor={shiftMode ? false : undefined}
-                  // Custom content with target + delta + hit/miss. Uptime
-                  // is non-inverted: higher is better, hit = actual >= target.
-                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                  content={(props: any) => (
-                    <PctTargetTooltipContent
-                      {...props}
-                      selfKey="avgUptime"
-                      peerKey="peerUptime"
-                      target={thresholds.efficiency.good}
-                      invert={false}
-                      fmtLabelFn={fmtTooltipLabel}
-                      labelClassName={tooltipLabelClass}
-                      peerLabel={peerLabel}
-                    />
-                  )}
-                />
-                {shiftMode ? (
-                  <Bar dataKey="avgUptime" name="Uptime" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
-                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 1, 1)} />)}
-                  </Bar>
-                ) : (
-                  <Line
-                    type="monotone"
-                    dataKey="avgUptime"
-                    name="Uptime"
-                    stroke="#22d3ee"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4, fill: "#22d3ee", strokeWidth: 0 }}
-                  />
-                )}
-                {hasPeers && (shiftMode ? (
-                  <Bar dataKey="peerUptime" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
-                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 0.5, 0.85)} />)}
-                  </Bar>
-                ) : (
-                  <Line
-                    type="monotone"
-                    dataKey="peerUptime"
-                    name={peerLabel ?? "Peers"}
-                    stroke={PEER_LINE_COLOR}
-                    strokeWidth={1.5}
-                    strokeDasharray="4 3"
-                    dot={false}
-                    activeDot={{ r: 3, fill: PEER_LINE_COLOR, strokeWidth: 0 }}
-                    connectNulls
-                    isAnimationActive={false}
-                  />
-                ))}
-                {showErrorStrip && (
-                  <ErrorBracketLayer
-                    events={errorEvents}
-                    errorLookup={errorLookup}
-                    firstBucketTime={firstBucketTime}
-                    lastBucketTime={lastBucketTime}
-                    stripTopY={220 + ERROR_STRIP_PADDING}
-                  />
-                )}
-              </ComposedChart>
-            </ResponsiveContainer>
-          )}
-        </ChartCard>
-        )}
       </div>
     </>
   );
