@@ -168,7 +168,6 @@ export default function ErrorSummary({
                 </Link>
               </div>
             </td>
-            <td className="px-2 py-3 text-right tabular-nums">{totalCount}</td>
             <td className="px-2 py-3 text-right tabular-nums">{fmtDur(totalSecs)}</td>
             <td
               className={`px-2 py-3 text-right tabular-nums ${
@@ -181,6 +180,7 @@ export default function ErrorSummary({
             >
               {totalPeerDeltaPct === null ? "—" : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}
             </td>
+            <td className="px-2 py-3 text-right tabular-nums">{totalCount}</td>
             <td className="px-2 py-3 text-right tabular-nums">{fmtDur(avgSecsAll)}</td>
             <td className="px-2 py-3 text-right tabular-nums text-gray-400 font-normal">100%</td>
             <td className="px-2 py-3 text-right tabular-nums">{pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`}</td>
@@ -192,7 +192,6 @@ export default function ErrorSummary({
             <tr className="text-gray-500 border-b border-gray-700/60">
               <td className="text-left font-medium px-4 py-2">Code</td>
               <td className="text-left font-medium px-2 py-2">Description</td>
-              <td className="text-right font-medium px-2 py-2">Occurrences</td>
               <td className="text-right font-medium px-2 py-2">Total duration</td>
               <td
                 className="text-right font-medium px-2 py-2 whitespace-nowrap"
@@ -200,6 +199,7 @@ export default function ErrorSummary({
               >
                 vs peers
               </td>
+              <td className="text-right font-medium px-2 py-2">Occurrences</td>
               <td className="text-right font-medium px-2 py-2">Avg duration</td>
               <td className="text-right font-medium px-2 py-2">% of error time</td>
               <td className="text-right font-medium px-2 py-2">% of total time</td>
@@ -233,7 +233,6 @@ export default function ErrorSummary({
                   <span className="font-mono text-red-300 font-semibold">{g.code}</span>
                 </td>
                 <td className="px-2 py-2.5 text-gray-300 max-w-[280px] truncate">{g.description}</td>
-                <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{g.count}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-200 font-medium">{fmtDur(g.totalSecs)}</td>
                 <td
                   className={`px-2 py-2.5 text-right tabular-nums font-medium ${
@@ -249,6 +248,7 @@ export default function ErrorSummary({
                     ? "—"
                     : `${peerDeltaPct > 0 ? "+" : ""}${peerDeltaPct.toFixed(0)}%`}
                 </td>
+                <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{g.count}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{fmtDur(avgSecs)}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pctError.toFixed(1)}%</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pctTotal === null ? "—" : `${pctTotal.toFixed(1)}%`}</td>
