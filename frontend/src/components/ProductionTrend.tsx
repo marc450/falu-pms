@@ -4,7 +4,7 @@ import { useEffect, useState, useRef } from "react";
 // @ts-expect-error react-dom types aren't installed; createPortal ships in react-dom at runtime
 import { createPortal } from "react-dom";
 import {
-  LineChart, Line, ComposedChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  LineChart, Line, ComposedChart, Bar, Cell, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, ReferenceArea, ReferenceLine, usePlotArea,
 } from "recharts";
 import {
@@ -1307,6 +1307,23 @@ export function ProductionTrendSection({
   // so the X-axis reads in the operator's wall-clock time, not the browser's.
   const factoryTz = useFactoryTimezone();
 
+  // In shift (bar) mode we highlight the hovered shift's bars instead of drawing
+  // a cursor line/band. The index is shared so all three synced charts light up
+  // the same shift together. Helpers below set base vs highlighted opacity.
+  const [activeShiftIdx, setActiveShiftIdx] = useState<number | null>(null);
+  // recharts types activeTooltipIndex loosely (number | string); coerce here.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const onBarChartMove = (s: any) => {
+    const i = s?.activeTooltipIndex;
+    const n = typeof i === "number" ? i : (i == null ? -1 : Number(i));
+    setActiveShiftIdx(Number.isFinite(n) && n >= 0 ? n : null);
+  };
+  // Opacity for a bar at index `i`: full when nothing is hovered, brightened on
+  // the hovered shift, dimmed elsewhere. `base` is the series' resting opacity
+  // (peers render translucent).
+  const barOpacity = (i: number, base: number, highlight: number) =>
+    activeShiftIdx == null ? base : (i === activeShiftIdx ? highlight : base * 0.4);
+
   const hasData    = rows.length > 0;
   const totalSwabs = rows.reduce((s, d) => s + d.totalSwabs, 0);
   // Volume-weighted scrap (grain-invariant): Σ(scrap_i · swabs_i) / Σ swabs_i,
@@ -1710,7 +1727,13 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={buRows} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <ComposedChart
+                data={buRows}
+                syncId="analyticsTrend"
+                margin={{ top: 4, right: 8, left: -18, bottom: 0 }}
+                onMouseMove={shiftMode ? onBarChartMove : undefined}
+                onMouseLeave={shiftMode ? () => setActiveShiftIdx(null) : undefined}
+              >
                 {buTargetLine !== null && (
                   <ReferenceArea y1={buTargetLine} y2={buMax} fill="#4ade80" fillOpacity={0.15} />
                 )}
@@ -1741,7 +1764,7 @@ export function ProductionTrendSection({
                   tickFormatter={(v: number) => v >= 1000 ? `${(v / 1000).toFixed(1)}k` : String(v)}
                 />
                 <Tooltip
-                  cursor={shiftMode ? { fill: "rgba(255,255,255,0.07)" } : undefined}
+                  cursor={shiftMode ? false : undefined}
                   // Custom content so we can render target + delta + hit/miss
                   // alongside the per-bucket value. The standard formatter
                   // only sees one (value, name) tuple at a time and can't
@@ -1759,7 +1782,9 @@ export function ProductionTrendSection({
                   )}
                 />
                 {shiftMode ? (
-                  <Bar dataKey="totalBU" name="BU Output" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                  <Bar dataKey="totalBU" name="BU Output" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {buRows.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 1, 1)} />)}
+                  </Bar>
                 ) : (
                   <Line
                     type="monotone"
@@ -1772,7 +1797,9 @@ export function ProductionTrendSection({
                   />
                 )}
                 {hasPeers && (shiftMode ? (
-                  <Bar dataKey="peerBU" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} fillOpacity={0.5} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                  <Bar dataKey="peerBU" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {buRows.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 0.5, 0.85)} />)}
+                  </Bar>
                 ) : (
                   <Line
                     type="monotone"
@@ -1809,7 +1836,13 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220}>
-              <ComposedChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: 0 }}>
+              <ComposedChart
+                data={rowsWithPeer}
+                syncId="analyticsTrend"
+                margin={{ top: 4, right: 8, left: -18, bottom: 0 }}
+                onMouseMove={shiftMode ? onBarChartMove : undefined}
+                onMouseLeave={shiftMode ? () => setActiveShiftIdx(null) : undefined}
+              >
                 <ReferenceArea y1={0} y2={thresholds.scrap.good} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.scrap.good} y2={thresholds.scrap.mediocre} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={thresholds.scrap.mediocre} y2={scrapMax} fill="#ef4444" fillOpacity={0.12} />
@@ -1834,7 +1867,7 @@ export function ProductionTrendSection({
                   tickFormatter={(v) => `${v}%`}
                 />
                 <Tooltip
-                  cursor={shiftMode ? { fill: "rgba(255,255,255,0.07)" } : undefined}
+                  cursor={shiftMode ? false : undefined}
                   // Custom content with target + delta + hit/miss. Scrap is
                   // inverted: lower is better, so hit = actual <= target.
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1852,7 +1885,9 @@ export function ProductionTrendSection({
                   )}
                 />
                 {shiftMode ? (
-                  <Bar dataKey="avgScrap" name="Scrap" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                  <Bar dataKey="avgScrap" name="Scrap" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 1, 1)} />)}
+                  </Bar>
                 ) : (
                   <Line
                     type="monotone"
@@ -1865,7 +1900,9 @@ export function ProductionTrendSection({
                   />
                 )}
                 {hasPeers && (shiftMode ? (
-                  <Bar dataKey="peerScrap" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} fillOpacity={0.5} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                  <Bar dataKey="peerScrap" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 0.5, 0.85)} />)}
+                  </Bar>
                 ) : (
                   <Line
                     type="monotone"
@@ -1909,7 +1946,13 @@ export function ProductionTrendSection({
         >
           {!hasData ? <NoData /> : (
             <ResponsiveContainer width="100%" height={220 + errorStripHeight}>
-              <ComposedChart data={rowsWithPeer} syncId="analyticsTrend" margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}>
+              <ComposedChart
+                data={rowsWithPeer}
+                syncId="analyticsTrend"
+                margin={{ top: 4, right: 8, left: -18, bottom: errorStripHeight }}
+                onMouseMove={shiftMode ? onBarChartMove : undefined}
+                onMouseLeave={shiftMode ? () => setActiveShiftIdx(null) : undefined}
+              >
                 <ReferenceArea y1={thresholds.efficiency.good} y2={100} fill="#4ade80" fillOpacity={0.15} />
                 <ReferenceArea y1={thresholds.efficiency.mediocre} y2={thresholds.efficiency.good} fill="#eab308" fillOpacity={0.12} />
                 <ReferenceArea y1={0} y2={thresholds.efficiency.mediocre} fill="#ef4444" fillOpacity={0.12} />
@@ -1934,7 +1977,7 @@ export function ProductionTrendSection({
                   tickFormatter={(v) => `${v}%`}
                 />
                 <Tooltip
-                  cursor={shiftMode ? { fill: "rgba(255,255,255,0.07)" } : undefined}
+                  cursor={shiftMode ? false : undefined}
                   // Custom content with target + delta + hit/miss. Uptime
                   // is non-inverted: higher is better, hit = actual >= target.
                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1952,7 +1995,9 @@ export function ProductionTrendSection({
                   )}
                 />
                 {shiftMode ? (
-                  <Bar dataKey="avgUptime" name="Uptime" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                  <Bar dataKey="avgUptime" name="Uptime" fill="#22d3ee" radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 1, 1)} />)}
+                  </Bar>
                 ) : (
                   <Line
                     type="monotone"
@@ -1965,7 +2010,9 @@ export function ProductionTrendSection({
                   />
                 )}
                 {hasPeers && (shiftMode ? (
-                  <Bar dataKey="peerUptime" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} fillOpacity={0.5} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false} />
+                  <Bar dataKey="peerUptime" name={peerLabel ?? "Peers"} fill={PEER_LINE_COLOR} radius={[3, 3, 0, 0]} maxBarSize={48} isAnimationActive={false}>
+                    {rowsWithPeer.map((_, i) => <Cell key={i} fillOpacity={barOpacity(i, 0.5, 0.85)} />)}
+                  </Bar>
                 ) : (
                   <Line
                     type="monotone"
