@@ -11,6 +11,10 @@ interface Props {
   rows: FleetTrendRow[];
   errorEvents: ErrorEvent[];
   errorLookup: Record<string, PlcErrorCode>;
+  // Optional content rendered inside the same card, below the timeline (e.g. a
+  // collapsed Error Summary). Lets the timeline and its error breakdown read as
+  // one card instead of two stacked boxes.
+  footer?: React.ReactNode;
 }
 
 // Match the Good / Mediocre / Poor zone tints used by the Avg Scrap and Avg
@@ -88,7 +92,7 @@ function fmtSecs(s: number): string {
   return mm > 0 ? `${h}h ${mm}m` : `${h}h`;
 }
 
-export default function MachineStateTimeline({ rows, errorEvents, errorLookup }: Props) {
+export default function MachineStateTimeline({ rows, errorEvents, errorLookup, footer }: Props) {
   const [hover, setHover] = useState<Hover | null>(null);
   const tooltipRef = useRef<HTMLDivElement | null>(null);
 
@@ -273,7 +277,7 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
   const leave = () => setHover(null);
 
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 overflow-hidden">
       <div className="mb-3">
         <h3 className="text-sm font-semibold text-white">Machine State Timeline</h3>
       </div>
@@ -349,6 +353,11 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup }:
           ))}
         </div>
       </div>
+
+      {/* Footer (e.g. a collapsed Error Summary) sits inside this card. The
+          negative margins cancel the card's p-4 so the footer's top divider
+          spans edge to edge and its bottom reaches the card's rounded corner. */}
+      {footer && <div className="mt-4 -mx-4 -mb-4">{footer}</div>}
 
       {hover && typeof document !== "undefined" && createPortal(
         <div

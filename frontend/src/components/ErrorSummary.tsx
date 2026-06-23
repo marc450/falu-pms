@@ -7,6 +7,15 @@ import type { ErrorEvent, PlcErrorCode } from "@/lib/supabase";
 interface Props {
   errorEvents: ErrorEvent[];
   errorLookup: Record<string, PlcErrorCode>;
+  // When embedded inside another card (e.g. the Machine State Timeline), drop
+  // the outer card chrome and separate from the content above with a top
+  // divider instead of a self-contained bordered box.
+  embedded?: boolean;
+  // When collapsible, the header acts as a toggle: only its title + summary
+  // line show until clicked, then the table expands below.
+  collapsible?: boolean;
+  // Whether a collapsible summary starts expanded. Ignored when not collapsible.
+  defaultOpen?: boolean;
 }
 
 function fmtDur(secs: number): string {
@@ -76,8 +85,15 @@ function buildGroups(events: ErrorEvent[], lookup: Record<string, PlcErrorCode>)
   return [...map.values()].sort((a, b) => b.totalSecs - a.totalSecs);
 }
 
-export default function ErrorSummary({ errorEvents, errorLookup }: Props) {
+export default function ErrorSummary({
+  errorEvents,
+  errorLookup,
+  embedded = false,
+  collapsible = false,
+  defaultOpen = false,
+}: Props) {
   const [expandedCode, setExpandedCode] = useState<string | null>(null);
+  const [open, setOpen] = useState(defaultOpen);
 
   if (errorEvents.length === 0) return null;
 
@@ -86,11 +102,24 @@ export default function ErrorSummary({ errorEvents, errorLookup }: Props) {
   const totalCodes = groups.length;
   const totalCount = errorEvents.length;
 
+  // When collapsed, only the header shows; the table is hidden until expanded.
+  const showTable = !collapsible || open;
+
+  const outerClass = embedded
+    ? "border-t border-gray-700"
+    : "bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden";
+
   return (
-    <div className="bg-gray-800/50 border border-gray-700 rounded-lg overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-700">
+    <div className={outerClass}>
+      {/* Header — a toggle when collapsible. */}
+      <div
+        className={`flex items-center justify-between px-4 py-3 ${showTable ? "border-b border-gray-700" : ""} ${collapsible ? "cursor-pointer select-none hover:bg-gray-700/20 transition-colors" : ""}`}
+        onClick={collapsible ? () => setOpen(o => !o) : undefined}
+      >
         <h3 className="text-sm font-semibold text-white flex items-center gap-2">
+          {collapsible && (
+            <i className={`bi bi-chevron-${open ? "down" : "right"} text-gray-500 text-[10px]`} />
+          )}
           <i className="bi bi-exclamation-octagon text-red-400" />
           Error Summary
         </h3>
@@ -100,6 +129,7 @@ export default function ErrorSummary({ errorEvents, errorLookup }: Props) {
       </div>
 
       {/* Table */}
+      {showTable && (
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-500 border-b border-gray-700/60">
@@ -175,6 +205,7 @@ export default function ErrorSummary({ errorEvents, errorLookup }: Props) {
           })}
         </tbody>
       </table>
+      )}
     </div>
   );
 }
