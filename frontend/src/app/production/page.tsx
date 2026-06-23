@@ -564,39 +564,6 @@ function ProductionContent() {
         <div className="mt-8">
           <h3 className="text-lg font-semibold text-white mb-4">Production Trend</h3>
 
-          {/* Machine State Timeline sits on top of the charts. The Error
-              Summary is folded into the same card, collapsed to its title. */}
-          {!trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 ? (
-            <div className="mb-4">
-              <MachineStateTimeline
-                rows={timelineRows}
-                errorEvents={errorEvents}
-                errorLookup={errorLookup}
-                footer={
-                  !trendLoading ? (
-                    <ErrorSummary
-                      errorEvents={errorEvents}
-                      errorLookup={errorLookup}
-                      embedded
-                      collapsible
-                    />
-                  ) : null
-                }
-              />
-            </div>
-          ) : (
-            // No intraday timeline in this view — show the Error Summary alone.
-            !trendLoading && (
-              <div className="mb-4">
-                <ErrorSummary
-                  errorEvents={errorEvents}
-                  errorLookup={errorLookup}
-                  collapsible
-                />
-              </div>
-            )
-          )}
-
           <ProductionTrendSection
             rows={trendRows}
             granularity={trendGranularity}
@@ -627,6 +594,37 @@ function ProductionContent() {
             // Show the uptime chart whenever it isn't the intraday line view —
             // the shift bar view benefits from per-shift uptime bars too.
             showUptimeChart={trendShiftMode || trendGranularity !== "hour"}
+            // The Machine State Timeline sits directly under the KPI tiles and
+            // on top of the charts. The Error Summary is folded into the same
+            // card, collapsed to its title.
+            afterKpis={
+              !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 ? (
+                <MachineStateTimeline
+                  rows={timelineRows}
+                  errorEvents={errorEvents}
+                  errorLookup={errorLookup}
+                  footer={
+                    !trendLoading ? (
+                      <ErrorSummary
+                        errorEvents={errorEvents}
+                        errorLookup={errorLookup}
+                        embedded
+                        collapsible
+                      />
+                    ) : null
+                  }
+                />
+              ) : (
+                // No intraday timeline in this view — show the Error Summary alone.
+                !trendLoading ? (
+                  <ErrorSummary
+                    errorEvents={errorEvents}
+                    errorLookup={errorLookup}
+                    collapsible
+                  />
+                ) : null
+              )
+            }
           />
         </div>
       )}
