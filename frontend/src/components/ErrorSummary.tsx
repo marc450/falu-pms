@@ -1,8 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import type { ErrorEvent, PlcErrorCode } from "@/lib/supabase";
+
+// Where the "Error Analytics" link points — the Downtime tab of the analytics
+// page, which carries the full error breakdown and trends.
+const ERROR_ANALYTICS_HREF = "/analytics?tab=downtime";
 
 interface Props {
   errorEvents: ErrorEvent[];
@@ -30,10 +35,6 @@ function fmtDur(secs: number): string {
 
 function fmtTime(iso: string): string {
   try { return format(parseISO(iso), "HH:mm"); } catch { return iso; }
-}
-
-function fmtDateTime(iso: string): string {
-  try { return format(parseISO(iso), "dd.MM HH:mm"); } catch { return iso; }
 }
 
 function severityDot(severity: string | undefined) {
@@ -92,7 +93,6 @@ export default function ErrorSummary({
   collapsible = false,
   defaultOpen = false,
 }: Props) {
-  const [expandedCode, setExpandedCode] = useState<string | null>(null);
   const [open, setOpen] = useState(defaultOpen);
 
   if (errorEvents.length === 0) return null;
@@ -123,9 +123,21 @@ export default function ErrorSummary({
           <i className="bi bi-exclamation-octagon text-red-400" />
           Error Summary
         </h3>
-        <span className="text-xs text-gray-500">
-          {totalCount} {totalCount === 1 ? "event" : "events"} · {totalCodes} {totalCodes === 1 ? "code" : "codes"} · {fmtDur(totalSecs)} total downtime
-        </span>
+        <div className="flex items-center gap-3">
+          <span className="text-xs text-gray-500">
+            {totalCount} {totalCount === 1 ? "event" : "events"} · {totalCodes} {totalCodes === 1 ? "code" : "codes"} · {fmtDur(totalSecs)} total downtime
+          </span>
+          {/* stopPropagation so following the link doesn't also toggle the
+              collapsible card header it sits inside. */}
+          <Link
+            href={ERROR_ANALYTICS_HREF}
+            onClick={(e) => e.stopPropagation()}
+            className="text-xs text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
+          >
+            Error Analytics
+            <i className="bi bi-arrow-right-short text-sm" />
+          </Link>
+        </div>
       </div>
 
       {/* Table */}
@@ -133,27 +145,28 @@ export default function ErrorSummary({
       <table className="w-full text-xs">
         <thead>
           <tr className="text-gray-500 border-b border-gray-700/60">
-            <th className="text-left font-medium px-4 py-2 w-6"></th>
-            <th className="text-left font-medium px-2 py-2">Code</th>
+            <th className="text-left font-medium px-4 py-2">Code</th>
             <th className="text-left font-medium px-2 py-2">Description</th>
-            <th className="text-right font-medium px-2 py-2">Count</th>
+            <th className="text-right font-medium px-2 py-2">Occurrences</th>
             <th className="text-right font-medium px-2 py-2">Total time</th>
+            <th className="text-right font-medium px-2 py-2">Avg resolution</th>
+            <th className="text-right font-medium px-2 py-2">% of total</th>
             <th className="text-right font-medium px-4 py-2">Last seen</th>
           </tr>
         </thead>
         <tbody>
           {groups.map((g) => {
-            const isOpen = expandedCode === g.code;
-            return [
+            // Average time to resolution: total time in this error divided by
+            // how many times it occurred over the shown period.
+            const avgSecs = g.count > 0 ? g.totalSecs / g.count : 0;
+            // Share of all error time over the shown period.
+            const pct = totalSecs > 0 ? (g.totalSecs / totalSecs) * 100 : 0;
+            return (
               <tr
                 key={g.code}
-                className="border-b border-gray-700/40 hover:bg-gray-700/30 cursor-pointer transition-colors"
-                onClick={() => setExpandedCode(isOpen ? null : g.code)}
+                className="border-b border-gray-700/40 hover:bg-gray-700/30 transition-colors"
               >
                 <td className="px-4 py-2.5">
-                  <i className={`bi bi-chevron-${isOpen ? "down" : "right"} text-gray-500 text-[10px]`} />
-                </td>
-                <td className="px-2 py-2.5">
                   <span className="flex items-center gap-1.5">
                     {severityDot(g.severity)}
                     <span className="font-mono text-red-300 font-semibold">{g.code}</span>
@@ -162,46 +175,11 @@ export default function ErrorSummary({
                 <td className="px-2 py-2.5 text-gray-300 max-w-[280px] truncate">{g.description}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{g.count}</td>
                 <td className="px-2 py-2.5 text-right tabular-nums text-amber-300 font-medium">{fmtDur(g.totalSecs)}</td>
+                <td className="px-2 py-2.5 text-right tabular-nums text-gray-300">{fmtDur(avgSecs)}</td>
+                <td className="px-2 py-2.5 text-right tabular-nums text-gray-400">{pct.toFixed(1)}%</td>
                 <td className="px-4 py-2.5 text-right tabular-nums text-gray-400">{fmtTime(g.lastAt)}</td>
-              </tr>,
-
-              isOpen && (
-                <tr key={`${g.code}-detail`} className="border-b border-gray-700/40 bg-gray-900/40">
-                  <td colSpan={6} className="px-6 py-3">
-                    <table className="w-full text-[11px]">
-                      <thead>
-                        <tr className="text-gray-600">
-                          <th className="text-left font-medium pb-1 pr-4">Started</th>
-                          <th className="text-left font-medium pb-1 pr-4">Ended</th>
-                          <th className="text-right font-medium pb-1">Duration</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {[...g.events]
-                          .sort((a, b) => a.started_at.localeCompare(b.started_at))
-                          .map((ev) => {
-                            const dur = ev.duration_secs
-                              ?? (ev.ended_at
-                                ? Math.round((parseISO(ev.ended_at).getTime() - parseISO(ev.started_at).getTime()) / 1000)
-                                : Math.round((Date.now() - parseISO(ev.started_at).getTime()) / 1000));
-                            return (
-                              <tr key={ev.id} className="text-gray-400">
-                                <td className="pr-4 py-0.5 tabular-nums font-mono">{fmtDateTime(ev.started_at)}</td>
-                                <td className="pr-4 py-0.5 tabular-nums font-mono">
-                                  {ev.ended_at
-                                    ? fmtDateTime(ev.ended_at)
-                                    : <span className="text-red-400">ongoing</span>}
-                                </td>
-                                <td className="text-right py-0.5 tabular-nums text-amber-300">{fmtDur(dur)}</td>
-                              </tr>
-                            );
-                          })}
-                      </tbody>
-                    </table>
-                  </td>
-                </tr>
-              ),
-            ];
+              </tr>
+            );
           })}
         </tbody>
       </table>

@@ -133,6 +133,25 @@ function MachineFilterDropdown({ value, onChange, machinesWithErrors, machines }
   );
 }
 
+// ─── Summary KPI tile ─────────────────────────────────────────────────────────
+
+function KpiTile({ icon, iconClass, label, value }: {
+  icon: string;
+  iconClass: string;
+  label: string;
+  value: string;
+}) {
+  return (
+    <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4">
+      <div className="flex items-center gap-2 text-xs text-gray-400 mb-1.5">
+        <i className={`bi ${icon} ${iconClass}`}></i>
+        {label}
+      </div>
+      <div className="text-2xl font-semibold text-white tabular-nums">{value}</div>
+    </div>
+  );
+}
+
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnalyticsProps) {
@@ -338,9 +357,13 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
 
   // ─── Summary KPIs ───────────────────────────────────────────────────────
 
-  const totalDowntimeHours = useMemo(() => secsToHours(filtered.reduce((s, r) => s + r.total_duration_secs, 0)), [filtered]);
+  const totalDowntimeSecs  = useMemo(() => filtered.reduce((s, r) => s + r.total_duration_secs, 0), [filtered]);
+  const totalDowntimeHours = useMemo(() => secsToHours(totalDowntimeSecs), [totalDowntimeSecs]);
   const totalOccurrences   = useMemo(() => filtered.reduce((s, r) => s + r.occurrence_count, 0), [filtered]);
   const uniqueCodes        = useMemo(() => new Set(filtered.map(r => r.error_code)).size, [filtered]);
+  // Average time to resolution: mean duration of a single error event across
+  // the period — total time spent in errors divided by the number of events.
+  const avgResolutionSecs  = useMemo(() => (totalOccurrences > 0 ? totalDowntimeSecs / totalOccurrences : 0), [totalDowntimeSecs, totalOccurrences]);
 
   // ─── Render ──────────────────────────────────────────────────────────────
 
@@ -371,6 +394,34 @@ export default function DowntimeAnalytics({ dateRange, machines }: DowntimeAnaly
         machinesWithErrors={machinesWithErrors}
         machines={machines}
       />
+
+      {/* ── Summary KPIs ── */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+        <KpiTile
+          icon="bi-hourglass-split"
+          iconClass="text-red-400"
+          label="Total Downtime"
+          value={`${fmtN(totalDowntimeHours, 1)}h`}
+        />
+        <KpiTile
+          icon="bi-exclamation-octagon"
+          iconClass="text-amber-400"
+          label="Total Events"
+          value={fmtN(totalOccurrences, 0)}
+        />
+        <KpiTile
+          icon="bi-stopwatch"
+          iconClass="text-cyan-400"
+          label="Avg Time to Resolution"
+          value={fmtDuration(Math.round(avgResolutionSecs))}
+        />
+        <KpiTile
+          icon="bi-tag"
+          iconClass="text-purple-400"
+          label="Error Codes"
+          value={fmtN(uniqueCodes, 0)}
+        />
+      </div>
 
       {/* ── 1. Pareto chart ── */}
       <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-5">
