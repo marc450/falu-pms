@@ -480,14 +480,18 @@ function KpiTile({ icon, label, value, sub, colorClass, borderClass }: {
   );
 }
 
-function ChartCard({ title, legend, children }: {
+function ChartCard({ title, legend, children, footer }: {
   title: string;
   legend?: React.ReactNode;
   children: React.ReactNode;
+  // Optional content rendered inside the same card, below the chart (e.g. a
+  // collapsed Error Summary). Negative margins cancel the card's p-4 so its
+  // top divider spans edge to edge and its bottom reaches the rounded corner.
+  footer?: React.ReactNode;
 }) {
   return (
     <div
-      className="bg-gray-800/50 border border-gray-700 rounded-lg p-4"
+      className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 overflow-hidden"
       style={{ outline: "none" }}
       tabIndex={-1}
       onMouseDown={e => e.preventDefault()}
@@ -501,6 +505,7 @@ function ChartCard({ title, legend, children }: {
         {legend && <div className="flex items-center gap-3 text-xs text-gray-500">{legend}</div>}
       </div>
       {children}
+      {footer && <div className="mt-4 -mx-4 -mb-4">{footer}</div>}
     </div>
   );
 }
@@ -1265,6 +1270,7 @@ export function ProductionTrendSection({
   errorLookup = {},
   showUptimeChart = true,
   afterKpis,
+  uptimeFooter,
   fleetSize = 0,
   shiftMode = false,
   shiftSlots = [],
@@ -1297,6 +1303,11 @@ export function ProductionTrendSection({
   // The Machine Monitor uses this to position its state timeline directly
   // under the KPIs without leaking layout details into this component.
   afterKpis?: React.ReactNode;
+  // Optional content embedded inside the Avg Uptime chart card (below the
+  // chart). The Machine Monitor folds the Error Summary in here when the state
+  // timeline isn't shown, so it rides along with the uptime chart instead of
+  // standing alone.
+  uptimeFooter?: React.ReactNode;
   // "Shift" grain: render the trend metrics as one bar per shift (self + peer
   // side by side) instead of lines — shifts are discrete units to compare, not
   // a continuous series. shiftSlots names each bar's crew on the x-axis.
@@ -1568,7 +1579,11 @@ export function ProductionTrendSection({
   const scrapMax     = Math.ceil(Math.max(scrapDataMax, peerScrapMax, thresholds.scrap.mediocre) + 1);
 
   const buDataMax     = hasData ? Math.max(...buRows.map(r => r.totalBU)) : 0;
-  const peerBuDataMax = hasPeers ? Math.max(...peerRows.map(r => Math.round((r.totalSwabs / 7200) * 10) / 10)) : 0;
+  // Use the rendered peer bar values (buRows.peerBU), which already carry the
+  // BU-rate multiplier. Reading peerRows.totalSwabs raw — without that
+  // multiplier — mixed per-shift totals into a per-hour-rate axis and blew the
+  // y-axis up to the daily scale in shift mode.
+  const peerBuDataMax = hasPeers ? Math.max(0, ...buRows.map(r => r.peerBU ?? 0)) : 0;
   const buMax         = Math.ceil(Math.max(buDataMax, peerBuDataMax, buTargetLine ?? 0, buMediocreLine ?? 0) * 1.15);
 
   // Delta subtext helpers — appear below KPI tile value when peers are present.
@@ -1708,6 +1723,7 @@ export function ProductionTrendSection({
         {showUptimeChart && (
         <ChartCard
           title={`Avg Uptime ${chartTitle}`}
+          footer={uptimeFooter}
           legend={
             <>
               {hasPeers && peerLabel && (

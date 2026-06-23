@@ -523,6 +523,29 @@ function ProductionContent() {
     );
   }
 
+  // ── Where the Error Summary lives ──
+  // Intraday line view → folded into the Machine State Timeline card.
+  // Otherwise (shift / daily) → folded into the Avg Uptime chart card, which is
+  // shown in those views in place of the timeline. Only when neither is shown
+  // does it stand on its own.
+  const timelineShown   = !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0;
+  const uptimeChartShown = trendShiftMode || trendGranularity !== "hour";
+  const errorWindowSecs = Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000);
+  const errorPeerLabel  = peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined;
+  const errorSummaryEl = trendLoading ? null : (
+    <ErrorSummary
+      errorEvents={errorEvents}
+      errorLookup={errorLookup}
+      embedded={timelineShown || uptimeChartShown}
+      collapsible
+      windowSecs={errorWindowSecs}
+      peerAvgSecs={errorPeerAvgSecs}
+      peerLabel={errorPeerLabel}
+      machineCode={machineName}
+      onHoverCode={timelineShown ? setHoveredErrorCode : undefined}
+    />
+  );
+
   return (
     <div>
       {/* Header */}
@@ -617,48 +640,26 @@ function ProductionContent() {
             shiftSlots={shiftConfig?.slots ?? []}
             // Show the uptime chart whenever it isn't the intraday line view —
             // the shift bar view benefits from per-shift uptime bars too.
-            showUptimeChart={trendShiftMode || trendGranularity !== "hour"}
-            // The Machine State Timeline sits directly under the KPI tiles and
-            // on top of the charts. The Error Summary is folded into the same
-            // card, collapsed to its title.
+            showUptimeChart={uptimeChartShown}
+            // Intraday: the Machine State Timeline sits under the KPI tiles with
+            // the Error Summary folded into it. When the timeline isn't shown
+            // but the uptime chart is, the summary rides inside that chart card
+            // instead (uptimeFooter). Only when neither is shown does it stand
+            // alone here.
             afterKpis={
-              !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0 ? (
+              timelineShown ? (
                 <MachineStateTimeline
                   rows={timelineRows}
                   errorEvents={errorEvents}
                   errorLookup={errorLookup}
                   highlightCode={hoveredErrorCode}
-                  footer={
-                    !trendLoading ? (
-                      <ErrorSummary
-                        errorEvents={errorEvents}
-                        errorLookup={errorLookup}
-                        embedded
-                        collapsible
-                        windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
-                        peerAvgSecs={errorPeerAvgSecs}
-                        peerLabel={peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined}
-                        machineCode={machineName}
-                        onHoverCode={setHoveredErrorCode}
-                      />
-                    ) : null
-                  }
+                  footer={errorSummaryEl}
                 />
-              ) : (
-                // No intraday timeline in this view — show the Error Summary alone.
-                !trendLoading ? (
-                  <ErrorSummary
-                    errorEvents={errorEvents}
-                    errorLookup={errorLookup}
-                    collapsible
-                    windowSecs={Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000)}
-                    peerAvgSecs={errorPeerAvgSecs}
-                    peerLabel={peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined}
-                    machineCode={machineName}
-                  />
-                ) : null
-              )
+              ) : !uptimeChartShown ? (
+                errorSummaryEl
+              ) : null
             }
+            uptimeFooter={!timelineShown && uptimeChartShown ? errorSummaryEl : undefined}
           />
         </div>
       )}
