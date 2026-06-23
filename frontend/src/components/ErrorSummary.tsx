@@ -118,6 +118,19 @@ export default function ErrorSummary({
   const totalCodes = groups.length;
   const totalCount = errorEvents.length;
 
+  // ── Aggregates for the totals row ──
+  // Average duration across every error event, regardless of code.
+  const avgSecsAll = totalCount > 0 ? totalSecs / totalCount : 0;
+  // Most recent error start across all codes.
+  const lastSeenAll = groups.reduce((m, g) => (g.lastAt > m ? g.lastAt : m), groups[0]?.lastAt ?? "");
+  // This machine's total error time vs the average total error time per peer
+  // machine (summed across every code the peer group logged).
+  const peerTotalAvg = peerAvgSecs ? Object.values(peerAvgSecs).reduce((s, v) => s + v, 0) : null;
+  const totalPeerDeltaPct = peerTotalAvg && peerTotalAvg > 0
+    ? ((totalSecs - peerTotalAvg) / peerTotalAvg) * 100
+    : null;
+  const pctTotalAll = windowSecs && windowSecs > 0 ? (totalSecs / windowSecs) * 100 : null;
+
   // When collapsed, only the header shows; the table is hidden until expanded.
   const showTable = !collapsible || open;
 
@@ -228,6 +241,31 @@ export default function ErrorSummary({
             );
           })}
         </tbody>
+        <tfoot>
+          <tr className="border-t-2 border-gray-600 font-semibold text-gray-200">
+            <td className="px-4 py-2.5">Total</td>
+            <td className="px-2 py-2.5 text-gray-500 font-normal">{totalCodes} {totalCodes === 1 ? "code" : "codes"}</td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{totalCount}</td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{fmtDur(totalSecs)}</td>
+            <td
+              className={`px-2 py-2.5 text-right tabular-nums ${
+                totalPeerDeltaPct === null ? "text-gray-600"
+                  : totalPeerDeltaPct > 0 ? "text-red-400"
+                  : totalPeerDeltaPct < 0 ? "text-green-400"
+                  : "text-gray-400"
+              }`}
+              title={peerTotalAvg && peerTotalAvg > 0 ? `Peer average: ${fmtDur(peerTotalAvg)} total per machine` : "No peer data"}
+            >
+              {totalPeerDeltaPct === null
+                ? "—"
+                : `${totalPeerDeltaPct > 0 ? "+" : ""}${totalPeerDeltaPct.toFixed(0)}%`}
+            </td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{fmtDur(avgSecsAll)}</td>
+            <td className="px-2 py-2.5 text-right tabular-nums text-gray-400 font-normal">100%</td>
+            <td className="px-2 py-2.5 text-right tabular-nums">{pctTotalAll === null ? "—" : `${pctTotalAll.toFixed(1)}%`}</td>
+            <td className="px-4 py-2.5 text-right tabular-nums font-normal text-gray-400">{lastSeenAll ? fmtTime(lastSeenAll) : "—"}</td>
+          </tr>
+        </tfoot>
       </table>
       )}
     </div>

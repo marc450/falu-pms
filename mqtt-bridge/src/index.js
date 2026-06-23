@@ -442,6 +442,29 @@ async function handleShiftMessage(payload) {
   // Always refresh current crew (schedule may change intra-shift)
   currentCrew = resolveCurrentCrew() || null;
 
+  // ── Per-machine crew latch, driven by the PLC's OWN Shift field ──────────
+  // The PLC Shift field is a free-running counter (1→2→3→1, no fixed daily
+  // meaning), so the number itself can't be mapped to a crew. But a CHANGE in
+  // it is the machine's own, drift-proof signal that IT has crossed a shift
+  // boundary and reset its cumulative counters. We latch the crew once per PLC
+  // shift, resolved from the schedule using the MACHINE's own timestamp — which
+  // is internally consistent with its counter resets even when its clock drifts
+  // ±5 min from the other machines. Within a shift the crew never changes, so we
+  // do NOT re-derive it per message: that "is this timestamp past the nominal
+  // boundary?" comparison was what mis-attributed readings near every switch.
+  //
+  // The end-of-shift Save snapshot carries the OUTGOING shift's number and
+  // totals, so it deliberately does NOT trip this transition (`!data.Save`) —
+  // it keeps the outgoing crew that's still latched, which is exactly whose
+  // data it is.
+  const incomingPlcShift = data.Shift;
+  const plcShiftChanged = incomingPlcShift !== undefined && incomingPlcShift !== m.plcShift && !data.Save;
+  if (m.shiftCrew == null || plcShiftChanged) {
+    const latched = resolveCurrentCrew(data.Timestamp);
+    if (latched) m.shiftCrew = latched;   // only latch a real crew; keep retrying until the schedule resolves
+  }
+  if (incomingPlcShift !== undefined && !data.Save) m.plcShift = incomingPlcShift;
+
   // ── Status transition detection — update statusSince for the badge timer ──
   // All timestamps come from the PLC clock (data.Timestamp). The PLC clock is
   // set by hand and may drift from real time, but we use it consistently so
@@ -475,7 +498,7 @@ async function handleShiftMessage(payload) {
     // Close all open error_event rows for this machine
     if (m.openErrorEvents && Object.keys(m.openErrorEvents).length > 0) {
       const plcEnd = new Date(plcNow);
-      const crew = resolveMessageCrew(data) || "Unassigned";
+      const crew = resolveMessageCrew(data, m) || "Unassigned";
       for (const [errCode, eventId] of Object.entries(m.openErrorEvents)) {
         const { data: ev } = await supabase.from("error_events").select("started_at").eq("id", eventId).single();
         const durationSecs = ev ? Math.round((plcEnd.getTime() - new Date(ev.started_at).getTime()) / 1000) : 0;
@@ -576,7 +599,22 @@ async function handleShiftMessage(payload) {
                   (data.ProducedBoxes || 0) > 0;
 
   if (hasData) {
-    const crew = resolveMessageCrew(data) || "Unassigned";
+    const crew = resolveMessageCrew(data, m) || "Unassigned";
+
+    // Where this reading sits on the PLC clock. The end-of-shift Save snapshot
+    // duplicates the OUTGOING shift's final totals but is published microseconds
+    // into the NEW shift (same wall-clock as the new shift's first reading), so
+    // left untouched its maxed-out counters land in the new shift's first 5-min
+    // bucket. There they pin that bucket's MAX to the previous high-water mark,
+    // and the reset-aware delta then computes 0 for production, idle AND error —
+    // the dashed "no data" gap on the Machine State Timeline at every shift
+    // switch. Re-stamp the closer to the machine's last real reading so it
+    // buckets into the CLOSING window, where its totals equal the anchor and
+    // change nothing, instead of poisoning the opening bucket. The shift-history
+    // cards order save rows by ingested_at, not plc_timestamp, so they are
+    // unaffected.
+    const plcTsIso = data.Timestamp ? new Date(data.Timestamp).toISOString() : null;
+    const readingPlcTs = (data.Save && m.lastReadingPlcTs) ? m.lastReadingPlcTs : plcTsIso;
 
     // Single source of truth for the reading row, written to both stores.
     const readingRow = {
@@ -601,8 +639,12 @@ async function handleShiftMessage(payload) {
       scrap_rate:                data.Reject                  || 0,
       save_flag:                 data.Save                    || false,
       raw_payload: data,
-      plc_timestamp: data.Timestamp ? new Date(data.Timestamp).toISOString() : null,
+      plc_timestamp: readingPlcTs,
     };
+
+    // Remember the last NON-save reading's PLC timestamp so the next Save
+    // snapshot can be parked back in the outgoing shift's window (see above).
+    if (!data.Save && plcTsIso) m.lastReadingPlcTs = plcTsIso;
 
     // ── ClickHouse write (sole store for raw readings; buffered, never blocks) ──
     if (CLICKHOUSE_ENABLED) {
@@ -617,7 +659,7 @@ async function handleShiftMessage(payload) {
   }
 
   if (data.Save) {
-    const saveCrew = resolveMessageCrew(data) || "Unassigned";
+    const saveCrew = resolveMessageCrew(data, m) || "Unassigned";
     logger.info(`Save flag (end of shift) received for ${machineCode}, crew ${saveCrew}`);
 
     // error_shift_summary and saved_shift_logs are no longer written to Supabase.
@@ -663,7 +705,7 @@ async function handleErrorMessage(payload) {
   if (!m.shiftErrorCounts) m.shiftErrorCounts = {};
 
   const machineId = machineIdCache[machineCode];
-  const crew = resolveMessageCrew(data) || "Unassigned";
+  const crew = resolveMessageCrew(data, m) || "Unassigned";
 
   if (data.ErrorStatus) {
     // Error activated
@@ -886,19 +928,21 @@ function resolveCurrentCrew(timestamp) {
 /**
  * Resolve the crew for an incoming MQTT message.
  *
- * Same as resolveCurrentCrew(data.Timestamp) except SAVE messages — which carry
- * the just-ended shift's cumulative totals — are pinned to one second before
- * their wall-clock timestamp. Without this nudge a SAVE message published at
- * the exact shift boundary (e.g. 19:00:00.000) would be tagged with the NEW
- * crew, even though its payload is entirely the previous crew's data.
+ * Prefers the per-machine crew latched at the machine's OWN PLC shift
+ * transition (see the latch block in handleShiftMessage). That latch is
+ * drift-proof: it follows the machine's Shift field, which moves together with
+ * its counter resets regardless of clock skew, so the end-of-shift Save
+ * snapshot keeps the outgoing crew instead of being mis-tagged with the new one
+ * (the old ±1s timestamp nudge could never fully solve that under clock drift).
+ *
+ * Falls back to time-based resolution only when no latch exists yet — e.g. an
+ * Error/<type> message for a machine whose first Status/<type> hasn't landed,
+ * or right after a bridge restart.
  */
-function resolveMessageCrew(data) {
+function resolveMessageCrew(data, m) {
+  if (m && m.shiftCrew) return m.shiftCrew;
   const ts = data?.Timestamp;
   if (!ts) return resolveCurrentCrew();
-  if (data?.Save === true) {
-    const adjusted = new Date(new Date(ts).getTime() - 1000).toISOString();
-    return resolveCurrentCrew(adjusted);
-  }
   return resolveCurrentCrew(ts);
 }
 
