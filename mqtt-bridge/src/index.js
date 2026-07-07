@@ -88,6 +88,11 @@ if (CLICKHOUSE_ENABLED) {
     username: process.env.CLICKHOUSE_USER || "default",
     password: process.env.CLICKHOUSE_PASSWORD || "",
     database: process.env.CLICKHOUSE_DB || "default",
+    // The bridge sends ISO-8601 timestamps (…T…Z) for the DateTime64 columns.
+    // ClickHouse Cloud defaulted date_time_input_format to best_effort so those
+    // parsed; self-hosted OSS defaults to 'basic' (rejects the T/Z form). Set it
+    // explicitly so inserts parse the same on any ClickHouse.
+    clickhouse_settings: { date_time_input_format: "best_effort" },
   });
   logger.info("ClickHouse dual-write ENABLED");
 }
