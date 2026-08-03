@@ -447,7 +447,7 @@ function PctTargetTooltipContent({
             <div className={`flex items-baseline gap-1.5 mt-0.5 font-semibold ${hit ? "text-green-400" : "text-red-400"}`}>
               <i className={hit ? "bi bi-check-circle-fill" : "bi bi-x-circle-fill"} />
               <span className="tabular-nums">
-                {delta >= 0 ? "+" : ""}{delta.toFixed(1)} pp
+                {Math.abs(delta).toFixed(1)} pp
               </span>
               <span className="text-gray-400 font-normal">
                 {hit
