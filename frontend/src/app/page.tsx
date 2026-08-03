@@ -550,12 +550,12 @@ function CellSection({
   // Percentages must sum to 100.
   type ColDef = { label: string; col: CellSortCol; pct: number };
   const colDefs: ColDef[] = [
-    { label: "Machine",              col: "Machine",   pct: 10 },
+    { label: "Machine",              col: "Machine",   pct: 12 },
     { label: "Status",               col: "Status",    pct: 12 },
     { label: "Uptime",               col: "Uptime",    pct: 8 },
     { label: "Scrap",                col: "Scrap",     pct: 8 },
     { label: "Total BUs",            col: "TotalBU",   pct: 10 },
-    { label: "Expected Output",      col: "BU",        pct: 15 },
+    { label: "Expected Output",      col: "BU",        pct: 13 },
     { label: "Speed",                col: "Speed",     pct: 12 },
     { label: "Idle Time",            col: "IdleTime",  pct: 9 },
     { label: "Error Time",           col: "ErrorTime", pct: 9 },
@@ -565,7 +565,7 @@ function CellSection({
   return (
     <div className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden mb-4">
       <div className="overflow-x-auto">
-        <table className="w-full text-sm" style={{ tableLayout: "fixed" }}>
+        <table className="w-full min-w-[72rem] text-sm" style={{ tableLayout: "fixed" }}>
           {/* ── colgroup pins every column to a fixed percentage width ── */}
           <colgroup>
             {colDefs.map((cd) => (
@@ -580,12 +580,12 @@ function CellSection({
               className="bg-gray-800 border-b border-gray-700 cursor-pointer hover:bg-gray-750 transition-colors"
             >
               {/* Machine col → cell name */}
-              <td className="px-4 py-3 whitespace-nowrap">
+              <td className="px-4 py-3 whitespace-nowrap overflow-hidden">
                 <div className="flex flex-col gap-0.5">
                   <span className="text-[10px] invisible">·</span>
                   <div className="flex items-center gap-2">
                     <i className={`bi ${icon} ${color}`}></i>
-                    <span className="text-white font-semibold text-sm">{title}</span>
+                    <span className="text-white font-semibold text-sm truncate">{title}</span>
                   </div>
                 </div>
               </td>
