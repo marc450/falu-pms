@@ -5,6 +5,13 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+function json(body: Record<string, unknown>, status: number): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
+  });
+}
+
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response("ok", { headers: corsHeaders });
@@ -18,10 +25,7 @@ Deno.serve(async (req) => {
     // Verify caller is authenticated
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: "Missing authorization" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: "Missing authorization" }, 401);
     }
 
     // Get caller's user ID from their JWT
@@ -34,10 +38,7 @@ Deno.serve(async (req) => {
     } = await anonClient.auth.getUser(authHeader.replace("Bearer ", ""));
 
     if (!caller) {
-      return new Response(JSON.stringify({ error: "Invalid token" }), {
-        status: 401,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: "Invalid token" }, 401);
     }
 
     // Verify caller is admin
@@ -48,80 +49,67 @@ Deno.serve(async (req) => {
       .single();
 
     if (!callerProfile || callerProfile.role !== "admin") {
-      return new Response(JSON.stringify({ error: "Admin access required" }), {
-        status: 403,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: "Admin access required" }, 403);
     }
 
-    const { email, password, role, first_name, last_name, mechanic_phone } =
+    const { email, role, first_name, last_name, mechanic_phone, redirect_to } =
       await req.json();
 
-    if (!email || !password) {
-      return new Response(
-        JSON.stringify({ error: "Email and password are required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+    if (!email) {
+      return json({ error: "Email is required" }, 400);
     }
 
     if (!first_name || !last_name) {
-      return new Response(
-        JSON.stringify({ error: "First name and last name are required" }),
-        {
-          status: 400,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
-      );
+      return json({ error: "First name and last name are required" }, 400);
     }
 
     if (role && !["admin", "viewer"].includes(role)) {
-      return new Response(JSON.stringify({ error: "Invalid role" }), {
-        status: 400,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
+      return json({ error: "Invalid role" }, 400);
     }
 
+    // Supabase validates redirect_to against the Auth redirect allowlist,
+    // so passing it through from the client is safe.
+    const inviteOptions = redirect_to ? { redirectTo: redirect_to } : undefined;
+
     let userId: string;
+    // true when an invite email actually went out this call
+    let invited = false;
 
-    // Try to create the auth user
-    const { data: newUser, error: createError } =
-      await supabase.auth.admin.createUser({
-        email,
-        password,
-        email_confirm: true,
-      });
+    const { data: inviteData, error: inviteError } =
+      await supabase.auth.admin.inviteUserByEmail(email, inviteOptions);
 
-    if (createError) {
-      // If user already exists in auth.users, look them up and add a profile
-      if (createError.message.includes("already been registered")) {
+    if (inviteError) {
+      if (inviteError.message.includes("already been registered")) {
         const { data: listData } = await supabase.auth.admin.listUsers();
         const existing = listData?.users?.find(
           (u: { email?: string }) => u.email === email
         );
         if (!existing) {
-          return new Response(
-            JSON.stringify({ error: "User exists but could not be found" }),
-            {
-              status: 400,
-              headers: { ...corsHeaders, "Content-Type": "application/json" },
-            }
-          );
+          return json({ error: "User exists but could not be found" }, 400);
         }
-        userId = existing.id;
-      } else {
-        return new Response(
-          JSON.stringify({ error: createError.message }),
-          {
-            status: 400,
-            headers: { ...corsHeaders, "Content-Type": "application/json" },
+
+        if (!existing.last_sign_in_at) {
+          // Pending invite that was never accepted: recreate the auth user
+          // so a fresh invite email goes out (GoTrue refuses to re-invite
+          // an existing address). The profile row is upserted again below.
+          await supabase.auth.admin.deleteUser(existing.id);
+          const { data: reinvite, error: reinviteError } =
+            await supabase.auth.admin.inviteUserByEmail(email, inviteOptions);
+          if (reinviteError) {
+            return json({ error: reinviteError.message }, 400);
           }
-        );
+          userId = reinvite.user.id;
+          invited = true;
+        } else {
+          // Active account: just (re)attach the profile, no email
+          userId = existing.id;
+        }
+      } else {
+        return json({ error: inviteError.message }, 400);
       }
     } else {
-      userId = newUser.user.id;
+      userId = inviteData.user.id;
+      invited = true;
     }
 
     // Insert profile row (upsert to handle re-adding)
@@ -141,39 +129,29 @@ Deno.serve(async (req) => {
       .upsert(profileData, { onConflict: "id" });
 
     if (profileError) {
-      // Only rollback auth user if we just created it
-      if (!createError) {
+      // Only rollback the auth user if this call created it
+      if (invited) {
         await supabase.auth.admin.deleteUser(userId);
       }
-      return new Response(
-        JSON.stringify({
-          error: "Failed to create profile: " + profileError.message,
-        }),
-        {
-          status: 500,
-          headers: { ...corsHeaders, "Content-Type": "application/json" },
-        }
+      return json(
+        { error: "Failed to create profile: " + profileError.message },
+        500
       );
     }
 
-    return new Response(
-      JSON.stringify({
+    return json(
+      {
         id: userId,
         email,
         role: role || "viewer",
         first_name,
         last_name,
         mechanic_phone: mechanic_phone || null,
-      }),
-      {
-        status: 201,
-        headers: { ...corsHeaders, "Content-Type": "application/json" },
-      }
+        invited,
+      },
+      201
     );
   } catch (err) {
-    return new Response(JSON.stringify({ error: (err as Error).message }), {
-      status: 500,
-      headers: { ...corsHeaders, "Content-Type": "application/json" },
-    });
+    return json({ error: (err as Error).message }, 500);
   }
 });

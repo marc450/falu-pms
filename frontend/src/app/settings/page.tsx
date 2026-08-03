@@ -32,7 +32,7 @@ import {
   fetchUserProfiles,
   updateUserRole,
   updateUserProfile,
-  invokeCreateUser,
+  invokeInviteUser,
   invokeDeleteUser,
   fetchShiftMechanics,
   saveShiftMechanics,
@@ -2217,11 +2217,12 @@ function UsersTab() {
   const [newFirstName, setNewFirstName] = useState("");
   const [newLastName, setNewLastName] = useState("");
   const [newEmail, setNewEmail] = useState("");
-  const [newPassword, setNewPassword] = useState("");
   const [newPhone, setNewPhone] = useState("");
   const [newRole, setNewRole] = useState<"admin" | "viewer">("viewer");
   const [saving, setSaving] = useState(false);
+  const [resendingId, setResendingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<UserProfile | null>(null);
   const [editingUser, setEditingUser] = useState<UserProfile | null>(null);
 
@@ -2237,16 +2238,21 @@ function UsersTab() {
 
   useEffect(() => { reload(); }, []);
 
-  const handleCreate = async () => {
-    if (!newEmail || !newPassword || !newFirstName || !newLastName) return;
+  const handleInvite = async () => {
+    if (!newEmail || !newFirstName || !newLastName) return;
     setSaving(true);
     setError(null);
+    setNotice(null);
     try {
-      await invokeCreateUser(newEmail, newPassword, newRole, newFirstName, newLastName, newPhone || undefined);
+      const result = await invokeInviteUser(newEmail, newRole, newFirstName, newLastName, newPhone || undefined);
+      setNotice(
+        result.invited
+          ? `Invite sent to ${newEmail}. They'll receive an email with a link to set their password.`
+          : `${newEmail} already has an active account — it was added to the user list without sending an email.`
+      );
       setNewFirstName("");
       setNewLastName("");
       setNewEmail("");
-      setNewPassword("");
       setNewPhone("");
       setNewRole("viewer");
       setShowAddForm(false);
@@ -2255,6 +2261,25 @@ function UsersTab() {
       setError((e as Error).message);
     }
     setSaving(false);
+  };
+
+  const handleResendInvite = async (u: UserProfile) => {
+    setResendingId(u.id);
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await invokeInviteUser(u.email, u.role, u.first_name, u.last_name, u.mechanic_phone || undefined);
+      setNotice(
+        result.invited
+          ? `Invite email resent to ${u.email}.`
+          : `${u.email} has already accepted their invite — no email sent. They can use "Forgot password" on the login page if they're locked out.`
+      );
+      // Re-inviting a pending user recreates the auth account with a new id
+      await reload();
+    } catch (e) {
+      setError((e as Error).message);
+    }
+    setResendingId(null);
   };
 
   const handleRoleChange = async (userId: string, role: "admin" | "viewer") => {
@@ -2315,10 +2340,20 @@ function UsersTab() {
           </div>
         )}
 
-        {/* Add user form */}
+        {notice && (
+          <div className="mx-5 mt-4 px-4 py-2.5 bg-green-500/10 border border-green-500/30 rounded-lg text-sm text-green-400 flex items-center gap-2">
+            <i className="bi bi-envelope-check shrink-0"></i>
+            {notice}
+          </div>
+        )}
+
+        {/* Invite user form */}
         {showAddForm && (
           <div className="mx-5 mt-4 p-4 bg-gray-700/50 border border-gray-600 rounded-lg">
-            <h5 className="text-white text-sm font-medium mb-3">New User</h5>
+            <h5 className="text-white text-sm font-medium mb-1">Invite User</h5>
+            <p className="text-gray-400 text-xs mb-3">
+              They&apos;ll receive an email with a link to set their own password.
+            </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className="block text-xs text-gray-400 mb-1">First Name *</label>
@@ -2347,16 +2382,6 @@ function UsersTab() {
                   value={newEmail}
                   onChange={(e) => setNewEmail(e.target.value)}
                   placeholder="user@example.com"
-                  className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
-                />
-              </div>
-              <div>
-                <label className="block text-xs text-gray-400 mb-1">Temporary Password *</label>
-                <input
-                  type="text"
-                  value={newPassword}
-                  onChange={(e) => setNewPassword(e.target.value)}
-                  placeholder="Min. 6 characters"
                   className="w-full px-3 py-2 bg-gray-800 border border-gray-600 rounded-lg text-sm text-white placeholder-gray-500 focus:outline-none focus:border-blue-500"
                 />
               </div>
@@ -2390,11 +2415,11 @@ function UsersTab() {
                 Cancel
               </button>
               <button
-                onClick={handleCreate}
-                disabled={saving || !newEmail || !newPassword || !newFirstName || !newLastName}
+                onClick={handleInvite}
+                disabled={saving || !newEmail || !newFirstName || !newLastName}
                 className="px-4 py-2 text-sm text-white bg-blue-600 hover:bg-blue-700 disabled:opacity-40 rounded-lg transition-colors"
               >
-                {saving ? "Creating..." : "Create User"}
+                {saving ? "Sending..." : "Send Invite"}
               </button>
             </div>
           </div>
@@ -2447,6 +2472,20 @@ function UsersTab() {
                       </td>
                       <td className="py-3 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          {!isCurrentUser && (
+                            <button
+                              onClick={() => handleResendInvite(u)}
+                              disabled={resendingId !== null}
+                              className="text-gray-500 hover:text-blue-400 transition-colors disabled:opacity-40"
+                              title="Resend invite email"
+                            >
+                              {resendingId === u.id ? (
+                                <span className="inline-block w-3.5 h-3.5 border-2 border-blue-500 border-t-transparent rounded-full animate-spin"></span>
+                              ) : (
+                                <i className="bi bi-envelope-plus"></i>
+                              )}
+                            </button>
+                          )}
                           <button
                             onClick={() => setEditingUser(u)}
                             className="text-gray-500 hover:text-blue-400 transition-colors"

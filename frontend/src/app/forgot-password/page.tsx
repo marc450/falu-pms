@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { sendPasswordReset } from "@/lib/supabase";
+import { sendPasswordReset, getAuthRedirectUrl } from "@/lib/supabase";
 
 function FaluLogo({ className }: { className?: string }) {
   const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
@@ -22,11 +22,7 @@ export default function ForgotPasswordPage() {
     setError("");
 
     try {
-      // Redirect URL must be in Supabase's Auth → URL Configuration →
-      // Redirect URLs allowlist. Using window.location.origin works for
-      // any deploy environment without an extra env var.
-      const redirectTo = `${window.location.origin}/reset-password`;
-      await sendPasswordReset(email, redirectTo);
+      await sendPasswordReset(email, getAuthRedirectUrl("/reset-password"));
       setSent(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to send reset email. Please try again.");

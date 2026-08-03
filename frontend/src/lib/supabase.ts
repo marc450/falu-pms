@@ -1683,17 +1683,37 @@ async function extractEdgeFnError(error: { message: string; context?: unknown })
   return error.message;
 }
 
-export async function invokeCreateUser(
+// Builds an absolute URL for Supabase auth email redirects. Must include
+// the basePath explicitly — window.location.origin alone points at the
+// domain root, which 404s on GitHub Pages (site lives under /falu-pms).
+// Every URL built here must be in Supabase's Authentication → URL
+// Configuration → Redirect URLs allowlist.
+export function getAuthRedirectUrl(path: string): string {
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+  return `${window.location.origin}${basePath}${path}`;
+}
+
+// Invites a user via the create-user edge function. Supabase emails them
+// a link to /accept-invite where they set their own password. `invited`
+// is false when the address already has an active account (profile row
+// gets attached, but no email goes out).
+export async function invokeInviteUser(
   email: string,
-  password: string,
   role: "admin" | "viewer",
   first_name: string,
   last_name: string,
   mechanic_phone?: string
-): Promise<{ id: string; email: string; role: string }> {
+): Promise<{ id: string; email: string; role: string; invited: boolean }> {
   const sb = getSupabase();
   const { data, error } = await sb.functions.invoke("create-user", {
-    body: { email, password, role, first_name, last_name, mechanic_phone: mechanic_phone || null },
+    body: {
+      email,
+      role,
+      first_name,
+      last_name,
+      mechanic_phone: mechanic_phone || null,
+      redirect_to: getAuthRedirectUrl("/accept-invite"),
+    },
   });
   if (error) throw new Error(await extractEdgeFnError(error));
   if (data?.error) throw new Error(data.error);
