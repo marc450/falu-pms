@@ -208,10 +208,10 @@ const TWILIO_TEMPLATE_SID = process.env.TWILIO_TEMPLATE_SID || "";   // e.g. "HX
 // BROKER SETTINGS (loaded from env or defaults)
 // ============================================
 const brokerSettings = {
-  host: process.env.MQTT_HOST || "e21df7393cc24e69b198158d3af2b3d6.s1.eu.hivemq.cloud",
+  host: process.env.MQTT_HOST || "542d2796adfb4ae084aec5eb80410f0b.s1.eu.hivemq.cloud",
   port: parseInt(process.env.MQTT_PORT || "8883"),
   username: process.env.MQTT_USERNAME || "mqtt-user",
-  password: process.env.MQTT_PASSWORD || "Admin123",
+  password: process.env.MQTT_PASSWORD || "",
   isLocal: process.env.MQTT_IS_LOCAL === "true",
 };
 
