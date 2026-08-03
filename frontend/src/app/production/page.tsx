@@ -535,19 +535,22 @@ function ProductionContent() {
   }
 
   // ── Where the Error Summary lives ──
-  // Intraday line view → folded into the Machine State Timeline card.
-  // Otherwise (shift / daily) → folded into the Avg Uptime chart card, which is
-  // shown in those views in place of the timeline. Only when neither is shown
-  // does it stand on its own.
-  const timelineShown   = !trendShiftMode && trendGranularity === "hour" && trendRows.length > 0;
-  const uptimeChartShown = trendShiftMode || trendGranularity !== "hour";
+  // Intraday view (timeline has 5m rows) → folded into the Machine State
+  // Timeline card. Every other view → folded into the Avg Uptime chart card,
+  // which is shown whenever the timeline isn't. Exactly one of the two hosts
+  // is always rendered, so the summary always shows. Gating the timeline on
+  // timelineRows (not the grain) matters: the 1h grain also reports "hour"
+  // granularity but spans >25h, so no 5m rows are fetched for it — it must
+  // fall through to the uptime chart instead of an empty timeline card.
+  const timelineShown    = !trendShiftMode && trendGranularity === "hour" && timelineRows.length > 0;
+  const uptimeChartShown = !timelineShown;
   const errorWindowSecs = Math.max(0, (trendRange.end.getTime() - trendRange.start.getTime()) / 1000);
   const errorPeerLabel  = peerType ? `${peerType}, ${peerCount} ${peerCount === 1 ? "peer" : "peers"}` : undefined;
   const errorSummaryEl = trendLoading ? null : (
     <ErrorSummary
       errorEvents={errorEvents}
       errorLookup={errorLookup}
-      embedded={timelineShown || uptimeChartShown}
+      embedded
       collapsible
       windowSecs={errorWindowSecs}
       peerAvgSecs={errorPeerAvgSecs}
@@ -670,14 +673,13 @@ function ProductionContent() {
             errorLookup={errorLookup}
             shiftMode={trendShiftMode}
             shiftSlots={shiftConfig?.slots ?? []}
-            // Show the uptime chart whenever it isn't the intraday line view —
-            // the shift bar view benefits from per-shift uptime bars too.
+            // Show the uptime chart whenever the state timeline isn't drawn:
+            // per-shift bars in shift mode, an hourly line at the 1h grain
+            // (>25h windows), a daily line beyond that.
             showUptimeChart={uptimeChartShown}
-            // Intraday: the Machine State Timeline sits under the KPI tiles with
-            // the Error Summary folded into it. When the timeline isn't shown
-            // but the uptime chart is, the summary rides inside that chart card
-            // instead (uptimeFooter). Only when neither is shown does it stand
-            // alone here.
+            // Intraday: the Machine State Timeline sits under the KPI tiles
+            // with the Error Summary folded into it. In every other view the
+            // summary rides inside the Avg Uptime chart card (uptimeFooter).
             afterKpis={
               timelineShown ? (
                 <MachineStateTimeline
@@ -687,11 +689,9 @@ function ProductionContent() {
                   highlightCode={hoveredErrorCode}
                   footer={errorSummaryEl}
                 />
-              ) : !uptimeChartShown ? (
-                errorSummaryEl
               ) : null
             }
-            uptimeFooter={!timelineShown && uptimeChartShown ? errorSummaryEl : undefined}
+            uptimeFooter={uptimeChartShown ? errorSummaryEl : undefined}
           />
         </div>
       )}

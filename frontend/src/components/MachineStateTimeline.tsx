@@ -290,8 +290,19 @@ export default function MachineStateTimeline({ rows, errorEvents, errorLookup, f
     return { firstMs, endMs, totalMs, visual, tickPositions };
   }, [rows, errorEvents]);
 
+  // Empty state still renders inside the card and keeps the footer (Error
+  // Summary) visible — the summary must never disappear just because there
+  // are no 5m state rows for the window.
   if (!data) {
-    return <div className="text-gray-500 text-sm py-4">No state data for this period.</div>;
+    return (
+      <div className="bg-gray-800/50 border border-gray-700 rounded-lg p-4 overflow-hidden">
+        <div className="mb-3">
+          <h3 className="text-sm font-semibold text-white">Machine State Timeline</h3>
+        </div>
+        <div className="text-gray-500 text-sm py-4">No state data for this period.</div>
+        {footer && <div className="mt-4 -mx-4 -mb-4">{footer}</div>}
+      </div>
+    );
   }
 
   const pct = (t: number) => ((t - data.firstMs) / data.totalMs) * 100;
