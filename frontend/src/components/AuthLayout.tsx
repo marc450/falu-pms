@@ -218,15 +218,17 @@ export default function AuthLayout({ children }: { children: React.ReactNode }) 
   const isLoginPage          = pathname === "/login";
   const isForgotPasswordPage = pathname === "/forgot-password";
   const isResetPasswordPage  = pathname === "/reset-password";
+  const isAcceptInvitePage   = pathname === "/accept-invite";
   const isLeaderboardPage    = pathname === "/leaderboard";
   const isSettingsPage       = pathname === "/settings";
   const isTabletPage         = pathname?.startsWith("/tablet") ?? false;
 
-  // Pages accessible without a Supabase session. The reset-password page
-  // is in here even though it does have a (recovery) session once the
-  // email link is opened — Supabase parses the URL fragment asynchronously,
-  // and we don't want the redirect to fire before that lands.
-  const isPublicAuthPage = isLoginPage || isForgotPasswordPage || isResetPasswordPage;
+  // Pages accessible without a Supabase session. The reset-password and
+  // accept-invite pages are in here even though they do have a (recovery /
+  // invite) session once the email link is opened — Supabase parses the URL
+  // fragment asynchronously, and we don't want the redirect to fire before
+  // that lands.
+  const isPublicAuthPage = isLoginPage || isForgotPasswordPage || isResetPasswordPage || isAcceptInvitePage;
 
   useEffect(() => {
     if (loading) return;

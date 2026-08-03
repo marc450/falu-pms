@@ -130,7 +130,7 @@ export default function AcceptInvitePage() {
             <>
               <h2 className="text-white font-semibold text-base mb-2">Welcome! Choose your password</h2>
               <p className="text-gray-400 text-sm mb-5">
-                You&apos;ve been invited to this dashboard. Pick a password with at least {MIN_PASSWORD_LENGTH} characters to finish setting up your account.
+                Pick a password with at least {MIN_PASSWORD_LENGTH} characters to finish setting up your account.
               </p>
 
               <form onSubmit={handleSubmit} className="space-y-4">
