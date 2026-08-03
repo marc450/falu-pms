@@ -117,6 +117,137 @@ public URL except the customer's own subdomain — name projects neutrally
 | G6 | Paste the branded email templates from `docs/email-templates/` into the customer's Supabase project (Invite user + Reset password; subjects are noted at the top of each file) | Supabase → Authentication → Emails → Templates |
 | G7 | Send a test invite from Settings → Users and complete the full loop: email arrives from noreply@falu.app, link opens `<customername>.falu.app/accept-invite`, password set, login works | Dashboard |
 
+#### G8 — Scope every customer's secrets with a GitHub Environment
+
+Tenant isolation is physical (own Supabase project, own HiveMQ cluster, own Pages
+project), so there is no code path that can mix two customers' data. That means
+the *only* realistic way US Cotton data reaches a competitor's UI is a CI
+misconfiguration: the wrong `NEXT_PUBLIC_SUPABASE_URL` pasted into the wrong
+deploy job. The build would succeed, the deploy would succeed, and the
+competitor's dashboard would render US Cotton's live production data correctly.
+Nothing in the current setup would catch it.
+
+Today all customers' secrets sit in one flat repository-secrets namespace, where
+every job can read every secret. Fix this with **GitHub Environments** — one per
+customer:
+
+1. GitHub → Settings → Environments → New environment, named per customer
+   (`prod-usc`, `prod-customer2`, ...; the demo build uses `demo`).
+2. Move that customer's `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+   and `NEXT_PUBLIC_API_URL` into the environment as **environment** secrets and
+   variables. Remove them from repository-level secrets so no unscoped copy is left.
+3. In the customer's deploy job, declare `environment: prod-<customer>`. The job
+   can then read only that environment's values — a job physically cannot see
+   another tenant's Supabase URL, so a copy-paste mistake fails the build instead
+   of shipping data to the wrong company.
+4. Optionally enable **required reviewers** on each production environment, so a
+   deploy to a live customer needs a human approval click.
+
+Note that `NEXT_PUBLIC_API_URL` is currently a repo **variable** (`vars.`), not a
+secret. Environments scope variables the same way, so move it alongside the secrets.
+
+#### G9 — Assert the built bundle points at the right project
+
+Environments prevent a job from *reading* the wrong secret; this check catches the
+case where the right job was wired to the wrong environment. Because the frontend
+is a static export, the Supabase project ref is a literal string inside
+`frontend/out/`. Add a step after `npx next build` and before the Pages deploy:
+
+```yaml
+      - name: Assert bundle targets the expected Supabase project
+        env:
+          EXPECTED_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+        run: |
+          ref="$(printf '%s' "$EXPECTED_SUPABASE_URL" | sed -E 's#https://([^.]+)\..*#\1#')"
+          if [ -z "$ref" ]; then echo "Could not derive project ref"; exit 1; fi
+          if ! grep -rqF "$ref" out/; then
+            echo "FAIL: built bundle does not reference expected project ref $ref"
+            exit 1
+          fi
+          # Fail if any OTHER known project ref leaked into this build.
+          for other in $OTHER_PROJECT_REFS; do
+            if [ "$other" != "$ref" ] && grep -rqF "$other" out/; then
+              echo "FAIL: bundle references foreign project ref $other"
+              exit 1
+            fi
+          done
+          echo "OK: bundle targets $ref only"
+```
+
+Keep `OTHER_PROJECT_REFS` as a space-separated repo variable listing every live
+customer's project ref. The second loop is the one that actually catches a
+cross-tenant mix-up, so keep it current as customers are added.
+
+---
+
+### H. Bridge API is unauthenticated (per customer)
+
+Physical per-customer isolation stops a competitor's **UI** from ever rendering
+another tenant's data. It does not stop a competitor's **engineer** from reading
+that data directly, because the bridge REST API has no authentication at all.
+
+**Why the URL is not a secret.** `mqtt-bridge/src/index.js` sets
+`cors({ origin: "*" })` and no route checks an `Authorization` header. The bridge
+address is baked into the public JS bundle as `NEXT_PUBLIC_API_URL`, and Cloudflare
+Pages serves that bundle to anyone who loads the domain — the login screen is
+client-side and does not gate static assets. So the Railway URL is readable by any
+visitor, and every endpoint below answers to plain `curl` from anywhere, with no
+credential and no login:
+
+| Endpoint | What an unauthenticated caller gets |
+|---|---|
+| `GET /api/health` | Bridge liveness, MQTT connection state, machine count |
+| `GET /api/machines` | Full live fleet state: every machine's status, speed, swabs, boxes, efficiency, scrap, active errors |
+| `GET /api/machines/:code` | Same for one machine |
+| `GET /api/analytics/fleet-trend` | Historical uptime/scrap/output at any granularity over any date range |
+| `GET /api/analytics/crew-shifts` | Per-crew performance history |
+| `GET /api/analytics/downtime-summary` | Downtime totals by error cause |
+| `GET /api/analytics/machine-errors` | Per-machine error breakdown |
+| `GET /api/analytics/machine-shifts` | Per-shift end-of-shift counters |
+| `GET /api/export/machines-daily` | **Bulk CSV-shaped export**: per-machine daily output, uptime, scrap for any range |
+| `GET /api/export/downtime` | **Bulk export**: raw per-event downtime log |
+| `GET /api/settings/broker` | HiveMQ **host, port, username**, and subscribed topics (password is not returned) |
+
+The two `/api/export/*` endpoints are the sharpest: they are built for bulk
+extraction, so a competitor can pull a customer's entire production history —
+output volumes, uptime, scrap rates, downtime causes — in a single request.
+For a manufacturer this is exactly the commercially sensitive data set.
+
+The write surface is comparatively harmless and needs no urgent action:
+`POST /api/machines/:code/request-shift` is a no-op stub that publishes nothing to
+the PLC, and `DELETE /api/machines/:code` only clears bridge memory, which
+self-heals on the machine's next MQTT message. There is **no unauthenticated path
+to command factory hardware.** The exposure is confidentiality, not control.
+
+`GET /api/settings/broker` still deserves attention: it hands out the broker
+hostname and username, which is half of a credential pair for the customer's
+HiveMQ cluster. It leaves the password as the only remaining barrier.
+
+#### Hardening — do this before the second customer goes live
+
+| Step | Action | Where |
+|---|---|---|
+| H1 | Add a shared bearer token: bridge rejects any `/api/*` request whose `Authorization: Bearer <token>` does not match `API_TOKEN`; keep `/` and `/api/health` open for Railway health checks | `mqtt-bridge/src/index.js` + Railway variable |
+| H2 | Ship the same token to the frontend as `NEXT_PUBLIC_API_TOKEN` (per-customer, via that customer's GitHub Environment) and add it to `API_HEADERS` in `frontend/src/lib/supabase.ts` | Frontend + CI |
+| H3 | Replace `origin: "*"` with an allowlist of that customer's own origins (`https://<customername>.falu.app`, plus `http://localhost:3000` for development) | `mqtt-bridge/src/index.js` |
+| H4 | Drop `username` from the `/api/settings/broker` response, or gate that route behind the token only | `mqtt-bridge/src/index.js` |
+| H5 | Re-check `.github/workflows/analytics-smoke.yml`, which calls the bridge via `BRIDGE_URL` — it needs the token too once H1 lands | GitHub Actions |
+
+Be aware of what H1/H2 do and do not achieve. A token baked into a public bundle
+is still extractable by anyone who loads the customer's site, so this is not real
+authentication — it stops opportunistic and automated access, not a determined
+competitor who visits the dashboard URL. Combined with H3 it does block the
+browser-based path. The durable fix is to require a genuine Supabase session:
+have the frontend send the logged-in user's JWT and have the bridge verify it
+against that customer's Supabase project. That ties bridge access to the same
+per-customer user pool the rest of the system already trusts, and should be the
+target state before a corporate security review.
+
+Related: this pairs with the Tier 1 "RLS narrative or RLS hardening" item below.
+Both come from the same root cause — the anon key and the bridge URL are public
+by construction, so reading data currently depends on knowing a URL rather than
+on holding a session.
+
 ---
 
 ## Factory Timezone
@@ -274,6 +405,9 @@ hourly regardless of the factory timezone.
 | MQTT bridge shift detection | No code change — verify PLC clock is in ET | Operational check |
 | pg_cron schedule | No change needed | None |
 | ClickHouse IP Access List (if adopted) | Allow-list Railway **static egress** IP (not a laptop IP); use a restricted user, not `default` | Critical for ClickHouse — evaluation only |
+| Per-customer GitHub Environments (G8) | Scope each customer's Supabase secrets to their own environment so a CI mix-up cannot ship one tenant's data to another's domain | Critical before 2nd customer |
+| Build-target assertion (G9) | Fail the deploy if the built bundle references a foreign Supabase project ref | High — catches wrong-environment wiring |
+| Bridge API authentication (H1–H5) | Bridge is fully unauthenticated with `origin: "*"`; `/api/export/*` allows bulk extraction of a customer's whole production history by anyone who knows the URL | Critical before 2nd customer |
 
 ---
 
