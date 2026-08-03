@@ -223,15 +223,42 @@ to command factory hardware.** The exposure is confidentiality, not control.
 hostname and username, which is half of a credential pair for the customer's
 HiveMQ cluster. It leaves the password as the only remaining barrier.
 
-#### Hardening — do this before the second customer goes live
+#### Hardening — H1–H5 are implemented in code
+
+| Step | Action | Status |
+|---|---|---|
+| H1 | Shared bearer token: bridge rejects any `/api/*` request whose `Authorization: Bearer <token>` does not match `API_TOKEN`; `/` and `/api/health` stay open for Railway health checks | Done — `mqtt-bridge/src/apiAuth.js`, mounted in `src/index.js` |
+| H2 | Frontend sends the same token as `NEXT_PUBLIC_API_TOKEN` via `API_HEADERS` in `frontend/src/lib/supabase.ts`; the Export tab in `settings/page.tsx` now uses those headers too (it previously sent a bare `fetch`) | Done — plus `NEXT_PUBLIC_API_TOKEN` wired into the deploy workflow |
+| H3 | `origin: "*"` replaced by an `ALLOWED_ORIGINS` allowlist | Done — comma-separated env var |
+| H4 | `username` dropped from the `/api/settings/broker` response | Done — no frontend caller existed |
+| H5 | `analytics-smoke.js` sends the token; workflow passes `secrets.API_TOKEN` | Done |
+
+Behaviour is covered by `mqtt-bridge/scripts/test-api-auth.js` (18 assertions,
+`npm run test:auth` in `mqtt-bridge/`). It boots a throwaway express app with the
+real middleware and asserts the token gate, the health-check exemption, that a
+query string cannot bypass the gate, and the CORS allowlist behaviour.
+
+**Both guards are opt-in and OFF until the env vars are set.** An unset
+`API_TOKEN` means "not yet rolled out" and lets every request through, so
+deploying the bridge cannot break a live dashboard. The bridge logs a warning on
+every boot while either var is unset.
+
+#### Rollout order (per customer — this part is operational)
+
+Do these in order; reversing steps 2a and 2b locks the dashboard out of its own bridge.
 
 | Step | Action | Where |
 |---|---|---|
-| H1 | Add a shared bearer token: bridge rejects any `/api/*` request whose `Authorization: Bearer <token>` does not match `API_TOKEN`; keep `/` and `/api/health` open for Railway health checks | `mqtt-bridge/src/index.js` + Railway variable |
-| H2 | Ship the same token to the frontend as `NEXT_PUBLIC_API_TOKEN` (per-customer, via that customer's GitHub Environment) and add it to `API_HEADERS` in `frontend/src/lib/supabase.ts` | Frontend + CI |
-| H3 | Replace `origin: "*"` with an allowlist of that customer's own origins (`https://<customername>.falu.app`, plus `http://localhost:3000` for development) | `mqtt-bridge/src/index.js` |
-| H4 | Drop `username` from the `/api/settings/broker` response, or gate that route behind the token only | `mqtt-bridge/src/index.js` |
-| H5 | Re-check `.github/workflows/analytics-smoke.yml`, which calls the bridge via `BRIDGE_URL` — it needs the token too once H1 lands | GitHub Actions |
+| 1 | Deploy the bridge with neither var set. Nothing changes; the boot log now warns. | Railway |
+| 2a | Generate a token (`openssl rand -hex 32`) and set `NEXT_PUBLIC_API_TOKEN` in that customer's GitHub Environment, then redeploy the frontend. It now *sends* a token no bridge is checking yet — harmless. | GitHub → Environment |
+| 2b | Set the same value as `API_TOKEN` on the bridge and redeploy. Enforcement begins; the already-deployed frontend matches. | Railway → Variables |
+| 2c | Add the same value as the `API_TOKEN` repository secret so the analytics smoke test keeps passing. | GitHub → Secrets |
+| 3 | Set `ALLOWED_ORIGINS` to that customer's origins, e.g. `https://usc.falu.app,http://localhost:3000`, and redeploy the bridge. | Railway → Variables |
+| 4 | Verify: `curl <bridge>/api/health` returns 200, and `curl <bridge>/api/export/machines-daily?start=…&end=…` returns 401 without the token. | Terminal |
+
+Keep `API_TOKEN` distinct per customer. A shared token would let one customer's
+browser bundle authenticate against another customer's bridge, which would undo
+the physical isolation the rest of section G buys.
 
 Be aware of what H1/H2 do and do not achieve. A token baked into a public bundle
 is still extractable by anyone who loads the customer's site, so this is not real
@@ -407,7 +434,7 @@ hourly regardless of the factory timezone.
 | ClickHouse IP Access List (if adopted) | Allow-list Railway **static egress** IP (not a laptop IP); use a restricted user, not `default` | Critical for ClickHouse — evaluation only |
 | Per-customer GitHub Environments (G8) | Scope each customer's Supabase secrets to their own environment so a CI mix-up cannot ship one tenant's data to another's domain | Critical before 2nd customer |
 | Build-target assertion (G9) | Fail the deploy if the built bundle references a foreign Supabase project ref | High — catches wrong-environment wiring |
-| Bridge API authentication (H1–H5) | Bridge is fully unauthenticated with `origin: "*"`; `/api/export/*` allows bulk extraction of a customer's whole production history by anyone who knows the URL | Critical before 2nd customer |
+| Bridge API authentication (H1–H5) | Implemented in code and tested; still needs `API_TOKEN` + `ALLOWED_ORIGINS` set per customer to take effect (see rollout order in section H) | Code done — set the env vars before 2nd customer |
 
 ---
 

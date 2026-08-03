@@ -40,6 +40,7 @@ import {
   saveDowntimeAlertConfig,
   fetchFactoryTimezone,
   saveFactoryTimezone,
+  API_HEADERS,
 } from "@/lib/supabase";
 import type { RegisteredMachine, ProductionCell, Thresholds, PackingFormat, MachineType, MachineTargets, ShiftConfig, ShiftAssignment, TimeSlot, UserProfile, ShiftMechanics, DowntimeAlertConfig } from "@/lib/supabase";
 import { useAuth } from "@/hooks/useAuth";
@@ -2739,7 +2740,7 @@ function ExportTab() {
       base.searchParams.set("start", startISO);
       base.searchParams.set("end", endISO);
       if (machineFilter) base.searchParams.set("machines", machineFilter);
-      const resp = await fetch(base.toString());
+      const resp = await fetch(base.toString(), { headers: API_HEADERS });
       if (!resp.ok) throw new Error(`${resp.status} ${resp.statusText}`);
       let rows = await resp.json() as Record<string, unknown>[];
       if (transform) rows = transform(rows);

@@ -35,6 +35,7 @@ const cors = require("cors");
 const winston = require("winston");
 const fs = require("fs");
 const path = require("path");
+const { makeCorsOptions, makeTokenGate, parseOrigins } = require("./apiAuth");
 // Data-quality monitor retired: it read the Supabase bucket_analytics_5m
 // pipeline, which is gone now that ClickHouse is the sole analytics store.
 // (src/dataQualityMonitor.js is kept in the tree but no longer wired up.)
@@ -1249,12 +1250,24 @@ async function periodicCleanup() {
 // REST API (for frontend)
 // ============================================
 const app = express();
-app.use(cors({
-  origin: "*",
-  methods: ["GET", "POST", "DELETE"],
-  allowedHeaders: ["Content-Type", "ngrok-skip-browser-warning"],
-}));
+
+// ── Access control (docs/GO_LIVE_US.md section H) ────────────────────────────
+// Logic lives in src/apiAuth.js so it can be unit-tested without booting the
+// bridge. Both guards are opt-in via env; leaving them unset preserves the old
+// permissive behaviour and logs a warning on every boot so it is not forgotten.
+const API_TOKEN = process.env.API_TOKEN || "";
+const ALLOWED_ORIGINS = parseOrigins(process.env.ALLOWED_ORIGINS);
+
+if (!API_TOKEN) {
+  logger.warn("API_TOKEN is not set — every /api/* route is publicly readable. See docs/GO_LIVE_US.md section H.");
+}
+if (ALLOWED_ORIGINS.length === 0) {
+  logger.warn("ALLOWED_ORIGINS is not set — CORS falls back to '*'. See docs/GO_LIVE_US.md section H.");
+}
+
+app.use(cors(makeCorsOptions(ALLOWED_ORIGINS)));
 app.use(express.json());
+app.use("/api", makeTokenGate(API_TOKEN));
 
 // Root route (used by Railway / ngrok health checks)
 app.get("/", (req, res) => {
@@ -1699,11 +1712,13 @@ app.delete("/api/machines/:code", (req, res) => {
 });
 
 // Get broker settings
+// The broker username is deliberately NOT returned: host + username is half a
+// credential pair for the customer's HiveMQ cluster, and the UI only displays
+// connection status. See docs/GO_LIVE_US.md section H4.
 app.get("/api/settings/broker", (req, res) => {
   res.json({
     host: brokerSettings.host,
     port: brokerSettings.port,
-    username: brokerSettings.username,
     isLocal: brokerSettings.isLocal,
     subscribeTopics: getSubscribeTopics(),
   });

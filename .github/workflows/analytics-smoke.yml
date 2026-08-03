@@ -27,6 +27,10 @@ jobs:
       - name: Smoke test every granularity tier
         env:
           BRIDGE_URL: ${{ vars.NEXT_PUBLIC_API_URL }}
+          # Must match the bridge's API_TOKEN once section H is rolled out,
+          # otherwise every analytics call returns 401. Safe to leave unset
+          # against a bridge that has not enabled the token yet.
+          API_TOKEN: ${{ secrets.API_TOKEN }}
         run: |
           # Retry to ride out a still-rolling deploy.
           for i in 1 2 3 4 5; do

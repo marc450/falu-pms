@@ -9,7 +9,8 @@
     "simulator": "node src/simulator.js",
     "backseed": "node scripts/backseed-history.js",
     "ch-test": "node scripts/ch-test.js",
-    "smoke": "node scripts/analytics-smoke.js"
+    "smoke": "node scripts/analytics-smoke.js",
+    "test:auth": "node scripts/test-api-auth.js"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.104.1",

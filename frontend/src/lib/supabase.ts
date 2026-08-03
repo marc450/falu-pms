@@ -949,10 +949,22 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3001";
 // are being retired. Set NEXT_PUBLIC_ANALYTICS_SOURCE=supabase to fall back.
 export const ANALYTICS_SOURCE = (process.env.NEXT_PUBLIC_ANALYTICS_SOURCE || "clickhouse").toLowerCase();
 
+// Shared token for the bridge API (docs/GO_LIVE_US.md section H). Per-customer,
+// injected at build time from that customer's GitHub Environment. Empty when a
+// deployment has not been rolled over yet — the bridge treats an unset token as
+// "not yet enforced", so an empty value keeps working against an older bridge.
+//
+// This is NOT real authentication: NEXT_PUBLIC_* values are baked into the
+// public bundle, so anyone who loads the dashboard can read the token. It stops
+// opportunistic and automated access; the durable fix is having the bridge
+// verify the logged-in user's Supabase JWT.
+const API_TOKEN = process.env.NEXT_PUBLIC_API_TOKEN || "";
+
 // Include ngrok bypass header so the free-tier warning page is skipped
-const API_HEADERS: HeadersInit = {
+export const API_HEADERS: HeadersInit = {
   "Content-Type": "application/json",
   "ngrok-skip-browser-warning": "true",
+  ...(API_TOKEN ? { Authorization: `Bearer ${API_TOKEN}` } : {}),
 };
 
 // fetch() that retries on NETWORK failure (the "Failed to fetch" TypeError that

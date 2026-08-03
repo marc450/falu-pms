@@ -15,6 +15,12 @@
  */
 const BASE = process.argv[2] || process.env.SMOKE_BRIDGE_URL || "https://falu-pms-production.up.railway.app";
 
+// Bridge API token (docs/GO_LIVE_US.md section H). Must match the target
+// bridge's API_TOKEN, otherwise every analytics call comes back 401. Unset is
+// fine against a bridge that has not enabled the token yet.
+const SMOKE_TOKEN = process.env.API_TOKEN || process.env.SMOKE_API_TOKEN || "";
+const HEADERS = SMOKE_TOKEN ? { Authorization: `Bearer ${SMOKE_TOKEN}` } : {};
+
 const H = 3_600_000, D = 24 * H;
 const now = Date.now();
 const iso = (ms) => new Date(ms).toISOString();
@@ -44,7 +50,7 @@ async function check(c) {
   const t0 = Date.now();
   let res, text;
   try {
-    res = await fetch(url);
+    res = await fetch(url, { headers: HEADERS });
     text = await res.text();
   } catch (e) {
     return { ok: false, msg: `network error: ${e.message}` };
@@ -71,7 +77,7 @@ async function checkCrew() {
     + `&end=${encodeURIComponent(iso(now))}`;
   const t0 = Date.now();
   let res, text;
-  try { res = await fetch(url); text = await res.text(); }
+  try { res = await fetch(url, { headers: HEADERS }); text = await res.text(); }
   catch (e) { return { ok: false, msg: `network error: ${e.message}` }; }
   const ms = Date.now() - t0;
   if (!res.ok)              return { ok: false, ms, msg: `HTTP ${res.status}: ${text.slice(0, 140)}` };
