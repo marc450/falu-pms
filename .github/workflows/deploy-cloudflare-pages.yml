@@ -1,5 +1,7 @@
-# Deploys the frontend to Cloudflare Pages (project falu-pms-uscotton) in
-# parallel to the existing GitHub Pages deploy that serves falu.app.
+# Deploys the frontend to Cloudflare Pages (project falu-pms), which serves
+# falu.app via the project's custom domain. Per-customer deployments get their
+# own neutrally named project (falu-pms-2, ...) — customer names must not
+# appear in project names; see docs/GO_LIVE_US.md section G.
 # Requires two repository secrets (Settings → Secrets and variables → Actions):
 #   CLOUDFLARE_API_TOKEN  — API token with "Cloudflare Pages: Edit" permission
 #   CLOUDFLARE_ACCOUNT_ID — from the Cloudflare dashboard (Workers & Pages → right sidebar)
@@ -49,14 +51,6 @@ jobs:
           NEXT_PUBLIC_ANALYTICS_SOURCE: ${{ vars.NEXT_PUBLIC_ANALYTICS_SOURCE }}
         run: npx next build
 
-      # Diagnostic: shows which Cloudflare account the CI credentials resolve to
-      - name: Cloudflare whoami
-        uses: cloudflare/wrangler-action@v3
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: whoami
-
       # One-time project creation; errors harmlessly once the project exists.
       - name: Ensure Pages project exists
         uses: cloudflare/wrangler-action@v3
@@ -64,7 +58,7 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages project create falu-pms-uscotton --production-branch=main
+          command: pages project create falu-pms --production-branch=main
 
       - name: Deploy to Cloudflare Pages
         uses: cloudflare/wrangler-action@v3
@@ -72,4 +66,4 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: frontend
-          command: pages deploy out --project-name=falu-pms-uscotton --branch=main
+          command: pages deploy out --project-name=falu-pms --branch=main

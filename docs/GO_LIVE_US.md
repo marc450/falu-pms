@@ -99,6 +99,26 @@ forgotten if the analytics layer moves to ClickHouse.
 
 ---
 
+### G. Frontend hosting, domain & auth emails (per customer)
+
+Hosting is Cloudflare Pages (account wyss@falu.com, the account that owns the
+falu.app zone). One Pages project per customer, deployed from CI with that
+customer's env vars. Customer names must NOT appear in project names or any
+public URL except the customer's own subdomain — name projects neutrally
+(`falu-pms`, `falu-pms-2`, `falu-pms-3`, ...).
+
+| Step | Action | Where |
+|---|---|---|
+| G1 | Create a new Supabase project for the customer; run all `database/migrations/*.sql`; seed the first admin row in `user_profiles` by hand (the RLS insert policy is self-referential, so the very first admin cannot be created through the UI) | Supabase |
+| G2 | Add a deploy job for the customer to `.github/workflows/deploy-cloudflare-pages.yml`: same build, but with the customer's `NEXT_PUBLIC_SUPABASE_URL` / `NEXT_PUBLIC_SUPABASE_ANON_KEY` / `NEXT_PUBLIC_API_URL`, deploying to a NEW neutrally named Pages project (e.g. `falu-pms-2`) | GitHub → workflow + secrets |
+| G3 | **Create the custom domain for the customer: `<customername>.falu.app`** on that Pages project (Set up a custom domain → activate; Cloudflare wires DNS + certificate automatically since falu.app is in the same account) | Cloudflare → Workers & Pages → project → Custom domains |
+| G4 | Allowlist the auth redirect URLs for that domain: `https://<customername>.falu.app/accept-invite` and `https://<customername>.falu.app/reset-password` | Customer's Supabase → Authentication → URL Configuration |
+| G5 | Configure custom SMTP on the customer's Supabase project: host `smtp.resend.com`, port 465, user `resend`, password = Resend API key, sender `Falu PMS <noreply@falu.app>` (Resend domain falu.app is already verified; one API key per customer keeps them revocable) | Supabase → Authentication → Emails → SMTP |
+| G6 | Paste the branded email templates from `docs/email-templates/` into the customer's Supabase project (Invite user + Reset password; subjects are noted at the top of each file) | Supabase → Authentication → Emails → Templates |
+| G7 | Send a test invite from Settings → Users and complete the full loop: email arrives from noreply@falu.app, link opens `<customername>.falu.app/accept-invite`, password set, login works | Dashboard |
+
+---
+
 ## Factory Timezone
 
 The US factory operates in **Eastern Time (ET)**.
