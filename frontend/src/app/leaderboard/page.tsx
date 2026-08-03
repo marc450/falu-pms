@@ -3,39 +3,19 @@
 import React, { useEffect, useState, useCallback, useMemo } from "react";
 import { fmtN, fmtPct } from "@/lib/fmt";
 import {
-  fetchMachineShiftSummary,
   fetchProductionCells,
   fetchRegisteredMachines,
   fetchShiftConfig,
   fetchShiftAssignments,
   fetchMachines,
+  fetchThresholds,
+  DEFAULT_THRESHOLDS,
 } from "@/lib/supabase";
 import type {
-  RegisteredMachine, MachineShiftRow,
-  ProductionCell, ShiftConfig, ShiftAssignment, BridgeState,
+  RegisteredMachine,
+  ProductionCell, ShiftConfig, ShiftAssignment, BridgeState, Thresholds,
 } from "@/lib/supabase";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function weightedAvg(
-  rows: MachineShiftRow[],
-  field: "bu_normalized" | "avg_efficiency" | "avg_scrap",
-): number | null {
-  const valid = rows.filter(r => r[field] != null && r.run_hours != null && r.run_hours > 0);
-  if (valid.length === 0) return null;
-  const totalHours = valid.reduce((s, r) => s + r.run_hours!, 0);
-  if (totalHours === 0) return null;
-  return valid.reduce((s, r) => s + (r[field]! * r.run_hours!), 0) / totalHours;
-}
-
-function simpleAvg(
-  rows: MachineShiftRow[],
-  field: "bu_normalized" | "avg_efficiency" | "avg_scrap",
-): number | null {
-  const valid = rows.filter(r => r[field] != null);
-  if (valid.length === 0) return null;
-  return valid.reduce((s, r) => s + r[field]!, 0) / valid.length;
-}
+import { calcCorrectedEfficiency } from "@/lib/uptime";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -204,12 +184,12 @@ const REFRESH_MS = 5 * 60 * 1000; // 5 minutes
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export default function LeaderboardPage() {
-  const [rows,     setRows]     = useState<MachineShiftRow[]>([]);
   const [cells,    setCells]    = useState<ProductionCell[]>([]);
   const [machines, setMachines] = useState<RegisteredMachine[]>([]);
   const [config,   setConfig]   = useState<ShiftConfig | null>(null);
   const [assigns,  setAssigns]  = useState<Record<string, ShiftAssignment>>({});
   const [bridge,   setBridge]   = useState<BridgeState | null>(null);
+  const [thresholds, setThresholds] = useState<Thresholds>(DEFAULT_THRESHOLDS);
   const [loading,  setLoading]  = useState(true);
   const [lastLoad, setLastLoad] = useState<Date>(new Date());
 
@@ -221,25 +201,21 @@ export default function LeaderboardPage() {
       from.setDate(from.getDate() - 7);
       const fmt = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 
-      const [shiftCfg, machineList, cellList, bridgeData] = await Promise.all([
+      const [shiftCfg, machineList, cellList, bridgeData, thresholdData] = await Promise.all([
         fetchShiftConfig(),
         fetchRegisteredMachines(),
         fetchProductionCells(),
         fetchMachines().catch(() => null),
+        fetchThresholds().catch(() => DEFAULT_THRESHOLDS),
       ]);
 
       const assignRows = await fetchShiftAssignments(fmt(from), fmt(to), shiftCfg.teams);
-
-      const shiftData = await fetchMachineShiftSummary(
-        { start: from, end: to },
-        shiftCfg.slots,
-      );
 
       setConfig(shiftCfg);
       setMachines(machineList);
       setCells(cellList);
       setAssigns(Object.fromEntries(assignRows.map(a => [a.shift_date, a])));
-      setRows(shiftData);
+      setThresholds(thresholdData);
       if (bridgeData) setBridge(bridgeData);
       setLastLoad(new Date());
     } catch (e) {
@@ -271,9 +247,31 @@ export default function LeaderboardPage() {
     return m;
   }, [cells]);
 
-  // ── Fleet KPIs ──
-  const fleetEff   = useMemo(() => simpleAvg(rows, "avg_efficiency"), [rows]);
-  const fleetScrap = useMemo(() => simpleAvg(rows, "avg_scrap"), [rows]);
+  // ── Fleet KPIs — live current shift, same math as the dashboard tiles ──
+  // Uptime: average corrected efficiency (planned-downtime budget excluded
+  // from the denominator). Scrap: volume-weighted Σdiscarded / Σproduced
+  // across non-offline machines. Mirrors ParkSummaryTiles on the dashboard.
+  const { fleetEff, fleetScrap } = useMemo(() => {
+    if (!bridge) return { fleetEff: null, fleetScrap: null };
+    const plannedDowntimeMins = thresholds.bu.plannedDowntimeMinutes ?? 0;
+    let effSum = 0, effCount = 0;
+    let totalProduced = 0, totalDiscarded = 0;
+    for (const reg of machines) {
+      const bm = bridge.machines[reg.machine_code];
+      if (!bm) continue;
+      const corrEff = calcCorrectedEfficiency(bm, plannedDowntimeMins);
+      if (corrEff !== null) { effSum += corrEff; effCount++; }
+      const s = bm.machineStatus?.Status?.toLowerCase();
+      const isOffline = s === "offline" || !s;
+      const produced  = bm.machineStatus?.ProducedSwabs ?? bm.machineStatus?.Swabs ?? 0;
+      const discarded = bm.machineStatus?.DiscardedSwabs ?? 0;
+      if (!isOffline && produced > 0) { totalProduced += produced; totalDiscarded += discarded; }
+    }
+    return {
+      fleetEff:   effCount > 0 ? effSum / effCount : null,
+      fleetScrap: totalProduced > 0 ? (totalDiscarded / totalProduced) * 100 : null,
+    };
+  }, [bridge, machines, thresholds]);
 
   // ── Cell stats — live in-progress shift, ranked by % of target ──
   // The leaderboard hangs above the production floor and represents *the
@@ -290,23 +288,28 @@ export default function LeaderboardPage() {
       grouped.get(mc.cell_id)!.push(mc);
     }
     const stats: CellStats[] = [];
+    const plannedDowntimeMins = thresholds.bu.plannedDowntimeMinutes ?? 0;
     for (const [cellId, cellMachines] of grouped) {
       const name = cellNameMap.get(cellId);
       if (!name) continue;
       let actualBus = 0;
       let targetBus = 0;
       let effSum = 0, effCount = 0;
-      let scrapSum = 0, scrapCount = 0;
+      let cellProduced = 0, cellDiscarded = 0;
       for (const reg of cellMachines) {
         if (reg.bu_target && reg.bu_target > 0) targetBus += reg.bu_target;
         const bm = bridge.machines[reg.machine_code];
         if (!bm) continue;
         const swabs = bm.machineStatus?.ProducedSwabs ?? bm.machineStatus?.Swabs ?? 0;
         actualBus += swabs / 7200;
-        const eff = bm.machineStatus?.Efficiency;
-        if (typeof eff === "number" && eff > 0) { effSum += eff; effCount++; }
-        const scrap = bm.machineStatus?.Reject;
-        if (typeof scrap === "number") { scrapSum += scrap; scrapCount++; }
+        // Uptime + scrap: same corrected-efficiency / volume-weighted math
+        // as the dashboard's cell headers.
+        const eff = calcCorrectedEfficiency(bm, plannedDowntimeMins);
+        if (eff !== null) { effSum += eff; effCount++; }
+        const s = bm.machineStatus?.Status?.toLowerCase();
+        const isOffline = s === "offline" || !s;
+        const discarded = bm.machineStatus?.DiscardedSwabs ?? 0;
+        if (!isOffline && swabs > 0) { cellProduced += swabs; cellDiscarded += discarded; }
       }
       stats.push({
         cellId,
@@ -314,14 +317,14 @@ export default function LeaderboardPage() {
         actualBus,
         targetBus,
         pctOfTarget: targetBus > 0 ? (actualBus / targetBus) * 100 : null,
-        avgEff:     effCount   > 0 ? effSum   / effCount   : null,
-        avgScrap:   scrapCount > 0 ? scrapSum / scrapCount : null,
+        avgEff:     effCount > 0 ? effSum / effCount : null,
+        avgScrap:   cellProduced > 0 ? (cellDiscarded / cellProduced) * 100 : null,
       });
     }
     // Rank by % of target — overrunners on top, slowest behind.
     stats.sort((a, b) => (b.pctOfTarget ?? -1) - (a.pctOfTarget ?? -1));
     return stats;
-  }, [bridge, machines, cellNameMap]);
+  }, [bridge, machines, cellNameMap, thresholds]);
 
   // ── Fleet totals for the header tile ──
   const fleetTotalBu     = useMemo(() => cellStats.reduce((s, c) => s + c.actualBus, 0), [cellStats]);
