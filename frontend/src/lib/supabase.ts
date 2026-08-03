@@ -981,7 +981,13 @@ export async function fetchMachines(): Promise<BridgeState> {
 export async function fetchMachine(code: string): Promise<MachineData> {
   const res = await fetch(`${API_BASE}/api/machines/${code}`, { headers: API_HEADERS });
   if (!res.ok) throw new Error("Machine not found");
-  return res.json();
+  const data = await res.json();
+  // Bridge sends statusSince as an ISO string; MachineData declares unix ms.
+  if (typeof data.statusSince === "string") {
+    const ms = new Date(data.statusSince).getTime();
+    data.statusSince = Number.isNaN(ms) ? undefined : ms;
+  }
+  return data;
 }
 
 export async function requestShiftData(machineCode: string, shift: number): Promise<void> {
