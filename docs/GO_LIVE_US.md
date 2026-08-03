@@ -268,7 +268,10 @@ browser-based path. The durable fix is to require a genuine Supabase session:
 have the frontend send the logged-in user's JWT and have the bridge verify it
 against that customer's Supabase project. That ties bridge access to the same
 per-customer user pool the rest of the system already trusts, and should be the
-target state before a corporate security review.
+target state before a corporate security review. It is tracked as a Tier 1 item
+("Real identity on the bridge API"), which records why it is more than a JWT
+check: `/leaderboard`, the tablet kiosk and CI all legitimately have no user
+session, so the shared token cannot simply be swapped out.
 
 Related: this pairs with the Tier 1 "RLS narrative or RLS hardening" item below.
 Both come from the same root cause — the anon key and the bridge URL are public
@@ -434,7 +437,7 @@ hourly regardless of the factory timezone.
 | ClickHouse IP Access List (if adopted) | Allow-list Railway **static egress** IP (not a laptop IP); use a restricted user, not `default` | Critical for ClickHouse — evaluation only |
 | Per-customer GitHub Environments (G8) | Scope each customer's Supabase secrets to their own environment so a CI mix-up cannot ship one tenant's data to another's domain | Critical before 2nd customer |
 | Build-target assertion (G9) | Fail the deploy if the built bundle references a foreign Supabase project ref | High — catches wrong-environment wiring |
-| Bridge API authentication (H1–H5) | Implemented in code and tested; still needs `API_TOKEN` + `ALLOWED_ORIGINS` set per customer to take effect (see rollout order in section H) | Code done — set the env vars before 2nd customer |
+| Bridge API authentication (H1–H5) | Implemented in code and tested; still needs `API_TOKEN` + `ALLOWED_ORIGINS` set per customer to take effect (see rollout order in section H). Closes casual and automated access only — the token ships in a public bundle, so real identity on the bridge stays open as a Tier 1 item below | Code done — set the env vars before 2nd customer |
 
 ---
 
@@ -537,6 +540,7 @@ The items below are platform-level — they apply to any factory deployment, not
 | Error monitoring on every runtime (Next app + mqtt-bridge) | Today a crash or silent exception reaches us only when a user calls. Sentry (or equivalent) surfaces the stack trace within seconds. This is distinct from the uptime checks above — that catches "the process is down", this catches "the process is up but throwing for one user". | Sentry DSN configured in both apps, source maps uploaded on each deploy, alert rules going to a real channel (email or Slack). |
 | Automated tests for KPI math | 75 migrations plus known quirks (run_hours stored as minutes, bu_normalized depending on it) means one careless refactor ships wrong numbers to a paying customer. Coverage doesn't need to be broad, just precise around the math. | Vitest set up. ~15 tests covering `calcBuRunRate`, `calcCorrectedEfficiency`, scrap-rate weighting, idle/error attribution. CI runs them on every PR. |
 | RLS narrative or RLS hardening | Every policy today is `USING (true)`. With per-project isolation that's defensible, but corporate IT will read the schema and ask. | Either tighten policies to meaningful predicates, or write a one-page security architecture note explaining physical isolation, key handling, and threat model. |
+| Real identity on the bridge API (session-verified, not shared-token) | Section H shipped a shared bearer token, but it is baked into a **public** JS bundle — anyone who loads the dashboard can read it, so it stops automated and opportunistic access, not a determined competitor. Read the H1–H5 row in the summary table as "casual access closed", not "bridge auth solved". Same root cause as the RLS row above (access depends on knowing a URL/key rather than holding a session), and a corporate reviewer will raise both together. **This is NOT simply "verify a JWT"** — three callers legitimately have no Supabase user session and would break: the no-login `/leaderboard` wallboard (bypasses auth in `AuthLayout.tsx`, polls `fetchMachines()`), the tablet kiosk (`docs/PLAN_TABLET_KIOSK.md` deliberately uses anon key + per-machine token/PIN), and the CI smoke test. | A decision on which credential types exist and what each may read, then the bridge accepting all of them side by side: user Supabase JWT (verified against that customer's project) for the dashboard, a service token for CI, a per-machine kiosk token for tablets. Includes an explicit call on whether `/leaderboard` data stays viewable without login — it is a deliberate product choice today, so tightening the bridge forces that question. Token refresh/expiry handled on the dashboard's polling path. |
 | Staging environment | Every push to main deploys to production. The first regression in front of a paying customer hurts. | A staging frontend (e.g. `staging-pms.app`) pointing at a separate staging Supabase project. Deploys on push to a `staging` branch. |
 | Migration runner | 75 SQL files applied by hand. Three customer projects equals guaranteed drift within a quarter. | A script that applies `database/migrations/*.sql` to a target Supabase project in order, idempotently, tracking applied migrations in a `schema_migrations` table. |
 
