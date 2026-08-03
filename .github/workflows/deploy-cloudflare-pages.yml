@@ -49,6 +49,14 @@ jobs:
           NEXT_PUBLIC_ANALYTICS_SOURCE: ${{ vars.NEXT_PUBLIC_ANALYTICS_SOURCE }}
         run: npx next build
 
+      # Diagnostic: shows which Cloudflare account the CI credentials resolve to
+      - name: Cloudflare whoami
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: whoami
+
       # One-time project creation; errors harmlessly once the project exists.
       - name: Ensure Pages project exists
         uses: cloudflare/wrangler-action@v3
