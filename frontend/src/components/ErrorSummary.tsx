@@ -177,16 +177,20 @@ export default function ErrorSummary({
                     <i className="bi bi-exclamation-octagon text-red-400" />
                     Error Summary
                   </h3>
-                  {/* stopPropagation so following the link doesn't also toggle the
-                      collapsible card header it sits inside. */}
-                  <Link
-                    href={errorAnalyticsHref(machineCode)}
-                    onClick={(e) => e.stopPropagation()}
-                    className="text-xs font-normal text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
-                  >
-                    Error Analytics
-                    <i className="bi bi-arrow-right-short text-sm" />
-                  </Link>
+                  {/* Only shown once the card is expanded, so the collapsed
+                      header is a pure toggle and the link can't steal clicks
+                      meant for it. stopPropagation so following the link
+                      doesn't also toggle the header it sits inside. */}
+                  {showTable && (
+                    <Link
+                      href={errorAnalyticsHref(machineCode)}
+                      onClick={(e) => e.stopPropagation()}
+                      className="text-xs font-normal text-cyan-400 hover:text-cyan-300 whitespace-nowrap flex items-center gap-1"
+                    >
+                      Error Analytics
+                      <i className="bi bi-arrow-right-short text-sm" />
+                    </Link>
+                  )}
                 </div>
               </div>
             </td>
