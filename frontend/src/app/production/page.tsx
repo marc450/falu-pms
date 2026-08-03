@@ -15,7 +15,7 @@ import type {
   Thresholds, ShiftConfig, FleetTrendRow, DateRange, MachineType,
   ErrorEvent, PlcErrorCode, GrainPref,
 } from "@/lib/supabase";
-import { formatSecondsToTime, getStatusColor, formatStatus } from "@/lib/utils";
+import { formatSecondsToTime, getStatusColor, formatStatus, formatStateDuration } from "@/lib/utils";
 import { fmtN, fmtPct } from "@/lib/fmt";
 import {
   ProductionTrendSection, PeriodSelector, GranularitySelector, PRESETS,
@@ -48,6 +48,13 @@ function ProductionContent() {
   const [displayName, setDisplayName] = useState<string | null>(null);
   const [offline, setOffline] = useState(false);
   const [loading, setLoading] = useState(true);
+  // 1s clock so the header pill's "time in current state" ticks between the
+  // 2s bridge polls.
+  const [nowTick, setNowTick] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowTick(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
   const failCount = useRef(0);
   const router = useRouter();
 
@@ -280,7 +287,11 @@ function ProductionContent() {
     })();
   }, [machineName, trendPresetId, trendRange, trendGrainPref, shiftConfig, factoryTz]);
 
-  const status = getStatusColor(machine?.machineStatus?.Status);
+  // Live status for the header pill. `offline` (3 consecutive failed bridge
+  // fetches) overrides whatever stale status the last successful fetch left
+  // behind — getStatusColor/formatStatus render undefined as gray "Offline".
+  const rawStatus = offline ? undefined : machine?.machineStatus?.Status;
+  const status = getStatusColor(rawStatus);
 
   const slots = shiftConfig?.slots ?? [];
 
@@ -564,6 +575,27 @@ function ProductionContent() {
                 <span className="text-gray-500 text-sm font-normal ml-2">({machineName})</span>
               )}
             </h2>
+            {/* Live status pill — same look as the park overview's badge. Data
+                refreshes via the 2s bridge poll; the state duration ticks off
+                nowTick every second in between. */}
+            {(machine || offline) && (
+              <span
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium whitespace-nowrap ${status.bg} ${status.text}`}
+                title={
+                  rawStatus?.toLowerCase() === "error" && machine?.activeErrors?.length
+                    ? machine.activeErrors
+                        .map(c => `${c}: ${errorLookup[String(c)]?.description ?? "Unknown error"}`)
+                        .join("\n")
+                    : undefined
+                }
+              >
+                <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${status.dot}`}></span>
+                {formatStatus(rawStatus)}
+                {!offline && machine?.statusSince && (
+                  <span className="opacity-70 font-normal">{formatStateDuration(machine.statusSince, nowTick)}</span>
+                )}
+              </span>
+            )}
           </div>
           {thresholds && (
             <div className="flex items-center gap-2">

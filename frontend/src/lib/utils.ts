@@ -42,6 +42,23 @@ export function getStatusColor(status?: string): {
 }
 
 /**
+ * Compact "time in current state" label (e.g. "45s", "5m 03s", "2h 14m").
+ * sinceMs is the bridge-tracked statusSince transition timestamp (unix ms).
+ */
+export function formatStateDuration(sinceMs: number, nowMs: number): string {
+  const elapsed = Math.max(0, Math.floor((nowMs - sinceMs) / 1000));
+  if (elapsed < 60) return `${elapsed}s`;
+  if (elapsed < 3600) {
+    const m = Math.floor(elapsed / 60);
+    const s = elapsed % 60;
+    return `${m}m ${String(s).padStart(2, "0")}s`;
+  }
+  const h = Math.floor(elapsed / 3600);
+  const m = Math.floor((elapsed % 3600) / 60);
+  return `${h}h ${String(m).padStart(2, "0")}m`;
+}
+
+/**
  * Map raw MQTT status values to display labels
  */
 export function formatStatus(status?: string): string {
