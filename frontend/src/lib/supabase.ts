@@ -1434,30 +1434,56 @@ function aggregateShiftLogs(
 
 // Reconstructed shift rows from ClickHouse (Crew Comparison on raw 5s data).
 // Returns the same column shape as the saved_shift_logs select so the shared
-// aggregator treats both backends identically.
-async function fetchCrewShiftRowsClickHouse(range: DateRange): Promise<Record<string, unknown>[]> {
+// aggregator treats both backends identically. The shift-window params let the
+// bridge cut segments at every configured shift boundary even when the crew
+// value never changes (weeks of 'Unassigned' would otherwise collapse into a
+// single row dated at its last bucket, hiding the older weeks of a long range).
+async function fetchCrewShiftRowsClickHouse(
+  range: DateRange,
+  shiftOpts: { shiftHours: number; shiftStartHour: number; tz: string },
+): Promise<Record<string, unknown>[]> {
   // Snap to a 1h grid (must match the bridge) so the URL is stable across
   // reloads and the browser / ClickHouse caches actually hit.
   const Q = 3_600_000;
   const startISO = new Date(Math.floor(range.start.getTime() / Q) * Q).toISOString();
   const endISO   = new Date(Math.ceil(range.end.getTime()   / Q) * Q).toISOString();
-  const qs = new URLSearchParams({ start: startISO, end: endISO });
+  const qs = new URLSearchParams({
+    start: startISO,
+    end:   endISO,
+    shiftHours:     String(shiftOpts.shiftHours),
+    shiftStartHour: String(shiftOpts.shiftStartHour),
+    tz:             shiftOpts.tz,
+  });
   const resp = await fetchRetry(`${API_BASE}/api/analytics/crew-shifts?${qs.toString()}`, { headers: API_HEADERS });
   if (!resp.ok) throw new Error(`crew-shifts ${resp.status}`);
   return (await resp.json()) as Record<string, unknown>[];
 }
 
+// Factory tz for the crew-shift reconstruction, cached at module scope (same
+// value the useFactoryTimezone hook resolves; re-fetched at most once per
+// session). Falls back to the prod factory default if the setting is missing.
+let cachedCrewTz: string | null = null;
+async function factoryTzCached(): Promise<string> {
+  if (cachedCrewTz) return cachedCrewTz;
+  try { cachedCrewTz = await fetchFactoryTimezone(); }
+  catch { cachedCrewTz = "Europe/Zurich"; }
+  return cachedCrewTz;
+}
+
 export async function fetchMachineShiftSummary(
   range: DateRange,
-  _slots: TimeSlot[] = slotsFromDuration(12, 7),
+  slots: TimeSlot[] = slotsFromDuration(12, 7),
   config: { shiftLengthMinutes?: number; plannedDowntimeMinutes?: number } = {},
 ): Promise<MachineShiftRow[]> {
-  void _slots; // no longer needed: crew is stored directly by the bridge
-
   // ClickHouse path: reconstruct shifts from raw 5s data, gated by the same
-  // flag as the Production Trend tab. Identical downstream aggregation.
+  // flag as the Production Trend tab. Identical downstream aggregation. The
+  // configured shift system (duration + first-shift start) is derived from the
+  // live slots exactly like the analytics page does for the fleet trend.
   if (ANALYTICS_SOURCE === "clickhouse") {
-    const raw = await fetchCrewShiftRowsClickHouse(range);
+    const shiftHours     = slots.length > 0 ? Math.round(24 / slots.length) : 12;
+    const shiftStartHour = slots[0]?.startHour ?? 7;
+    const tz             = await factoryTzCached();
+    const raw = await fetchCrewShiftRowsClickHouse(range, { shiftHours, shiftStartHour, tz });
     return aggregateShiftLogs(raw, config);
   }
 

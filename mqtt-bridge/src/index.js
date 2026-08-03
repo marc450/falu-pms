@@ -1430,18 +1430,33 @@ app.get("/api/analytics/fleet-trend", async (req, res) => {
 
 // ── Crew shift reconstruction (Crew Comparison tab on ClickHouse) ──────────
 // Rebuilds one row per shift from the 5-minute delta view. A shift = a
-// contiguous run of the same crew on a machine (segmented by crew change). We
-// sum the reset-aware per-bucket deltas across that run (output, boxes,
-// discards, producing seconds) and derive the shift's uptime the same way the
-// fleet trend does (producing seconds / elapsed). The returned rows mirror the
-// saved_shift_logs column shape so the frontend runs the *identical*
-// aggregation it uses for the Supabase path — only the data source differs.
+// contiguous run of the same crew on a machine, ALSO cut at every configured
+// shift-window boundary (duration + first-shift start hour, factory tz — the
+// same validated inputs as the fleet-trend "shift" grain). Segmenting on crew
+// change alone collapses long constant-crew runs (weeks of 'Unassigned'
+// before crews were mapped) into a single monster row dated at its last
+// bucket, which made long ranges look like they only contained recent data.
+// We sum the reset-aware per-bucket deltas across each segment (output,
+// boxes, discards, producing seconds) and derive the shift's uptime the same
+// way the fleet trend does (producing seconds / elapsed). The returned rows
+// mirror the saved_shift_logs column shape so the frontend runs the
+// *identical* aggregation it uses for the Supabase path — only the data
+// source differs.
 app.get("/api/analytics/crew-shifts", async (req, res) => {
   if (!clickhouse) return res.status(503).json({ error: "ClickHouse not enabled on this bridge" });
   const { start, end } = req.query;
   if (!start || !end) return res.status(400).json({ error: "start and end (ISO) required" });
   const fmt = (s) => new Date(s).toISOString().slice(0, 19).replace("T", " ");
   const machines = req.query.machines ? String(req.query.machines).split(",").filter(Boolean) : [];
+
+  // Shift-window expression: same sanitized construction as the fleet-trend
+  // "shift" grain (validated ints + whitelisted tz chars → no injection).
+  const sh = [6, 8, 12].includes(Number(req.query.shiftHours)) ? Number(req.query.shiftHours) : 12;
+  const ss = Number.isFinite(Number(req.query.shiftStartHour))
+    ? ((Math.trunc(Number(req.query.shiftStartHour)) % 24) + 24) % 24 : 7;
+  const tz = /^[A-Za-z0-9_/+-]{1,40}$/.test(String(req.query.tz || "")) ? String(req.query.tz) : "Europe/Zurich";
+  const shiftWin =
+    `toTimeZone(toStartOfInterval(bucket_ts - INTERVAL ${ss} HOUR, INTERVAL ${sh} HOUR, '${tz}') + INTERVAL ${ss} HOUR, 'UTC')`;
 
   // Snap to a 1h grid so reloads within the hour reuse the cached result.
   const Q_MS = 3_600_000;
@@ -1466,7 +1481,8 @@ app.get("/api/analytics/crew-shifts", async (req, res) => {
       FROM (
         SELECT machine_id, machine_code, shift_crew, bucket_ts,
                delta_swabs, delta_boxes, delta_discard, delta_prod_t,
-               if(shift_crew != lagInFrame(shift_crew, 1, '') OVER w, 1, 0) AS seg_start
+               if(shift_crew != lagInFrame(shift_crew, 1, '') OVER w
+                  OR ${shiftWin} != lagInFrame(${shiftWin}) OVER w, 1, 0) AS seg_start
         FROM v_bucket_deltas_5m
         WHERE bucket_ts >= toDateTime64({start:String}, 3, 'UTC')
           AND bucket_ts <  toDateTime64({end:String}, 3, 'UTC')
