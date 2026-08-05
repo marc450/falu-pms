@@ -31,11 +31,12 @@ let tickCount = 0;
 
 async function saveState() {
   if (!supabase) return;
-  const { shiftStartMs } = getShiftInfo();
   const rows = Object.values(machines).map(m => ({
     machine_name:           m.name,
     active_shift:           m.activeShift,
-    shift_started_at:       shiftStartMs,
+    // Epoch on the machine's own clock — must match what loadState compares
+    // against (also per-machine) so offsets don't trip the tolerance check.
+    shift_started_at:       getShiftInfo(m.clockOffsetMs).shiftStartMs,
     status:                 m.status,
     error_end_min:          m.errorEndMin,
     error_start_time:       m.errorStartTime || null,
@@ -65,13 +66,15 @@ async function loadState() {
     console.log("[STATE] No saved state found — starting fresh.");
     return false;
   }
-  const { shiftNumber, shiftStartMs } = getShiftInfo();
   // Allow up to 10 minutes of clock drift between save and restore
   const EPOCH_TOLERANCE_MS = 10 * 60 * 1000;
   let restored = 0;
   for (const row of data) {
     const m = machines[row.machine_name];
     if (!m) continue;
+    // Shift number + epoch on the MACHINE's clock: near a boundary, an offset
+    // machine may legitimately be a shift behind/ahead of wall time.
+    const { shiftNumber, shiftStartMs } = getShiftInfo(m.clockOffsetMs);
     if (row.active_shift !== shiftNumber) {
       console.log(`[STATE] ${row.machine_name}: saved shift ${row.active_shift} ≠ current ${shiftNumber} — fresh init`);
       continue;
@@ -128,6 +131,43 @@ const MACHINE_UID_MAP = {
   "11576": "CT-9",  "11580": "CT-10",
 };
 const MACHINE_NAMES = Object.keys(MACHINE_UID_MAP);
+
+// ============================================
+// PER-PLC CLOCK OFFSET (seconds)
+// ============================================
+// Real PLCs run their own clocks, each a little off wall time (observed drift
+// in the field: up to ±5 min). A PLC that is 34 s slow flips its shift when
+// ITS clock reads 07:00:00 — i.e. at 07:00:34 wall time — and stamps the
+// message "07:00:00". The message therefore ARRIVES at the bridge 34 s after
+// the nominal boundary while carrying an on-the-boundary timestamp.
+//
+// The offset shifts the machine's ENTIRE clock: shift-flip decision, the
+// stamped Timestamp, ErrorSince/IdleSince — everything the PLC derives from
+// its own time. Publishing stays on the simulator's real-time tick, so the
+// stamp-vs-arrival skew emerges naturally, exactly like hardware.
+//
+// Values are fixed per UID so runs are reproducible. Deliberately not
+// multiples of 300 s (they must NOT land on 5-min bucket edges), spread from
+// seconds to minutes, with two on-time controls. Set SIM_PLC_OFFSETS=false
+// to zero them all (pre-offset behaviour).
+const PLC_OFFSETS_ENABLED = (process.env.SIM_PLC_OFFSETS || "true") === "true";
+const PLC_CLOCK_OFFSET_SEC = {
+  // CB machines
+  "11552": -34,   "11559": +47,   "11560": -125,  "11557": +203,
+  "11562": -61,   "11550": 0,     "11553": +34,   "11556": -8,
+  // CT machines
+  "11579": +154,  "11574": -47,   "11564": +92,   "11554": -178,
+  "11551": +23,   "11563": -260,  "11555": +71,   "11575": 0,
+  "11576": -103,  "11580": +286,
+};
+function clockOffsetMsFor(uid) {
+  if (!PLC_OFFSETS_ENABLED) return 0;
+  return (PLC_CLOCK_OFFSET_SEC[uid] || 0) * 1000;
+}
+// The machine's own wall clock — use for every timestamp the "PLC" emits.
+function plcTimestamp(machine) {
+  return new Date(Date.now() + machine.clockOffsetMs).toISOString();
+}
 
 const topicPrefix = IS_LOCAL ? "local" : "Status";
 const errorTopicPrefix = IS_LOCAL ? "local" : "Error";
@@ -503,8 +543,10 @@ function crewModFor(crewName) {
 // ============================================
 // HELPERS
 // ============================================
-function getShiftInfo() {
-  const now = Date.now();
+// offsetMs: the calling machine's PLC clock offset — shift boundaries are
+// crossed on the MACHINE's clock, not wall time (see PLC_CLOCK_OFFSET_SEC).
+function getShiftInfo(offsetMs = 0) {
+  const now = Date.now() + offsetMs;
 
   // Get current time in factory timezone
   const fmt = new Intl.DateTimeFormat("en-US", {
@@ -588,12 +630,14 @@ function initMachine(uid) {
   const displayName = MACHINE_UID_MAP[uid] || uid;
   const type        = displayName.startsWith("CB") ? "CB" : "CT";
   const personality = personalityFor(uid);
-  const { shiftNumber } = getShiftInfo();
+  const clockOffsetMs = clockOffsetMsFor(uid);
+  const { shiftNumber } = getShiftInfo(clockOffsetMs);
   return {
     name:             uid,
     displayName,
     type,
     personality,
+    clockOffsetMs,
     status:           "running",
     activeShift:      shiftNumber,
     errorEndMin:      null,
@@ -771,7 +815,9 @@ function publishCombinedShift(client, machine, shiftNum, save = false) {
     ErrorSince:             machine.status === "error" ? machine.errorStartTime : null,
     IdleSince:              machine.status === "idle"  ? machine.idleStartTime  : null,
     Save:                   save,
-    Timestamp:              new Date().toISOString(),
+    // Stamped with the MACHINE's clock: a slow PLC stamps "07:00:00" on a
+    // message that reaches the bridge seconds later on the wall clock.
+    Timestamp:              plcTimestamp(machine),
   };
   client.publish(`${topicPrefix}/CB`, JSON.stringify(msg), { qos: 1 });
 }
@@ -788,6 +834,13 @@ console.log(`Broker:     ${url}`);
 console.log(`Machines:   ${MACHINE_NAMES.map(uid => `${uid} (${MACHINE_UID_MAP[uid]})`).join(", ")}`);
 console.log(`Tick:       ${TICK_MS}ms`);
 console.log(`Shift ref:  ${SHIFT_DURATION_HOURS}h shifts, first at ${FIRST_SHIFT_START_HOUR}:00 ${FACTORY_TIMEZONE}`);
+if (PLC_OFFSETS_ENABLED) {
+  const fmtOff = s => (s > 0 ? `+${s}s` : `${s}s`);
+  console.log(`PLC clocks: per-machine offsets active (SIM_PLC_OFFSETS=false to disable)`);
+  console.log(`            ${MACHINE_NAMES.map(uid => `${MACHINE_UID_MAP[uid]}:${fmtOff(PLC_CLOCK_OFFSET_SEC[uid] || 0)}`).join("  ")}`);
+} else {
+  console.log(`PLC clocks: offsets DISABLED — all machines on wall time`);
+}
 console.log(`=====================================\n`);
 
 const client = mqtt.connect(url, {
@@ -833,14 +886,17 @@ client.on("connect", async () => {
   console.log(`Starting at Shift ${shiftNumber}, ${elapsedMinutes.toFixed(1)} min elapsed\n`);
 
   setInterval(async () => {
-    const { shiftNumber, elapsedMinutes } = getShiftInfo();
-
     for (const machine of Object.values(machines)) {
+      // Each machine crosses shift boundaries on ITS OWN clock — a slow PLC
+      // flips (and emits its Save) up to minutes after the nominal boundary,
+      // a fast one before it. This is the per-PLC skew the pipeline must
+      // survive; see PLC_CLOCK_OFFSET_SEC.
+      const { shiftNumber, elapsedMinutes } = getShiftInfo(machine.clockOffsetMs);
 
       // ── Shift change detection ────────────────────────────────────────
       if (shiftNumber !== machine.activeShift) {
         publishCombinedShift(client, machine, machine.activeShift, true);
-        console.log(`[SHIFT END]   ${machine.name} Shift ${machine.activeShift} saved`);
+        console.log(`[SHIFT END]   ${machine.name} Shift ${machine.activeShift} saved (PLC offset ${(machine.clockOffsetMs / 1000).toFixed(0)}s)`);
 
         machine.shifts[shiftNumber] = createShiftData();
         machine.activeShift         = shiftNumber;
@@ -864,7 +920,7 @@ client.on("connect", async () => {
       let codesToActivate = null;
       let codesToClear    = null;
       if (prevStatus !== newStatus) {
-        const now = new Date().toISOString();
+        const now = plcTimestamp(machine);   // episode stamps carry the PLC's clock
         if (newStatus === "error") {
           machine.errorStartTime = now;
           machine.idleStartTime  = null;
@@ -897,7 +953,7 @@ client.on("connect", async () => {
             Machine:     machine.name,
             ErrorCode:   code,
             ErrorStatus: true,
-            Timestamp:   new Date().toISOString(),
+            Timestamp:   plcTimestamp(machine),
           }), { qos: 1 });
         }
       }
@@ -908,7 +964,7 @@ client.on("connect", async () => {
             Machine:     machine.name,
             ErrorCode:   code,
             ErrorStatus: false,
-            Timestamp:   new Date().toISOString(),
+            Timestamp:   plcTimestamp(machine),
           }), { qos: 1 });
         }
       }
